@@ -32,7 +32,7 @@ export const api = {
   search: (q) => request('GET', `/api/search?q=${encodeURIComponent(q)}`),
 }
 
-// ページ離脱時の確実な既読送信用（sendBeacon）。
+// Reliably send read progress on page unload (via sendBeacon).
 export function beaconProgress(s, b, t, readRes) {
   const url = BASE + `/api/favorites/${s}/${b}/${t}/progress`
   const blob = new Blob([JSON.stringify({ read_res: readRes })], {

@@ -10,7 +10,7 @@
   let searchResults = $state([])
   let searching = $state(false)
 
-  // rating でグループ化し、グループは rating 降順、グループ内は title 自然順。
+  // Group by rating; groups sorted by rating desc, items within a group by natural title order.
   let groups = $derived.by(() => {
     const map = new Map()
     for (const f of favorites) {
@@ -60,7 +60,7 @@
         thread_id: r.thread_id,
         title: r.title,
       })
-      // 登録済みは一覧から除く。
+      // Remove the newly registered entry from the results.
       searchResults = searchResults.filter((x) => x !== r)
       onchange()
     } catch (e) {
@@ -68,7 +68,7 @@
     }
   }
 
-  // モード切替時に検索結果と入力をクリアする。
+  // Clear search results and input when switching modes.
   function onModeChange(e) {
     mode = e.target.value
     searchResults = []

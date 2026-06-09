@@ -6,7 +6,7 @@
 
   let data = $state(null)
   let loading = $state(false)
-  // 既読位置（画面を通過した最大レス番号）。初期値は保存済み read_res（初回のみ）。
+  // Read position (max res number that has passed through the viewport). Initialized from the saved read_res (only on first mount).
   let maxRead = $state(untrack(() => fav.read_res))
 
   async function load() {
@@ -26,14 +26,15 @@
     }
   }
 
-  // 初回読み込み。
+  // Initial load.
   $effect(() => {
     load()
   })
 
-  // IntersectionObserver で可視レスを追跡し maxRead を更新。
-  // NOTE: 雛形実装。action 実行時に observer が未生成のケースは
-  //       一覧再描画では起きないが、厳密化は要検討（docs 参照）。
+  // Track visible reses with IntersectionObserver and update maxRead.
+  // NOTE: Scaffold implementation. The case where the observer is not yet
+  //       created when the action runs does not occur on list re-render,
+  //       but stricter handling needs consideration (see docs).
   let observer
   $effect(() => {
     observer = new IntersectionObserver((entries) => {
@@ -58,7 +59,7 @@
     }
   }
 
-  // debounce 送信（スクロール停止 2s 後）。
+  // Debounced send (2s after scrolling stops).
   let timer
   $effect(() => {
     const n = maxRead
@@ -69,7 +70,7 @@
     return () => clearTimeout(timer)
   })
 
-  // 離脱時は sendBeacon で確実に最終位置を送る。
+  // On unload, reliably send the final position via sendBeacon.
   $effect(() => {
     const sendBeacon = () =>
       beaconProgress(fav.server, fav.board, fav.thread_id, maxRead)
@@ -85,11 +86,11 @@
     }
   })
 
-  // 本文中のアンカー >>N。本文はサニタイズ済みなので >> は &gt;&gt; になっている。
+  // In-body anchor >>N. The body is already sanitized, so >> appears as &gt;&gt;.
   const ANCHOR_RE = /(?:&gt;){2}(\d+)/g
 
-  // アンカー(>>123)をクリック可能な span に変換（本文はサーバーでサニタイズ済み）。
-  // data-anchor は数字のみなので新たな XSS 経路は生じない。
+  // Convert anchors (>>123) into clickable spans (the body is already sanitized on the server).
+  // data-anchor only contains digits, so no new XSS vector is introduced.
   function linkify(html) {
     return html.replace(
       ANCHOR_RE,
@@ -97,8 +98,8 @@
     )
   }
 
-  // 逆参照マップ: N -> [N にアンカーしているレス番号...]。
-  // 各レス本文の >>N を解析してフロントで集計する（サーバー変更不要）。
+  // Back-reference map: N -> [res numbers that anchor to N...].
+  // Built on the front-end by parsing >>N in each res body (no server change needed).
   const backrefs = $derived.by(() => {
     const map = new Map()
     if (!data?.res) return map
@@ -116,13 +117,13 @@
     return map
   })
 
-  // 番号からレスを引く（無ければ missing）。
+  // Look up a res by number (missing if not found).
   function resOf(num) {
     return data?.res.find((r) => r.num === num) ?? { num, missing: true }
   }
 
-  // モーダルはスタック式。先頭が現在表示中のレス。
-  // アンカー先/元のどちらをタップしても push し、「戻る」で pop する。
+  // The modal is stack-based; the top is the currently displayed res.
+  // Tapping either an anchor target or source pushes; "back" pops.
   let anchorStack = $state([])
   const currentAnchor = $derived(anchorStack[anchorStack.length - 1] ?? null)
 
@@ -136,7 +137,7 @@
     anchorStack = []
   }
 
-  // 本文クリック（一覧・モーダル共通）。アンカーをタップしたら辿る。
+  // Body click (shared by list and modal). Follow the anchor when tapped.
   function onBodyClick(e) {
     const a = e.target.closest('.anchor')
     if (!a) return
@@ -149,12 +150,12 @@
   <button onclick={reload} disabled={loading}>{loading ? '更新中…' : '↻ 更新'}</button>
 </div>
 
-<!-- body はサーバーでサニタイズ済み。linkify でアンカーをクリック可能化。 -->
+<!-- body is already sanitized on the server. linkify makes anchors clickable. -->
 {#snippet body(html)}
   <div class="body" role="presentation" onclick={onBodyClick}>{@html linkify(html)}</div>
 {/snippet}
 
-<!-- 逆参照（このレスにアンカーしているレス）。タップで辿れる。 -->
+<!-- Back-references (reses that anchor to this res). Tap to follow. -->
 {#snippet refs(num)}
   {@const list = backrefs.get(num)}
   {#if list}
@@ -166,7 +167,7 @@
   {/if}
 {/snippet}
 
-<!-- レス本体（一覧・モーダル共通）。本文中・逆参照のアンカーを辿れる。 -->
+<!-- Res body (shared by list and modal). Anchors in body and back-references are followable. -->
 {#snippet resBody(r)}
   <span class="num">{r.num}</span>
   <span class="name">{r.name}</span>
@@ -196,7 +197,7 @@
       {#if currentAnchor.missing}
         <p>レス {currentAnchor.num} は未取得です</p>
       {:else}
-        <!-- モーダル内のアンカーも辿れる（再帰的にスタックへ push）。 -->
+        <!-- Anchors inside the modal are also followable (recursively pushed onto the stack). -->
         <div class="res">
           {@render resBody(currentAnchor)}
         </div>
