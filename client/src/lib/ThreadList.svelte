@@ -7,6 +7,8 @@
 
   let url = $state('')
   let mode = $state('url') // 'url' | 'search'
+  let searchResults = $state([])
+  let searching = $state(false)
 
   // rating でグループ化し、グループは rating 降順、グループ内は title 自然順。
   let groups = $derived.by(() => {
@@ -26,8 +28,7 @@
     const v = url.trim()
     if (!v) return
     if (mode === 'search') {
-      // TODO: find.5ch.net 調査後にスレタイ検索 API へ接続する口。
-      alert('スレタイ検索は準備中です（find.5ch.net 対応後）')
+      await runSearch(v)
       return
     }
     try {
@@ -37,6 +38,41 @@
     } catch (e) {
       alert(e.message)
     }
+  }
+
+  async function runSearch(q) {
+    searching = true
+    searchResults = []
+    try {
+      searchResults = await api.search(q)
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      searching = false
+    }
+  }
+
+  async function addFromSearch(r) {
+    try {
+      await api.addFavorite({
+        server: r.server,
+        board: r.board,
+        thread_id: r.thread_id,
+        title: r.title,
+      })
+      // 登録済みは一覧から除く。
+      searchResults = searchResults.filter((x) => x !== r)
+      onchange()
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  // モード切替時に検索結果と入力をクリアする。
+  function onModeChange(e) {
+    mode = e.target.value
+    searchResults = []
+    url = ''
   }
 
   async function setRating(f, rating) {
@@ -52,16 +88,33 @@
 </script>
 
 <div class="add">
-  <select bind:value={mode}>
+  <select value={mode} onchange={onModeChange}>
     <option value="search">スレタイ検索</option>
     <option value="url">URL指定</option>
   </select>
   <input
-    placeholder={mode === 'url' ? 'スレッドURLを貼り付け' : 'キーワードで検索（準備中）'}
+    placeholder={mode === 'url' ? 'スレッドURLを貼り付け' : 'キーワードで検索'}
     bind:value={url}
+    onkeydown={(e) => e.key === 'Enter' && add()}
   />
-  <button onclick={add}>追加</button>
+  <button onclick={add} disabled={searching}>
+    {mode === 'search' ? (searching ? '検索中…' : '検索') : '追加'}
+  </button>
 </div>
+
+{#if mode === 'search' && searchResults.length > 0}
+  <div class="results">
+    {#each searchResults as r (r.server + r.board + r.thread_id)}
+      <div class="result">
+        <div class="result-info">
+          <div class="title">{r.title}</div>
+          <div class="sub">{r.board} {r.res_count}</div>
+        </div>
+        <button class="add-btn" onclick={() => addFromSearch(r)}>追加</button>
+      </div>
+    {/each}
+  </div>
+{/if}
 
 {#each groups as [rating, threads] (rating)}
   <h2>{rating > 0 ? '★'.repeat(rating) : '☆ 未分類'}</h2>
@@ -100,6 +153,30 @@
   .add input {
     flex: 1;
     padding: 0.4rem;
+  }
+  .results {
+    margin-bottom: 1rem;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .result {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    border-bottom: 1px solid #eee;
+  }
+  .result:last-child {
+    border-bottom: none;
+  }
+  .result-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .add-btn {
+    padding: 0.3rem 0.6rem;
+    cursor: pointer;
   }
   h2 {
     font-size: 1rem;

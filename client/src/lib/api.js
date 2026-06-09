@@ -29,6 +29,7 @@ export const api = {
     request('PATCH', `/api/favorites/${s}/${b}/${t}/progress`, { read_res: readRes }),
   setRating: (s, b, t, rating) =>
     request('PATCH', `/api/favorites/${s}/${b}/${t}/rating`, { rating }),
+  search: (q) => request('GET', `/api/search?q=${encodeURIComponent(q)}`),
 }
 
 // ページ離脱時の確実な既読送信用（sendBeacon）。

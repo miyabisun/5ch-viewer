@@ -1,4 +1,5 @@
 mod favorites;
+mod search;
 
 use crate::spa;
 use crate::state::AppState;
@@ -13,6 +14,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let sub = Router::new()
         .merge(favorites::routes())
+        .merge(search::routes())
         .nest_service("/assets", ServeDir::new("client/build/assets"))
         .nest_service("/favicon.svg", ServeFile::new("client/build/favicon.svg"))
         .fallback(get(move || {

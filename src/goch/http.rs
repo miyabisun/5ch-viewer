@@ -6,6 +6,7 @@
 use crate::error::AppError;
 use crate::goch::dat::validate_diff;
 use crate::goch::subject::{parse_subject_txt, SubjectEntry};
+use crate::goch::url::validate_ref;
 use reqwest::{Client, Response, StatusCode};
 use std::time::Duration;
 
@@ -68,6 +69,8 @@ pub async fn fetch_subject(
     server: &str,
     board: &str,
 ) -> Result<Vec<SubjectEntry>, AppError> {
+    // SSRF 多層防御: URL 組み立て前に検証（thread_id は使わないのでダミー）。
+    validate_ref(server, board, "0")?;
     let resp = get(client, &subject_url(server, board), None).await?;
     if !resp.status().is_success() {
         return Err(AppError::Upstream(format!("subject.txt HTTP {}", resp.status())));
@@ -78,6 +81,10 @@ pub async fn fetch_subject(
 
 /// SETTING.TXT の BBS_TITLE（板の日本語名）を取得。失敗時は board ID を返す。
 pub async fn fetch_board_name(client: &Client, server: &str, board: &str) -> String {
+    // SSRF 多層防御: 不正な server/board なら通信せず board ID にフォールバック。
+    if validate_ref(server, board, "0").is_err() {
+        return board.to_string();
+    }
     let resp = match get(client, &setting_url(server, board), None).await {
         Ok(r) if r.status().is_success() => r,
         _ => return board.to_string(),
@@ -121,6 +128,8 @@ pub async fn fetch_dat(
     from_bytes: u64,
     last_tail: &[u8],
 ) -> Result<DatFetch, AppError> {
+    // SSRF 多層防御: URL 組み立て前に検証。
+    validate_ref(server, board, thread_id)?;
     let url = dat_url(server, board, thread_id);
 
     // 初回は全取得。

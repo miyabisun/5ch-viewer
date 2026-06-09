@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use crate::goch::dat::{parse_dat, title_from_dat};
 use crate::goch::http::{self, DatFetch};
-use crate::goch::url::parse_thread_url;
+use crate::goch::url::{parse_thread_url, validate_ref};
 use crate::models::{
     AddRequest, DatResponse, Favorite, ProgressRequest, RatingRequest, ReloadResponse,
 };
@@ -83,20 +83,27 @@ async fn add(
 }
 
 fn resolve_ref(req: &AddRequest) -> Result<(String, String, String), AppError> {
-    if let Some(url) = &req.url {
+    let (server, board, thread_id) = if let Some(url) = &req.url {
         let t = parse_thread_url(url)
             .ok_or_else(|| AppError::BadRequest(format!("invalid thread url: {url}")))?;
-        return Ok((t.server, t.board, t.thread_id));
-    }
-    match (&req.server, &req.board, &req.thread_id) {
-        (Some(s), Some(b), Some(t)) => Ok((s.clone(), b.clone(), t.clone())),
-        _ => Err(AppError::BadRequest(
-            "url または server/board/thread_id が必要".into(),
-        )),
-    }
+        (t.server, t.board, t.thread_id)
+    } else {
+        match (&req.server, &req.board, &req.thread_id) {
+            (Some(s), Some(b), Some(t)) => (s.clone(), b.clone(), t.clone()),
+            _ => {
+                return Err(AppError::BadRequest(
+                    "url または server/board/thread_id が必要".into(),
+                ))
+            }
+        }
+    };
+    // SSRF 対策: ユーザー入力（URL/直接指定/検索結果）を厳格に検証する。
+    validate_ref(&server, &board, &thread_id)?;
+    Ok((server, board, thread_id))
 }
 
 async fn remove(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<Value>, AppError> {
+    validate_ref(&server, &board, &thread_id)?;
     let conn = state.db.lock().unwrap();
     let n = conn.execute(
         "DELETE FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -113,6 +120,7 @@ async fn patch_progress(
     Path((server, board, thread_id)): ThreadPath,
     Json(req): Json<ProgressRequest>,
 ) -> Result<Json<Value>, AppError> {
+    validate_ref(&server, &board, &thread_id)?;
     let conn = state.db.lock().unwrap();
     let n = conn.execute(
         "UPDATE favorites SET read_res=?4, updated_at=strftime('%s','now')
@@ -130,6 +138,7 @@ async fn patch_rating(
     Path((server, board, thread_id)): ThreadPath,
     Json(req): Json<RatingRequest>,
 ) -> Result<Json<Value>, AppError> {
+    validate_ref(&server, &board, &thread_id)?;
     if !(0..=5).contains(&req.rating) {
         return Err(AppError::BadRequest("rating は 0〜5".into()));
     }
@@ -147,6 +156,7 @@ async fn patch_rating(
 
 /// 保存済み dat をレス配列にして返す。
 async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<DatResponse>, AppError> {
+    validate_ref(&server, &board, &thread_id)?;
     let conn = state.db.lock().unwrap();
     let (title, res_count, read_res, status) = conn
         .query_row(
@@ -192,6 +202,7 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
 
 /// Range 差分取得して dat を更新（spec 6.3 / 6.4）。
 async fn reload(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<ReloadResponse>, AppError> {
+    validate_ref(&server, &board, &thread_id)?;
     // 1. 前回保存した dat_bytes を取得。
     let (dat_bytes, old_res_count, last_tail): (u64, i64, Vec<u8>) = {
         let conn = state.db.lock().unwrap();
