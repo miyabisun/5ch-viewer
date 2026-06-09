@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { api } from './lib/api.js'
   import { initTheme } from './lib/theme.js'
+  import { parseLocation, push, replace } from './lib/router.js'
   import NavBar from './lib/NavBar.svelte'
   import FavoritesList from './lib/FavoritesList.svelte'
   import RegisterThread from './lib/RegisterThread.svelte'
@@ -21,20 +22,47 @@
     }
   }
 
+  // Find the matching favorite for a thread descriptor, or build a minimal
+  // fav so a thread URL still opens even when it is not in the list.
+  function favFor({ server, board, thread_id }) {
+    const found = favorites.find(
+      (f) => f.server === server && f.board === board && f.thread_id === thread_id,
+    )
+    return found ?? { server, board, thread_id, title: '', read_res: 0 }
+  }
+
+  // Apply a route descriptor (from initial load or popstate) to the UI state.
+  function applyRoute(route) {
+    page = route.page
+    current = route.thread ? favFor(route.thread) : null
+  }
+
   onMount(() => {
     initTheme()
-    load()
+    // Load favorites first so a thread URL can resolve to a real fav, then
+    // apply the initial route. Use replaceState to normalize the entry.
+    const route = parseLocation()
+    replace(route)
+    load().then(() => applyRoute(route))
+
+    const onpop = () => applyRoute(parseLocation())
+    window.addEventListener('popstate', onpop)
+    return () => window.removeEventListener('popstate', onpop)
   })
 
   function open(fav) {
     current = fav
+    push({ page: 'favorites', thread: fav })
   }
   function back() {
     current = null
+    push({ page })
     load()
   }
   function navigate(p) {
     page = p
+    current = null
+    push({ page: p })
   }
 </script>
 
