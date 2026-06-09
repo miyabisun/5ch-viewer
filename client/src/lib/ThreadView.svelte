@@ -210,7 +210,7 @@
   .bar {
     position: sticky;
     top: 0;
-    background: #fafafa;
+    background: var(--bg);
     display: flex;
     gap: 0.5rem;
     padding: 0.5rem 0;
@@ -219,26 +219,26 @@
     font-size: 1.1rem;
   }
   .res {
-    background: #fff;
-    border: 1px solid #eee;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 0.5rem;
     margin-bottom: 0.3rem;
   }
   .res.unread {
-    border-left: 3px solid #c00;
+    border-left: 3px solid var(--danger);
   }
   .num {
     font-weight: bold;
-    color: #060;
+    color: var(--name);
   }
   .name {
-    color: #060;
+    color: var(--name);
     margin-left: 0.3rem;
   }
   .date {
     font-size: 0.75rem;
-    color: #999;
+    color: var(--muted);
     margin-left: 0.3rem;
   }
   .body {
@@ -247,7 +247,7 @@
     word-break: break-word;
   }
   :global(.anchor) {
-    color: #1a6;
+    color: var(--link);
     cursor: pointer;
     text-decoration: underline;
   }
@@ -277,7 +277,7 @@
     padding: 1rem;
   }
   .modal {
-    background: #fff;
+    background: var(--card-bg);
     border-radius: 8px;
     padding: 1rem;
     max-width: 100%;

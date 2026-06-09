@@ -7,3 +7,4 @@
 client/build
 client/node_modules
 client/test-results
+client/package-lock.json
