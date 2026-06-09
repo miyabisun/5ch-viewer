@@ -85,22 +85,62 @@
     }
   })
 
+  // 本文中のアンカー >>N。本文はサニタイズ済みなので >> は &gt;&gt; になっている。
+  const ANCHOR_RE = /(?:&gt;){2}(\d+)/g
+
   // アンカー(>>123)をクリック可能な span に変換（本文はサーバーでサニタイズ済み）。
+  // data-anchor は数字のみなので新たな XSS 経路は生じない。
   function linkify(html) {
     return html.replace(
-      /(?:&gt;){2}(\d+)/g,
+      ANCHOR_RE,
       '<span class="anchor" data-anchor="$1">&gt;&gt;$1</span>',
     )
   }
 
-  // アンカーのモーダル表示（簡易版: 該当レス1件）。
-  // TODO: アンカー元をツリーで辿る(あにまん/ChMate風)はここを拡張する口。
-  let anchorRes = $state(null)
+  // 逆参照マップ: N -> [N にアンカーしているレス番号...]。
+  // 各レス本文の >>N を解析してフロントで集計する（サーバー変更不要）。
+  const backrefs = $derived.by(() => {
+    const map = new Map()
+    if (!data?.res) return map
+    for (const r of data.res) {
+      const seen = new Set()
+      let m
+      while ((m = ANCHOR_RE.exec(r.body)) !== null) {
+        const target = Number(m[1])
+        if (target === r.num || seen.has(target)) continue
+        seen.add(target)
+        if (!map.has(target)) map.set(target, [])
+        map.get(target).push(r.num)
+      }
+    }
+    return map
+  })
+
+  // 番号からレスを引く（無ければ missing）。
+  function resOf(num) {
+    return data?.res.find((r) => r.num === num) ?? { num, missing: true }
+  }
+
+  // モーダルはスタック式。先頭が現在表示中のレス。
+  // アンカー先/元のどちらをタップしても push し、「戻る」で pop する。
+  let anchorStack = $state([])
+  const currentAnchor = $derived(anchorStack[anchorStack.length - 1] ?? null)
+
+  function openAnchor(num) {
+    anchorStack = [...anchorStack, resOf(num)]
+  }
+  function popAnchor() {
+    anchorStack = anchorStack.slice(0, -1)
+  }
+  function closeAnchor() {
+    anchorStack = []
+  }
+
+  // 本文クリック（一覧・モーダル共通）。アンカーをタップしたら辿る。
   function onBodyClick(e) {
     const a = e.target.closest('.anchor')
     if (!a) return
-    const num = Number(a.dataset.anchor)
-    anchorRes = data?.res.find((r) => r.num === num) ?? { num, missing: true }
+    openAnchor(Number(a.dataset.anchor))
   }
 </script>
 
@@ -114,32 +154,53 @@
   <div class="body" role="presentation" onclick={onBodyClick}>{@html linkify(html)}</div>
 {/snippet}
 
+<!-- 逆参照（このレスにアンカーしているレス）。タップで辿れる。 -->
+{#snippet refs(num)}
+  {@const list = backrefs.get(num)}
+  {#if list}
+    <div class="backrefs" role="presentation" onclick={onBodyClick}>
+      {#each list as src}
+        <span class="anchor" data-anchor={src}>&gt;&gt;{src}</span>
+      {/each}
+    </div>
+  {/if}
+{/snippet}
+
+<!-- レス本体（一覧・モーダル共通）。本文中・逆参照のアンカーを辿れる。 -->
+{#snippet resBody(r)}
+  <span class="num">{r.num}</span>
+  <span class="name">{r.name}</span>
+  <span class="date">{r.date}</span>
+  {@render body(r.body)}
+  {@render refs(r.num)}
+{/snippet}
+
 {#if data}
   <h1>{data.title || fav.title}</h1>
   {#each data.res as r (r.num)}
     <div class="res" use:track={r.num} class:unread={r.num > fav.read_res}>
-      <span class="num">{r.num}</span>
-      <span class="name">{r.name}</span>
-      <span class="date">{r.date}</span>
-      {@render body(r.body)}
+      {@render resBody(r)}
     </div>
   {/each}
 {/if}
 
-{#if anchorRes}
-  <div class="modal-bg" role="presentation" onclick={() => (anchorRes = null)}>
+{#if currentAnchor}
+  <div class="modal-bg" role="presentation" onclick={closeAnchor}>
     <div class="modal" role="presentation" onclick={(e) => e.stopPropagation()}>
-      {#if anchorRes.missing}
-        <p>レス {anchorRes.num} は未取得です</p>
+      <div class="modal-bar">
+        {#if anchorStack.length > 1}
+          <button onclick={popAnchor}>← 戻る</button>
+        {/if}
+        <button class="close" onclick={closeAnchor}>閉じる</button>
+      </div>
+      {#if currentAnchor.missing}
+        <p>レス {currentAnchor.num} は未取得です</p>
       {:else}
+        <!-- モーダル内のアンカーも辿れる（再帰的にスタックへ push）。 -->
         <div class="res">
-          <span class="num">{anchorRes.num}</span>
-          <span class="name">{anchorRes.name}</span>
-          <!-- モーダル内のアンカーも辿れる（ツリー化の口） -->
-          {@render body(anchorRes.body)}
+          {@render resBody(currentAnchor)}
         </div>
       {/if}
-      <button onclick={() => (anchorRes = null)}>閉じる</button>
     </div>
   </div>
 {/if}
@@ -188,6 +249,22 @@
     color: #1a6;
     cursor: pointer;
     text-decoration: underline;
+  }
+  .backrefs {
+    margin-top: 0.3rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+  }
+  .modal-bar {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .modal-bar .close {
+    margin-left: auto;
   }
   .modal-bg {
     position: fixed;
