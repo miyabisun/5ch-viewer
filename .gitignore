@@ -6,3 +6,4 @@
 .env
 client/build
 client/node_modules
+client/test-results
