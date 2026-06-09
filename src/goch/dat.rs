@@ -47,32 +47,6 @@ pub fn title_from_dat(text: &str) -> Option<String> {
     }
 }
 
-/// Validates that a Range diff (already Shift_JIS decoded) is a "valid append".
-/// Rejects corrupted diffs where the past was rewritten by deletions etc. (invalid -> full-fetch repair).
-/// Since every post must contain `name<>mail<>dateID<>body<>`, a missing header is detectable.
-pub fn validate_diff(text: &str) -> bool {
-    if text.is_empty() {
-        return true; // zero appended bytes
-    }
-    // Accept only complete posts: must end with a newline.
-    if !text.ends_with('\n') {
-        return false;
-    }
-    for line in text.split('\n') {
-        if line.is_empty() {
-            continue; // empty element from the trailing \n
-        }
-        let f: Vec<&str> = line.split("<>").collect();
-        if f.len() < 4 {
-            return false; // missing header (e.g. corrupted diff that grew by just 5 bytes)
-        }
-        if f[2].trim().is_empty() {
-            return false; // missing dateID = corruption / deletion replacement
-        }
-    }
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,34 +87,5 @@ mod tests {
     fn title_none_when_absent() {
         let text = "名無し<>sage<>2025 ID:x<>本文\n";
         assert_eq!(title_from_dat(text), None);
-    }
-
-    #[test]
-    fn validate_diff_accepts_normal_append() {
-        let text = "名無し<>sage<>2025/01/01 ID:abc<>本文1<>\n名無し<><>2025/01/02 ID:def<>本文2<>\n";
-        assert!(validate_diff(text));
-    }
-
-    #[test]
-    fn validate_diff_rejects_header_missing() {
-        // Equivalent to the 5-byte problem: corrupted diff missing <>
-        assert!(!validate_diff(" abc \n"));
-        assert!(!validate_diff("a<>b<>c\n")); // 3 fields
-    }
-
-    #[test]
-    fn validate_diff_rejects_empty_date_field() {
-        // empty dateID (3rd field) = deletion replacement etc.
-        assert!(!validate_diff("名無し<>sage<><>本文<>\n"));
-    }
-
-    #[test]
-    fn validate_diff_rejects_non_newline_terminated() {
-        assert!(!validate_diff("名無し<>sage<>2025 ID:x<>途中まで"));
-    }
-
-    #[test]
-    fn validate_diff_accepts_empty() {
-        assert!(validate_diff(""));
     }
 }

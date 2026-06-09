@@ -1,10 +1,11 @@
 const BASE = window.__BASE_PATH__ || ''
 
-async function request(method, path, body) {
+async function request(method, path, body, opts = {}) {
   const res = await fetch(BASE + path, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
+    ...opts,
   })
   if (!res.ok) {
     let msg = `${method} ${path}: ${res.status}`
@@ -24,7 +25,12 @@ export const api = {
   addFavorite: (body) => request('POST', '/api/favorites', body),
   removeFavorite: (s, b, t) => request('DELETE', `/api/favorites/${s}/${b}/${t}`),
   getDat: (s, b, t) => request('GET', `/api/favorites/${s}/${b}/${t}/dat`),
-  reload: (s, b, t) => request('POST', `/api/favorites/${s}/${b}/${t}/reload`),
+  // Viewer-side refresh: GET (cache-or-fetch). `no-store` avoids serving a stale
+  // browser-cached result; the server may fetch the dat from 5ch behind the scenes.
+  reload: (s, b, t) =>
+    request('GET', `/api/favorites/${s}/${b}/${t}/reload`, undefined, {
+      cache: 'no-store',
+    }),
   setProgress: (s, b, t, readRes) =>
     request('PATCH', `/api/favorites/${s}/${b}/${t}/progress`, { read_res: readRes }),
   setRating: (s, b, t, rating) =>

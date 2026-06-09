@@ -46,7 +46,7 @@ pub struct DatResponse {
     pub res: Vec<Res>,
 }
 
-/// Reload (Range incremental fetch) result.
+/// Reload (cache-or-fetch full dat) result.
 #[derive(Debug, Serialize)]
 pub struct ReloadResponse {
     pub res_count: i64,

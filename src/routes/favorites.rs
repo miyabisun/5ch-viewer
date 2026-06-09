@@ -7,7 +7,7 @@ use crate::models::{
 };
 use crate::state::AppState;
 use axum::extract::{Path, State};
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch};
 use axum::{Json, Router};
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
@@ -25,7 +25,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/favorites", get(list).post(add))
         .route("/api/favorites/{server}/{board}/{thread_id}", delete(remove))
         .route("/api/favorites/{server}/{board}/{thread_id}/dat", get(get_dat))
-        .route("/api/favorites/{server}/{board}/{thread_id}/reload", post(reload))
+        .route("/api/favorites/{server}/{board}/{thread_id}/reload", get(reload))
         .route(
             "/api/favorites/{server}/{board}/{thread_id}/progress",
             patch(patch_progress),
@@ -200,149 +200,124 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
     }))
 }
 
-/// Fetches a Range diff and updates the dat (spec 6.3 / 6.4).
+/// Cache-or-fetch: refreshes the dat for a thread (GET, viewer semantics).
+///
+/// Take-or-skip is gated by subject.txt's res_count to keep 5ch load low:
+/// if the count has not grown, the dat is NOT fetched (only local metadata is updated).
+/// When a fetch is needed, the entire dat is GET (no Range / no diff) and the BLOB is
+/// fully replaced, so the stored bytes can never be corrupted into TEXT.
 async fn reload(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<ReloadResponse>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
-    // 1. Fetch the previously stored dat_bytes.
-    let (dat_bytes, old_res_count, last_tail): (u64, i64, Vec<u8>) = {
+
+    // 1. Read the locally known res_count (used to decide whether to fetch the dat).
+    let old_res_count: i64 = {
         let conn = state.db.lock().unwrap();
-        let (db, rc) = conn
-            .query_row(
-                "SELECT dat_bytes, res_count FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
-                params![server, board, thread_id],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
-            )
-            .optional()?
-            .ok_or_else(|| AppError::NotFound("favorite not found".into()))?;
-        // Last 6 bytes of the previous dat (for boundary matching). Empty if no dat stored.
-        let tail = conn
-            .query_row(
-                "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
-                params![server, board, thread_id],
-                |r| r.get::<_, Vec<u8>>(0),
-            )
-            .optional()?
-            .map(|raw| raw[raw.len().saturating_sub(6)..].to_vec())
-            .unwrap_or_default();
-        (db as u64, rc, tail)
-    };
-
-    // 2. HTTP (await without holding the lock).
-    let fetch =
-        http::fetch_dat(&state.http, &server, &board, &thread_id, dat_bytes, &last_tail).await?;
-
-    // 3. Update dat_blobs and obtain the new total byte count.
-    let mut new_total: Option<u64> = {
-        let conn = state.db.lock().unwrap();
-        match &fetch {
-            DatFetch::NotModified => None,
-            DatFetch::Gone => {
-                conn.execute(
-                    "UPDATE favorites SET status='dead', updated_at=strftime('%s','now')
-                     WHERE server=?1 AND board=?2 AND thread_id=?3",
-                    params![server, board, thread_id],
-                )?;
-                None
-            }
-            DatFetch::Append { bytes, total } => {
-                append_blob(&conn, &server, &board, &thread_id, bytes)?;
-                Some(*total)
-            }
-            DatFetch::Replace { bytes, total } => {
-                replace_blob(&conn, &server, &board, &thread_id, bytes)?;
-                Some(*total)
-            }
-        }
-    };
-
-    // 3.5 Regression detection: if res_count after Append drops below the old value, the tail is
-    //     contiguous but an intermediate post was physically deleted (a deletion that slipped past
-    //     boundary matching). Repair via a full fetch.
-    if matches!(fetch, DatFetch::Append { .. }) {
-        let new_rc = {
-            let conn = state.db.lock().unwrap();
-            parse_dat(&read_blob_text(&conn, &server, &board, &thread_id)?).len() as i64
-        };
-        if new_rc < old_res_count {
-            tracing::info!("[dat] res_count regressed {old_res_count} -> {new_rc}, full refetch");
-            if let DatFetch::Replace { bytes, total } =
-                http::fetch_dat(&state.http, &server, &board, &thread_id, 0, &[]).await?
-            {
-                let conn = state.db.lock().unwrap();
-                replace_blob(&conn, &server, &board, &thread_id, &bytes)?;
-                new_total = Some(total);
-            }
-        }
-    }
-
-    // 4. Recompute and update metadata (res_count / title / dat_bytes / status).
-    let conn = state.db.lock().unwrap();
-    if let Some(total) = new_total {
-        let text = read_blob_text(&conn, &server, &board, &thread_id)?;
-        let res_count = parse_dat(&text).len() as i64;
-        let title = title_from_dat(&text).unwrap_or_default();
-        let status = compute_status(res_count, total);
-        conn.execute(
-            "UPDATE favorites SET res_count=?4, dat_bytes=?5, status=?6,
-             title = CASE WHEN title='' THEN ?7 ELSE title END,
-             updated_at=strftime('%s','now')
-             WHERE server=?1 AND board=?2 AND thread_id=?3",
-            params![server, board, thread_id, res_count, total as i64, status, title],
-        )?;
-    }
-
-    let (res_count, read_res, status) = conn.query_row(
-        "SELECT res_count, read_res, status FROM favorites
-         WHERE server=?1 AND board=?2 AND thread_id=?3",
-        params![server, board, thread_id],
-        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)),
-    )?;
-
-    Ok(Json(ReloadResponse {
-        res_count,
-        read_res,
-        status,
-        updated: new_total.is_some(),
-    }))
-}
-
-/// Reads the raw from dat_blobs, Shift_JIS-decodes it, and returns it.
-fn read_blob_text(
-    conn: &rusqlite::Connection,
-    server: &str,
-    board: &str,
-    thread_id: &str,
-) -> Result<String, AppError> {
-    let raw: Vec<u8> = conn.query_row(
-        "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
-        params![server, board, thread_id],
-        |r| r.get(0),
-    )?;
-    Ok(http::decode_shift_jis(&raw))
-}
-
-/// Appends bytes to the existing raw, keeping the column's BLOB type.
-///
-/// NOTE: SQLite's `||` operator coerces BLOB operands to TEXT, which would corrupt
-/// the stored bytes (later `r.get::<Vec<u8>>` fails with "Invalid column type Text").
-/// We therefore read the existing bytes and concatenate in Rust, then write back a BLOB.
-fn append_blob(
-    conn: &rusqlite::Connection,
-    server: &str,
-    board: &str,
-    thread_id: &str,
-    bytes: &[u8],
-) -> Result<(), AppError> {
-    let mut raw: Vec<u8> = conn
-        .query_row(
-            "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
+        conn.query_row(
+            "SELECT res_count FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
             params![server, board, thread_id],
             |r| r.get(0),
         )
         .optional()?
-        .unwrap_or_default();
-    raw.extend_from_slice(bytes);
-    replace_blob(conn, server, board, thread_id, &raw)
+        .ok_or_else(|| AppError::NotFound("favorite not found".into()))?
+    };
+
+    // 2. Check subject.txt to see how many posts the board reports (load-reduction gate).
+    //    On subject failure, fall back to fetching the dat (cannot prove "no change").
+    let subject_count: Option<i64> = match http::fetch_subject(&state.http, &server, &board).await {
+        Ok(entries) => entries
+            .iter()
+            .find(|e| e.thread_id == thread_id)
+            .map(|e| e.res_count),
+        Err(e) => {
+            tracing::warn!("[reload] subject {server}/{board}: {e}");
+            None
+        }
+    };
+
+    // 3. Decide whether to fetch the dat: only when subject reports more posts than we have.
+    //    When subject is unavailable or the thread is absent from it, fall back to fetching
+    //    (we cannot prove "no change", and a 404 dat will be handled as Gone below).
+    let needs_fetch = match subject_count {
+        Some(sc) => sc > old_res_count,
+        None => true,
+    };
+
+    if !needs_fetch {
+        // No new posts: skip the 5ch dat fetch entirely. The dat is unchanged, so the
+        // stored status (which may be byte-derived warned/dead) must be preserved; only
+        // touch updated_at. Recomputing from res_count alone would silently roll a
+        // byte-over (DAT_WARN/DAT_DEAD) thread back to active.
+        let conn = state.db.lock().unwrap();
+        conn.execute(
+            "UPDATE favorites SET updated_at=strftime('%s','now')
+             WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![server, board, thread_id],
+        )?;
+        let (res_count, read_res, status) = read_meta(&conn, &server, &board, &thread_id)?;
+        return Ok(Json(ReloadResponse {
+            res_count,
+            read_res,
+            status,
+            updated: false,
+        }));
+    }
+
+    // 4. Fetch the entire dat (await without holding the lock).
+    let fetch = http::fetch_dat(&state.http, &server, &board, &thread_id).await?;
+
+    // 5. Persist the result: a full BLOB replace + metadata recompute, or mark dead on Gone.
+    //    The fetched bytes are used directly (no DB read-back), since we already hold the body.
+    let updated = match fetch {
+        DatFetch::Gone => {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "UPDATE favorites SET status='dead', updated_at=strftime('%s','now')
+                 WHERE server=?1 AND board=?2 AND thread_id=?3",
+                params![server, board, thread_id],
+            )?;
+            false
+        }
+        DatFetch::Replace { bytes, total } => {
+            let text = http::decode_shift_jis(&bytes);
+            let res_count = parse_dat(&text).len() as i64;
+            let title = title_from_dat(&text).unwrap_or_default();
+            let status = compute_status(res_count, total);
+            let conn = state.db.lock().unwrap();
+            replace_blob(&conn, &server, &board, &thread_id, &bytes)?;
+            conn.execute(
+                "UPDATE favorites SET res_count=?4, dat_bytes=?5, status=?6,
+                 title = CASE WHEN title='' THEN ?7 ELSE title END,
+                 updated_at=strftime('%s','now')
+                 WHERE server=?1 AND board=?2 AND thread_id=?3",
+                params![server, board, thread_id, res_count, total as i64, status, title],
+            )?;
+            true
+        }
+    };
+
+    let conn = state.db.lock().unwrap();
+    let (res_count, read_res, status) = read_meta(&conn, &server, &board, &thread_id)?;
+    Ok(Json(ReloadResponse {
+        res_count,
+        read_res,
+        status,
+        updated,
+    }))
+}
+
+/// Reads the favorite's current res_count / read_res / status.
+fn read_meta(
+    conn: &rusqlite::Connection,
+    server: &str,
+    board: &str,
+    thread_id: &str,
+) -> Result<(i64, i64, String), AppError> {
+    Ok(conn.query_row(
+        "SELECT res_count, read_res, status FROM favorites
+         WHERE server=?1 AND board=?2 AND thread_id=?3",
+        params![server, board, thread_id],
+        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)),
+    )?)
 }
 
 /// Replaces the raw in dat_blobs entirely (inserts if absent).
@@ -408,19 +383,20 @@ mod tests {
         .unwrap()
     }
 
-    /// Regression: appending a diff must keep `raw` as a BLOB so that later reads
-    /// (`r.get::<Vec<u8>>`) succeed and the dat parses. The previous SQLite `||`
-    /// based append coerced the column to TEXT and broke both.
+    /// Regression: a full replace must keep `raw` as a BLOB so that later reads
+    /// (`r.get::<Vec<u8>>`) succeed and the dat parses. Because we always store the
+    /// whole body (never SQLite `||` concatenation), the column can never become TEXT.
     #[test]
-    fn append_blob_keeps_blob_type_and_parses() {
+    fn replace_blob_keeps_blob_type_and_parses() {
         let conn = setup();
         let first = sjis("名無し<>sage<>2025/01/01 ID:abc<>本文1<>スレタイ\n");
-        let diff = sjis("名無し<><>2025/01/02 ID:def<>本文2<>\n");
+        let full = sjis(
+            "名無し<>sage<>2025/01/01 ID:abc<>本文1<>スレタイ\n名無し<><>2025/01/02 ID:def<>本文2<>\n",
+        );
 
-        // initial store
-        append_blob(&conn, SERVER, BOARD, THREAD, &first).unwrap();
-        // incremental append (the path that used to corrupt the column type)
-        append_blob(&conn, SERVER, BOARD, THREAD, &diff).unwrap();
+        // initial store, then a full replace (the only write path now)
+        replace_blob(&conn, SERVER, BOARD, THREAD, &first).unwrap();
+        replace_blob(&conn, SERVER, BOARD, THREAD, &full).unwrap();
 
         // (a) the column type stays BLOB
         assert_eq!(column_type(&conn), "blob");
@@ -434,38 +410,68 @@ mod tests {
             )
             .unwrap();
 
-        // (c) the appended dat still parses into both posts
+        // (c) the replaced dat parses into both posts
         let res = parse_dat(&http::decode_shift_jis(&raw));
         assert_eq!(res.len(), 2);
         assert_eq!(res[0].body, "本文1");
         assert_eq!(res[1].body, "本文2");
     }
 
-    /// Documents the original bug: SQLite's `||` operator coerces BLOB to TEXT,
-    /// corrupting non-ASCII (Shift_JIS) bytes. Guards against regressing the fix.
-    #[test]
-    fn sqlite_concat_operator_corrupts_blob() {
-        let conn = setup();
-        let first = sjis("名無し<>sage<>2025/01/01 ID:abc<>本文1<>スレタイ\n");
-        let diff = sjis("名無し<><>2025/01/02 ID:def<>本文2<>\n");
-        conn.execute(
-            "INSERT INTO dat_blobs (server, board, thread_id, raw) VALUES (?1,?2,?3,?4)",
-            params![SERVER, BOARD, THREAD, first],
-        )
-        .unwrap();
-        // the old (buggy) append
-        conn.execute(
-            "UPDATE dat_blobs SET raw = raw || ?4 WHERE server=?1 AND board=?2 AND thread_id=?3",
-            params![SERVER, BOARD, THREAD, diff],
-        )
-        .unwrap();
-        // the column is now TEXT, so reading as bytes fails
-        assert_eq!(column_type(&conn), "text");
-        let read: Result<Vec<u8>, _> = conn.query_row(
-            "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
+    /// Reads the stored status of the fixture favorite.
+    fn read_status(conn: &Connection) -> String {
+        conn.query_row(
+            "SELECT status FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
             params![SERVER, BOARD, THREAD],
-            |r| r.get(0),
-        );
-        assert!(read.is_err(), "expected Invalid column type Text");
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap()
+    }
+
+    /// Regression: when subject reports no new posts, the reload skip path must NOT recompute
+    /// status. A thread that turned 'warned' by byte size (DAT_WARN) while its res_count is
+    /// still below RES_WARN must keep 'warned' across no-growth reloads (it must not roll back
+    /// to 'active'). The skip path only touches updated_at, so the stored status is preserved.
+    #[test]
+    fn skip_path_preserves_byte_derived_status() {
+        let conn = setup();
+        // A byte-over thread: low res_count but warned because dat_bytes >= DAT_WARN.
+        let res_count: i64 = (RES_WARN - 50).max(1);
+        let dat_bytes = DAT_WARN as i64;
+        let status = compute_status(res_count, dat_bytes as u64);
+        assert_eq!(status, "warned", "fixture must be byte-derived warned");
+        conn.execute(
+            "UPDATE favorites SET res_count=?4, dat_bytes=?5, status=?6
+             WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![SERVER, BOARD, THREAD, res_count, dat_bytes, status],
+        )
+        .unwrap();
+
+        // Replicate the reload skip path (no subject growth): touch updated_at only.
+        conn.execute(
+            "UPDATE favorites SET updated_at=strftime('%s','now')
+             WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![SERVER, BOARD, THREAD],
+        )
+        .unwrap();
+
+        assert_eq!(read_status(&conn), "warned");
+    }
+
+    /// A second replace fully overwrites the previous body (no leftover bytes appended).
+    #[test]
+    fn replace_blob_overwrites_previous_body() {
+        let conn = setup();
+        replace_blob(&conn, SERVER, BOARD, THREAD, &sjis("古い<>sage<>d ID:x<>古い本文<>t\n")).unwrap();
+        replace_blob(&conn, SERVER, BOARD, THREAD, &sjis("新しい<>sage<>d ID:y<>新本文<>t\n")).unwrap();
+        let raw: Vec<u8> = conn
+            .query_row(
+                "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
+                params![SERVER, BOARD, THREAD],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let res = parse_dat(&http::decode_shift_jis(&raw));
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].body, "新本文");
     }
 }
