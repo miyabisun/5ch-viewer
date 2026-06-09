@@ -1,8 +1,8 @@
-//! スレッド URL のパース。
-//! 対応形式（5ch.net / 5ch.io 両対応。2026-03 に io へ移転。過去ログ URL に
-//! net 形式が残るため入力は両方受理する）:
+//! Thread URL parsing.
+//! Supported formats (both 5ch.net / 5ch.io. Migrated to io in 2026-03. Since the
+//! net format remains in archive URLs, both are accepted as input):
 //!   https://[server].5ch.io/test/read.cgi/[board]/[thread_id]/
-//!   https://[server].5ch.io/[board]/[thread_id]/   (旧/短縮形)
+//!   https://[server].5ch.io/[board]/[thread_id]/   (legacy/short form)
 
 use crate::error::AppError;
 use regex_lite::Regex;
@@ -12,8 +12,8 @@ static THREAD_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"https?://([^.]+)\.5ch\.(?:net|io)/(?:test/read\.cgi/)?([^/]+)/(\d+)").unwrap()
 });
 
-// SSRF 対策: server/board は英数・ハイフン・アンダースコアのみ、thread_id は数字のみ。
-// これにより URL 組み立て時のホスト/パス注入（スラッシュ・ドット・@ 等）を防ぐ。
+// SSRF mitigation: server/board allow only alphanumerics, hyphen, and underscore; thread_id only digits.
+// This prevents host/path injection (slash, dot, @, etc.) during URL assembly.
 static SEGMENT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
 static THREAD_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9]+$").unwrap());
@@ -34,8 +34,8 @@ pub fn parse_thread_url(url: &str) -> Option<ThreadRef> {
     })
 }
 
-/// server/board/thread_id を厳格に検証する（SSRF 多層防御）。
-/// ユーザー入力（URL/直接指定/検索結果）から受け取る全経路の入口で呼ぶ。
+/// Strictly validates server/board/thread_id (defense-in-depth against SSRF).
+/// Call at the entry of every path that receives user input (URL/direct/search result).
 pub fn validate_ref(server: &str, board: &str, thread_id: &str) -> Result<(), AppError> {
     let check = |re: &Regex, name: &str, value: &str| {
         re.is_match(value)
@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn returns_none_for_non_5ch_url() {
-        // 2ch.net は対象外（5ch.net / 5ch.io のみ）
+        // 2ch.net is out of scope (only 5ch.net / 5ch.io)
         assert_eq!(
             parse_thread_url("https://eagle.2ch.net/test/read.cgi/news/1700000000/"),
             None
@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn parses_5ch_io_url() {
-        // 移転後の 5ch.io 形式
+        // post-migration 5ch.io format
         assert_eq!(
             parse_thread_url("https://kizuna.5ch.io/test/read.cgi/iPhone/1773047861/"),
             Some(tref("kizuna", "iPhone", "1773047861"))
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn validate_ref_rejects_dot() {
-        // ホスト注入（別ドメイン）を防ぐ
+        // prevent host injection (different domain)
         assert!(validate_ref("attacker.com", "board", "123").is_err());
         assert!(validate_ref("server", "bo.ard", "123").is_err());
     }

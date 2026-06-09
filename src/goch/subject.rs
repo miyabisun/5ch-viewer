@@ -1,11 +1,11 @@
-//! subject.txt のパース。
-//! 各行: `<thread_id>.dat<>タイトル (resCount)`
+//! subject.txt parsing.
+//! Each line: `<thread_id>.dat<>title (resCount)`
 
 use regex_lite::Regex;
 use std::sync::LazyLock;
 
-// greedy な `.+` が最後の `(` まで取り込むため、タイトル中の括弧は
-// タイトルの一部として扱われる（末尾の `(数字)` だけが resCount）。
+// Since the greedy `.+` consumes up to the last `(`, parentheses within the
+// title are treated as part of the title (only the trailing `(number)` is resCount).
 static SUBJECT_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d+)\.dat<>(.+)\((\d+)\)$").unwrap());
 
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn parses_res_count_as_integer() {
-        // 先頭ゼロ付きでも整数として解釈
+        // parse as integer even with leading zeros
         let text = "1771127145.dat<>テスト (0491)";
         let result = parse_subject_txt(text);
         assert_eq!(result[0].res_count, 491);

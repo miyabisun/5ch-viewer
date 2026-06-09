@@ -1,5 +1,5 @@
-//! バックグラウンド監視。subject.txt のみを板単位で巡回し、
-//! res_count 更新・終了判定・次スレ自動追加を行う（dat 本体は取らない）。
+//! Background monitoring. Polls only subject.txt per board to update
+//! res_count, determine end-of-thread, and auto-add the next thread (does not fetch the dat body).
 
 use crate::error::AppError;
 use crate::goch::http;
@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 const INTERVAL: Duration = Duration::from_secs(60);
-// 監視は subject の res_count のみで判定（dat サイズは reload 時に見る）。
+// Monitoring decides based only on subject's res_count (the dat size is checked at reload time).
 const RES_WARN: i64 = 980;
 const RES_DEAD: i64 = 1000;
 
@@ -58,7 +58,7 @@ async fn run_once(state: &AppState) -> Result<(), AppError> {
         return Ok(());
     }
 
-    // 板単位にグループ化（同じ subject.txt を 1 回だけ取得して共有）。
+    // Group by board (fetch the same subject.txt once and share it).
     let mut by_board: HashMap<(String, String), Vec<Watch>> = HashMap::new();
     for w in watches {
         by_board
@@ -83,7 +83,7 @@ async fn run_once(state: &AppState) -> Result<(), AppError> {
 fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entries: &[SubjectEntry]) {
     let found = entries.iter().find(|e| e.thread_id == w.thread_id);
 
-    // subject 上の状態を反映。subject に無ければ落ちた扱い。
+    // Reflect the state from subject. If absent from subject, treat as dropped.
     let is_dead = match found {
         Some(e) => {
             let status = status_for(e.res_count);
@@ -112,7 +112,7 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
         return;
     }
 
-    // 終了したので次スレを探す。title は既知のもの優先、無ければ subject から。
+    // The thread ended, so look for the next one. Prefer the known title, otherwise take it from subject.
     let title = if !w.title.is_empty() {
         w.title.clone()
     } else {
@@ -131,7 +131,7 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
                 |r| r.get(0),
             )
             .unwrap_or_else(|_| board.to_string());
-        // rating を継承して自動追加（既に在れば無視）。
+        // Auto-add inheriting the rating (ignore if it already exists).
         let _ = conn.execute(
             "INSERT OR IGNORE INTO favorites
              (server, board, thread_id, board_name, title, res_count, rating)

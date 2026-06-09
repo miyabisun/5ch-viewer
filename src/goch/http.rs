@@ -1,7 +1,7 @@
-//! 5ch への HTTP アクセス。
-//! - User-Agent は client のデフォルト（Monazilla 入り。state::USER_AGENT）。
-//! - 圧縮で Content-Length / Range が壊れないよう常に `Accept-Encoding: identity`。
-//! - 5xx はリトライ、404 はリトライしない。
+//! HTTP access to 5ch.
+//! - User-Agent is the client's default (contains Monazilla; state::USER_AGENT).
+//! - Always `Accept-Encoding: identity` so compression doesn't break Content-Length / Range.
+//! - Retry on 5xx, do not retry on 404.
 
 use crate::error::AppError;
 use crate::goch::dat::validate_diff;
@@ -12,13 +12,13 @@ use std::time::Duration;
 
 const MAX_ATTEMPTS: u32 = 4;
 const RETRY_DELAY: Duration = Duration::from_millis(2000);
-/// 境界照合に使う末尾バイト数（Shift_JIS 2バイト×3文字相当）。
-/// dat 末尾は必ず改行(0x0a)終端なので 1 バイトでは衝突する。実機確認済み。
+/// Number of trailing bytes used for boundary matching (Shift_JIS 2 bytes x 3 chars).
+/// The dat always ends with a newline (0x0a), so 1 byte would collide. Verified on real servers.
 const OVERLAP: u64 = 6;
-/// 5ch のホスト。2026-03 に 5ch.net → 5ch.io へ移転（旧 net ドメインは剥奪済み）。
+/// 5ch host. Migrated from 5ch.net to 5ch.io in 2026-03 (the old net domain was revoked).
 const HOST_SUFFIX: &str = "5ch.io";
 
-/// Shift_JIS バイト列を UTF-8 にデコード（不正バイトは置換）。
+/// Decodes a Shift_JIS byte sequence to UTF-8 (invalid bytes are replaced).
 pub fn decode_shift_jis(bytes: &[u8]) -> String {
     let (cow, _, _) = encoding_rs::SHIFT_JIS.decode(bytes);
     cow.into_owned()
@@ -34,8 +34,8 @@ fn setting_url(server: &str, board: &str) -> String {
     format!("https://{server}.{HOST_SUFFIX}/{board}/SETTING.TXT")
 }
 
-/// GET（identity 固定 + 任意の Range）。ネットワークエラーと 5xx はリトライ。
-/// 404/416/206/2xx はリトライせずそのまま返す（ステータス判定は呼び出し側）。
+/// GET (fixed identity + optional Range). Retries on network errors and 5xx.
+/// Returns 404/416/206/2xx as-is without retry (status handling is the caller's job).
 async fn get(client: &Client, url: &str, range_from: Option<u64>) -> Result<Response, AppError> {
     let mut last = String::new();
     for attempt in 0..MAX_ATTEMPTS {
@@ -63,13 +63,13 @@ async fn get(client: &Client, url: &str, range_from: Option<u64>) -> Result<Resp
     Err(AppError::Upstream(format!("GET failed: {url} ({last})")))
 }
 
-/// subject.txt を取得してパース。
+/// Fetches and parses subject.txt.
 pub async fn fetch_subject(
     client: &Client,
     server: &str,
     board: &str,
 ) -> Result<Vec<SubjectEntry>, AppError> {
-    // SSRF 多層防御: URL 組み立て前に検証（thread_id は使わないのでダミー）。
+    // SSRF defense-in-depth: validate before assembling the URL (thread_id is unused, so a dummy).
     validate_ref(server, board, "0")?;
     let resp = get(client, &subject_url(server, board), None).await?;
     if !resp.status().is_success() {
@@ -79,9 +79,9 @@ pub async fn fetch_subject(
     Ok(parse_subject_txt(&decode_shift_jis(&bytes)))
 }
 
-/// SETTING.TXT の BBS_TITLE（板の日本語名）を取得。失敗時は board ID を返す。
+/// Fetches BBS_TITLE (the board's display name) from SETTING.TXT. Returns the board ID on failure.
 pub async fn fetch_board_name(client: &Client, server: &str, board: &str) -> String {
-    // SSRF 多層防御: 不正な server/board なら通信せず board ID にフォールバック。
+    // SSRF defense-in-depth: on invalid server/board, fall back to the board ID without any request.
     if validate_ref(server, board, "0").is_err() {
         return board.to_string();
     }
@@ -104,22 +104,22 @@ pub async fn fetch_board_name(client: &Client, server: &str, board: &str) -> Str
     board.to_string()
 }
 
-/// dat の Range 差分取得結果。
+/// Result of a dat Range incremental fetch.
 #[derive(Debug)]
 pub enum DatFetch {
-    /// 206: 増分（末尾に追記すべきバイト列）と新しい総バイト数。
+    /// 206: the increment (bytes to append at the end) and the new total byte count.
     Append { bytes: Vec<u8>, total: u64 },
-    /// 200 もしくは縮小検知後の再取得: 全体を置換。
+    /// 200 or a refetch after detecting shrinkage: replace the whole body.
     Replace { bytes: Vec<u8>, total: u64 },
-    /// 416 かつ サイズ同一: 変化なし。
+    /// 416 with the same size: no change.
     NotModified,
-    /// 404: スレ落ち。
+    /// 404: thread is gone.
     Gone,
 }
 
-/// dat を Range 差分取得する。
-/// `from_bytes` は前回保存した Shift_JIS バイト数、`last_tail` は前回 dat の末尾
-/// 最大 OVERLAP バイト（境界照合用）。あぼーん等の壊れた差分は全取得でリペアする。
+/// Fetches the dat via a Range incremental request.
+/// `from_bytes` is the previously stored Shift_JIS byte count; `last_tail` is up to OVERLAP
+/// trailing bytes of the previous dat (for boundary matching). Corrupted diffs (deletions etc.) are repaired via a full fetch.
 pub async fn fetch_dat(
     client: &Client,
     server: &str,
@@ -128,21 +128,21 @@ pub async fn fetch_dat(
     from_bytes: u64,
     last_tail: &[u8],
 ) -> Result<DatFetch, AppError> {
-    // SSRF 多層防御: URL 組み立て前に検証。
+    // SSRF defense-in-depth: validate before assembling the URL.
     validate_ref(server, board, thread_id)?;
     let url = dat_url(server, board, thread_id);
 
-    // 初回は全取得。
+    // First time: full fetch.
     if from_bytes == 0 {
         return refetch_full(client, &url).await;
     }
 
-    // 末尾 overlap バイトを含めて取得し、境界一致と差分の妥当性を確認する。
+    // Fetch including the trailing overlap bytes to verify boundary match and diff validity.
     let overlap = OVERLAP.min(from_bytes).min(last_tail.len() as u64);
     let resp = get(client, &url, Some(from_bytes - overlap)).await?;
 
     match resp.status() {
-        // サーバーが Range を無視して全体を返した。
+        // The server ignored Range and returned the whole body.
         StatusCode::OK => {
             let bytes = resp.bytes().await?.to_vec();
             let total = bytes.len() as u64;
@@ -151,7 +151,7 @@ pub async fn fetch_dat(
         StatusCode::PARTIAL_CONTENT => {
             let bytes = resp.bytes().await?.to_vec();
             let o = overlap as usize;
-            // ① 境界一致: 先頭 overlap バイトが前回末尾と一致するか（あぼーん検知）。
+            // (1) Boundary match: do the leading overlap bytes match the previous tail (deletion detection)?
             let boundary_ok =
                 o == 0 || (bytes.len() >= o && bytes[..o] == last_tail[last_tail.len() - o..]);
             let appended = if bytes.len() >= o {
@@ -159,7 +159,7 @@ pub async fn fetch_dat(
             } else {
                 Vec::new()
             };
-            // ② 差分のヘッダー妥当性（5 バイト問題等の壊れた追記を弾く）。
+            // (2) Header validity of the diff (reject corrupted appends like the 5-byte problem).
             let diff_ok = validate_diff(&decode_shift_jis(&appended));
             if !boundary_ok || !diff_ok {
                 tracing::info!("[dat] diff invalid (boundary={boundary_ok}, diff={diff_ok}) -> full refetch");
@@ -172,10 +172,10 @@ pub async fn fetch_dat(
             })
         }
         StatusCode::RANGE_NOT_SATISFIABLE => {
-            // ④ サーバー側サイズ <= 要求開始位置。Content-Range の total で判定。
+            // (4) Server-side size <= requested start position. Decide from Content-Range total.
             match content_range_total(&resp) {
                 Some(t) if t == from_bytes => Ok(DatFetch::NotModified),
-                _ => refetch_full(client, &url).await, // 縮小(あぼーん)/不明 → 全取得
+                _ => refetch_full(client, &url).await, // shrinkage (deletion)/unknown -> full fetch
             }
         }
         StatusCode::NOT_FOUND => Ok(DatFetch::Gone),
@@ -183,7 +183,7 @@ pub async fn fetch_dat(
     }
 }
 
-/// dat 全体を取り直す（差分が壊れていた場合のリペア・初回取得）。
+/// Refetches the entire dat (repair when the diff was corrupted, or initial fetch).
 async fn refetch_full(client: &Client, url: &str) -> Result<DatFetch, AppError> {
     let resp = get(client, url, None).await?;
     match resp.status() {
@@ -197,7 +197,7 @@ async fn refetch_full(client: &Client, url: &str) -> Result<DatFetch, AppError> 
     }
 }
 
-/// Content-Range ヘッダから総サイズを取り出す（"bytes */1234" や "bytes 0-1/1234"）。
+/// Extracts the total size from the Content-Range header ("bytes */1234" or "bytes 0-1/1234").
 fn content_range_total(resp: &Response) -> Option<u64> {
     let v = resp.headers().get(reqwest::header::CONTENT_RANGE)?;
     v.to_str().ok()?.rsplit('/').next()?.trim().parse().ok()

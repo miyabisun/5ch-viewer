@@ -1,7 +1,4 @@
-//! 次スレ判定。sentinel の find-next-thread.js を移植する。
-//!
-//! ▼▼▼ ここはあなたが実装する箇所です（learning mode）▼▼▼
-//! テストは下に用意済み。`cargo test next_thread` で Red→Green を回せます。
+//! Next-thread detection. A port of sentinel's find-next-thread.js.
 
 use crate::goch::subject::SubjectEntry;
 use regex_lite::Regex;
@@ -9,24 +6,24 @@ use std::sync::LazyLock;
 
 static NUMBER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d+").unwrap());
 
-/// タイトル中の数字とその位置（バイトオフセット）。
+/// A number within the title and its position (byte offset).
 struct NumberPos {
     raw: String,
     num: u64,
     start: usize,
 }
 
-/// 現在のスレタイから「次スレ（Part 番号 +1）」を subject 一覧から探す。
+/// Finds the "next thread (Part number +1)" from the subject list, based on the current thread title.
 ///
-/// アルゴリズム（sentinel 準拠）:
-/// 1. タイトル中の数字を **位置付きで全て** 抽出する。
-/// 2. **右端の数字から順に** +1 を試す（Part 番号は末尾寄りのため）。
-/// 3. その数字の **前後 最大6文字** を「コンテキスト」とし、候補タイトルが
-///    「前コンテキストを含む」かつ「後コンテキストを含む」かつ
-///    「+1 した数値文字列を含む」場合にマッチとする（誤爆防止）。
-///    - 前後コンテキストが両方とも空（タイトルが数字だけ）の位置はスキップ。
-/// 4. ゼロパディング形式（例 `Part09` → `Part10`）も試す。
-/// 5. 見つかれば最初の該当 entry、なければ None。
+/// Algorithm (following sentinel):
+/// 1. Extract **all numbers with their positions** from the title.
+/// 2. Try +1 **starting from the rightmost number** (the Part number tends to be near the end).
+/// 3. Treat **up to 6 chars before and after** that number as "context"; a candidate title matches
+///    if it "contains the prefix context" AND "contains the suffix context" AND
+///    "contains the +1 numeric string" (to avoid false positives).
+///    - Skip positions where both prefix and suffix contexts are empty (title is digits only).
+/// 4. Also try the zero-padded form (e.g. `Part09` -> `Part10`).
+/// 5. Returns the first matching entry if found, otherwise None.
 pub fn find_next_thread<'a>(
     current_title: &str,
     entries: &'a [SubjectEntry],
@@ -45,20 +42,20 @@ pub fn find_next_thread<'a>(
         return None;
     }
 
-    // 右端の数字から +1 を試す（Part 番号は末尾寄りのため）。
+    // Try +1 from the rightmost number (the Part number tends to be near the end).
     for pos in positions.iter().rev() {
-        // start と raw.len() はバイト数なので、このスライスは char 境界上で安全。
+        // start and raw.len() are byte counts, so this slice is safe on char boundaries.
         let prefix = &current_title[..pos.start];
         let suffix = &current_title[pos.start + pos.raw.len()..];
 
-        // 前後の最大6文字を char 単位で切り出す（UTF-8 のバイト境界 panic を避ける）。
+        // Slice up to 6 chars before and after, per char (to avoid UTF-8 byte-boundary panics).
         let prefix_chars: Vec<char> = prefix.chars().collect();
         let prefix_frag: String = prefix_chars[prefix_chars.len().saturating_sub(6)..]
             .iter()
             .collect();
         let suffix_frag: String = suffix.chars().take(6).collect();
 
-        // タイトルが数字だけ（前後コンテキスト無し）ならスキップ。
+        // Skip if the title is digits only (no surrounding context).
         if prefix_frag.is_empty() && suffix_frag.is_empty() {
             continue;
         }
@@ -76,7 +73,7 @@ pub fn find_next_thread<'a>(
             return Some(found);
         }
 
-        // ゼロパディング形式（例 Part008 → Part009）も試す。
+        // Also try the zero-padded form (e.g. Part008 -> Part009).
         let padded = format!("{:0>width$}", next_str, width = pos.raw.len());
         if padded != next_str {
             if let Some(found) = entries
@@ -141,7 +138,7 @@ mod tests {
             entry("1770100000", "5ch総合 Part4", 10),
             entry("1770200000", "6ch総合 Part3", 10),
         ];
-        // "5ch総合 Part3" の数字は 5 と 3。右端の 3 を +1 して Part4 にマッチすべき
+        // The numbers in "5ch総合 Part3" are 5 and 3. It should +1 the rightmost 3 and match Part4.
         let result = find_next_thread("5ch総合 Part3", &entries);
         assert_eq!(result, Some(&entries[1]));
     }
@@ -176,8 +173,8 @@ mod tests {
             entry("1770000000", "無関係スレ 11", 100),
             entry("1770100000", "11スレ目", 50),
         ];
-        // "10スレ目" は数字が先頭（前コンテキストが空）。
-        // 後コンテキスト "スレ目" を持つ "11スレ目" にマッチすべき
+        // In "10スレ目" the number is at the start (empty prefix context).
+        // It should match "11スレ目", which has the suffix context "スレ目".
         let result = find_next_thread("10スレ目", &entries);
         assert_eq!(result, Some(&entries[1]));
     }

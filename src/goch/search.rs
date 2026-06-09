@@ -1,8 +1,8 @@
-//! find.5ch.net（公式スレタイ検索）のラップとパース。
-//! ブラウザから直接叩くと CORS で弾かれるためサーバーで取得し JSON で返す。
-//! レスポンスは JS 不要の HTML。結果リンクは `a.list_line_link`、href がスレ URL
-//! （スキーム省略の `//server.5ch.io/test/read.cgi/board/thread_id`）、タイトルは
-//! `.list_line_link_title`。タイトル末尾の `(123)` がレス数。
+//! Wrapping and parsing of find.5ch.net (the official thread-title search).
+//! Hitting it directly from the browser is blocked by CORS, so the server fetches it and returns JSON.
+//! The response is HTML that needs no JS. Result links are `a.list_line_link`, href is the thread URL
+//! (scheme-relative `//server.5ch.io/test/read.cgi/board/thread_id`), and the title is
+//! `.list_line_link_title`. The trailing `(123)` in the title is the post count.
 
 use crate::error::AppError;
 use crate::goch::url::parse_thread_url;
@@ -13,10 +13,10 @@ use serde::Serialize;
 use std::sync::LazyLock;
 
 const SEARCH_BASE: &str = "https://find.5ch.net/search?q=";
-/// find.5ch.net はブラウザ相当の UA を要求する（Monazilla だと弾かれることがある）。
+/// find.5ch.net requires a browser-like UA (Monazilla may be rejected).
 const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
 
-// タイトル末尾の "(123)" からレス数を補完する。
+// Derive the post count from the trailing "(123)" in the title.
 static RES_COUNT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\((\d+)\)\s*$").unwrap());
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -28,7 +28,7 @@ pub struct SearchResult {
     pub res_count: i64,
 }
 
-/// find.5ch.net で検索し、結果一覧を返す。
+/// Searches via find.5ch.net and returns the result list.
 pub async fn search(client: &Client, query: &str) -> Result<Vec<SearchResult>, AppError> {
     let url = format!("{SEARCH_BASE}{}", urlencoding::encode(query));
     let resp = client
@@ -47,7 +47,7 @@ pub async fn search(client: &Client, query: &str) -> Result<Vec<SearchResult>, A
     Ok(parse_search_html(&html))
 }
 
-/// find.5ch.net の検索結果 HTML をパースする。
+/// Parses the search-result HTML from find.5ch.net.
 pub fn parse_search_html(html: &str) -> Vec<SearchResult> {
     let doc = Html::parse_document(html);
     let link_sel = Selector::parse("a.list_line_link").unwrap();
@@ -58,8 +58,8 @@ pub fn parse_search_html(html: &str) -> Vec<SearchResult> {
         let Some(href) = link.value().attr("href") else {
             continue;
         };
-        // href はスキーム省略の "//server.5ch.io/..." 形式。parse_thread_url は
-        // https?:// を要求するため補完する。
+        // href is the scheme-relative "//server.5ch.io/..." form. parse_thread_url
+        // requires https?://, so prepend it.
         let normalized = href.strip_prefix("//").map(|r| format!("https://{r}"));
         let target = normalized.as_deref().unwrap_or(href);
         let Some(tref) = parse_thread_url(target) else {
@@ -73,7 +73,7 @@ pub fn parse_search_html(html: &str) -> Vec<SearchResult> {
             .unwrap_or_default();
         let raw_title = raw_title.trim();
 
-        // 末尾の "(123)" をレス数として切り出し、タイトルからは除去する。
+        // Extract the trailing "(123)" as the post count and remove it from the title.
         let (title, res_count) = match RES_COUNT_RE.captures(raw_title) {
             Some(c) => {
                 let count = c[1].parse().unwrap_or(0);
@@ -98,7 +98,7 @@ pub fn parse_search_html(html: &str) -> Vec<SearchResult> {
 mod tests {
     use super::*;
 
-    // find.5ch.net の実レスポンスから抜粋した固定 HTML サンプル。
+    // Fixed HTML sample excerpted from a real find.5ch.net response.
     const SAMPLE: &str = r##"<!DOCTYPE html>
 <html><body>
 <div class="list">
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn keeps_parentheses_inside_title() {
-        // 末尾の (23) だけがレス数。タイトル中の "(仮)" は残す。
+        // Only the trailing (23) is the post count. The "(仮)" within the title is kept.
         let results = parse_search_html(SAMPLE);
         assert_eq!(results[1].title, "iPhone 質問スレ Part100 (仮)");
         assert_eq!(results[1].res_count, 23);

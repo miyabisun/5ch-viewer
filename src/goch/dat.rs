@@ -1,6 +1,6 @@
-//! dat のパース。1 行 = 1 レス。フィールドは `<>` 区切り:
-//!   名前<>メール<>日付 ID等<>本文<>スレッドタイトル(1レス目のみ)
-//! レス番号は行番号（1 始まり）。
+//! dat parsing. 1 line = 1 post. Fields are separated by `<>`:
+//!   name<>mail<>date ID etc.<>body<>thread title (first post only)
+//! The post number is the line number (1-based).
 
 use serde::Serialize;
 
@@ -9,12 +9,12 @@ pub struct Res {
     pub num: i64,
     pub name: String,
     pub mail: String,
-    /// 日付 + ID 等（dat の 3 フィールド目をそのまま）。
+    /// Date + ID etc. (the dat's 3rd field as-is).
     pub date: String,
     pub body: String,
 }
 
-/// dat 本文（UTF-8 デコード済み）をレス配列にパースする。
+/// Parses dat content (already UTF-8 decoded) into an array of posts.
 pub fn parse_dat(text: &str) -> Vec<Res> {
     let mut out = Vec::new();
     for (i, line) in text.split('\n').enumerate() {
@@ -36,7 +36,7 @@ pub fn parse_dat(text: &str) -> Vec<Res> {
     out
 }
 
-/// 1 レス目（5 フィールド目）からスレッドタイトルを取り出す。
+/// Extracts the thread title from the first post (the 5th field).
 pub fn title_from_dat(text: &str) -> Option<String> {
     let first = text.split('\n').next()?;
     let f: Vec<&str> = first.split("<>").collect();
@@ -47,27 +47,27 @@ pub fn title_from_dat(text: &str) -> Option<String> {
     }
 }
 
-/// Range 差分（Shift_JIS デコード済み）が「正常な追記」かを検証する。
-/// あぼーん等で過去が書き換わった壊れた差分を弾く（不正なら全取得リペアへ）。
-/// レスは必ず `名前<>メール<>日付ID<>本文<>` を含むため、ヘッダー欠損で検知できる。
+/// Validates that a Range diff (already Shift_JIS decoded) is a "valid append".
+/// Rejects corrupted diffs where the past was rewritten by deletions etc. (invalid -> full-fetch repair).
+/// Since every post must contain `name<>mail<>dateID<>body<>`, a missing header is detectable.
 pub fn validate_diff(text: &str) -> bool {
     if text.is_empty() {
-        return true; // 追記ゼロ
+        return true; // zero appended bytes
     }
-    // 完結したレスのみを受け入れる: 必ず改行終端。
+    // Accept only complete posts: must end with a newline.
     if !text.ends_with('\n') {
         return false;
     }
     for line in text.split('\n') {
         if line.is_empty() {
-            continue; // 末尾 \n 由来の空要素
+            continue; // empty element from the trailing \n
         }
         let f: Vec<&str> = line.split("<>").collect();
         if f.len() < 4 {
-            return false; // ヘッダー欠損（例: 5 バイトだけ増えた壊れた差分）
+            return false; // missing header (e.g. corrupted diff that grew by just 5 bytes)
         }
         if f[2].trim().is_empty() {
-            return false; // 日付ID 欠損 = 壊れ / あぼーん置換
+            return false; // missing dateID = corruption / deletion replacement
         }
     }
     true
@@ -123,14 +123,14 @@ mod tests {
 
     #[test]
     fn validate_diff_rejects_header_missing() {
-        // 5 バイト問題相当: <> が足りない壊れた差分
+        // Equivalent to the 5-byte problem: corrupted diff missing <>
         assert!(!validate_diff(" abc \n"));
-        assert!(!validate_diff("a<>b<>c\n")); // フィールド3個
+        assert!(!validate_diff("a<>b<>c\n")); // 3 fields
     }
 
     #[test]
     fn validate_diff_rejects_empty_date_field() {
-        // 日付ID(3番目)が空 = あぼーん置換等
+        // empty dateID (3rd field) = deletion replacement etc.
         assert!(!validate_diff("名無し<>sage<><>本文<>\n"));
     }
 

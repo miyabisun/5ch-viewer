@@ -1,5 +1,5 @@
-//! レス本文の HTML サニタイズ。5ch 本文は `<br>` や `<a>`、HTML エンティティを
-//! 含むため、許可リスト方式（ammonia）で安全化する。許可は `a`(href のみ) と `br`。
+//! HTML sanitization of post bodies. Since 5ch bodies contain `<br>`, `<a>`, and
+//! HTML entities, they are made safe via an allowlist approach (ammonia). Allowed: `a` (href only) and `br`.
 
 use ammonia::Builder;
 use std::collections::HashSet;
@@ -8,8 +8,8 @@ use std::sync::LazyLock;
 static SANITIZER: LazyLock<Builder<'static>> = LazyLock::new(|| {
     let tags: HashSet<&str> = ["a", "br"].into_iter().collect();
     let mut builder = Builder::default();
-    // 許可タグを a, br のみに絞る。a の href 属性と URL スキーム制限は
-    // ammonia のデフォルト（http/https/mailto 等のみ、javascript: 等は除去）に従う。
+    // Restrict allowed tags to a and br. The a tag's href attribute and URL scheme
+    // restrictions follow ammonia's defaults (only http/https/mailto etc., removing javascript: etc.).
     builder.tags(tags);
     builder
 });
@@ -37,7 +37,7 @@ mod tests {
         assert!(!out.contains("script"));
         assert!(!out.contains("alert"));
         assert!(!out.contains("onclick"));
-        // p は許可外なのでタグは消え、テキストは残る
+        // p is not allowed so the tag is removed, but the text remains
         assert!(out.contains("x"));
     }
 
@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn keeps_entities_as_text() {
-        // アンカー >>123 は &gt;&gt;123 として残る（フロントでリンク化する）
+        // the anchor >>123 remains as &gt;&gt;123 (the frontend turns it into a link)
         let out = clean("&gt;&gt;123 本文");
         assert!(out.contains("&gt;&gt;123") || out.contains(">>123"));
     }

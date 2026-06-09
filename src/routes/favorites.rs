@@ -12,7 +12,7 @@ use axum::{Json, Router};
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 
-// 終了閾値（spec 第7章）。dat サイズはバイト単位。
+// End-of-thread thresholds (spec ch.7). dat size is in bytes.
 const RES_WARN: i64 = 980;
 const RES_DEAD: i64 = 1000;
 const DAT_WARN: u64 = 900 * 1024;
@@ -36,7 +36,7 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-/// 一覧（順不同。並べ替えはフロント）。
+/// List (unordered; sorting is done by the frontend).
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Favorite>>, AppError> {
     let conn = state.db.lock().unwrap();
     let mut stmt = conn.prepare(
@@ -61,7 +61,7 @@ async fn list(State(state): State<AppState>) -> Result<Json<Vec<Favorite>>, AppE
     Ok(Json(rows))
 }
 
-/// 追加。url 直接 か server/board/thread_id を受け、SETTING.TXT で board_name を取得。
+/// Add. Accepts a direct url or server/board/thread_id, and fetches board_name from SETTING.TXT.
 async fn add(
     State(state): State<AppState>,
     Json(req): Json<AddRequest>,
@@ -97,7 +97,7 @@ fn resolve_ref(req: &AddRequest) -> Result<(String, String, String), AppError> {
             }
         }
     };
-    // SSRF 対策: ユーザー入力（URL/直接指定/検索結果）を厳格に検証する。
+    // SSRF mitigation: strictly validate user input (URL/direct/search result).
     validate_ref(&server, &board, &thread_id)?;
     Ok((server, board, thread_id))
 }
@@ -154,7 +154,7 @@ async fn patch_rating(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// 保存済み dat をレス配列にして返す。
+/// Returns the stored dat as an array of posts.
 async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<DatResponse>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
     let conn = state.db.lock().unwrap();
@@ -187,7 +187,7 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
         Some(bytes) => parse_dat(&http::decode_shift_jis(&bytes)),
         None => vec![],
     };
-    // レス本文を HTML サニタイズ（XSS 対策。フロントは {@html} 前提）。
+    // HTML-sanitize post bodies (XSS mitigation; the frontend uses {@html}).
     for r in &mut res {
         r.body = crate::sanitize::clean(&r.body);
     }
@@ -200,10 +200,10 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
     }))
 }
 
-/// Range 差分取得して dat を更新（spec 6.3 / 6.4）。
+/// Fetches a Range diff and updates the dat (spec 6.3 / 6.4).
 async fn reload(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<ReloadResponse>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
-    // 1. 前回保存した dat_bytes を取得。
+    // 1. Fetch the previously stored dat_bytes.
     let (dat_bytes, old_res_count, last_tail): (u64, i64, Vec<u8>) = {
         let conn = state.db.lock().unwrap();
         let (db, rc) = conn
@@ -214,7 +214,7 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
             )
             .optional()?
             .ok_or_else(|| AppError::NotFound("favorite not found".into()))?;
-        // 前回 dat の末尾6バイト（境界照合用）。dat 未保存なら空。
+        // Last 6 bytes of the previous dat (for boundary matching). Empty if no dat stored.
         let tail = conn
             .query_row(
                 "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -227,11 +227,11 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
         (db as u64, rc, tail)
     };
 
-    // 2. HTTP（lock を握らずに await）。
+    // 2. HTTP (await without holding the lock).
     let fetch =
         http::fetch_dat(&state.http, &server, &board, &thread_id, dat_bytes, &last_tail).await?;
 
-    // 3. dat_blobs を更新し、新しい総バイト数を得る。
+    // 3. Update dat_blobs and obtain the new total byte count.
     let mut new_total: Option<u64> = {
         let conn = state.db.lock().unwrap();
         match &fetch {
@@ -259,8 +259,9 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
         }
     };
 
-    // 3.5 退行検出: Append 後の res_count が旧値を下回ったら、末尾連続だが中間レスが
-    //     物理削除された（境界照合をすり抜けるあぼーん）。全取得でリペアする。
+    // 3.5 Regression detection: if res_count after Append drops below the old value, the tail is
+    //     contiguous but an intermediate post was physically deleted (a deletion that slipped past
+    //     boundary matching). Repair via a full fetch.
     if matches!(fetch, DatFetch::Append { .. }) {
         let new_rc = {
             let conn = state.db.lock().unwrap();
@@ -278,7 +279,7 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
         }
     }
 
-    // 4. メタ（res_count / title / dat_bytes / status）を再計算して更新。
+    // 4. Recompute and update metadata (res_count / title / dat_bytes / status).
     let conn = state.db.lock().unwrap();
     if let Some(total) = new_total {
         let text = read_blob_text(&conn, &server, &board, &thread_id)?;
@@ -309,7 +310,7 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
     }))
 }
 
-/// dat_blobs の raw を Shift_JIS デコードして返す。
+/// Reads the raw from dat_blobs, Shift_JIS-decodes it, and returns it.
 fn read_blob_text(
     conn: &rusqlite::Connection,
     server: &str,
@@ -324,7 +325,7 @@ fn read_blob_text(
     Ok(http::decode_shift_jis(&raw))
 }
 
-/// dat_blobs の raw を丸ごと置換（無ければ挿入）する。
+/// Replaces the raw in dat_blobs entirely (inserts if absent).
 fn replace_blob(
     conn: &rusqlite::Connection,
     server: &str,

@@ -36,7 +36,7 @@ fn spa_fallback(base_path: &str) -> impl IntoResponse {
         None => (
             StatusCode::NOT_FOUND,
             axum::Json(serde_json::json!({
-                "error": "Frontend not built. Run: cd client && npm install && npx vite build"
+                "error": "Frontend not built. Run: cd client && bun install && bun run build"
             })),
         )
             .into_response(),

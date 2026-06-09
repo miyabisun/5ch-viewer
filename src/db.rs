@@ -33,7 +33,7 @@ const SCHEMA: &str = "
 pub fn open(path: &str) -> Connection {
     tracing::info!("Database: {}", path);
 
-    // 親ディレクトリ（例: ./data）が無ければ作る。
+    // Create the parent directory (e.g. ./data) if it does not exist.
     if let Some(parent) = std::path::Path::new(path).parent() {
         if !parent.as_os_str().is_empty() {
             let _ = std::fs::create_dir_all(parent);
@@ -104,7 +104,7 @@ mod tests {
     fn primary_key_conflicts_on_same_thread() {
         let conn = open_memory();
         insert_favorite(&conn, "1771127145", "Part1");
-        // 同じ server+board+thread_id は衝突する
+        // the same server+board+thread_id conflicts
         let result = conn.execute(
             "INSERT INTO favorites (thread_id, server, board, board_name, title)
              VALUES ('1771127145', 'egg', 'applism', 'スマホアプリ', 'dup')",
@@ -124,7 +124,7 @@ mod tests {
         )
         .unwrap();
 
-        // 親 favorite を消すと dat_blob も CASCADE で消える
+        // deleting the parent favorite also deletes dat_blob via CASCADE
         conn.execute(
             "DELETE FROM favorites WHERE server = 'egg' AND board = 'applism' AND thread_id = '1771127145'",
             [],

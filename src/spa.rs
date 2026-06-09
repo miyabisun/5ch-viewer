@@ -4,8 +4,8 @@ use std::sync::Mutex;
 
 static CACHED_HTML: Mutex<Option<(String, u64)>> = Mutex::new(None);
 
-/// client/build/index.html を読み、BASE_PATH を注入して返す。
-/// 本番では mtime に関係なくキャッシュを返す。
+/// Reads client/build/index.html, injects BASE_PATH, and returns it.
+/// In production, returns the cached copy regardless of mtime.
 pub fn get_index_html(base_path: &str) -> Option<String> {
     let index_path = Path::new("client/build/index.html");
 

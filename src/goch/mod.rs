@@ -1,5 +1,5 @@
-//! 5ch（goch）アクセス層。
-//! まずは HTTP も DB も使わない純粋関数（パース・次スレ判定）から。
+//! 5ch (goch) access layer.
+//! Starting with pure functions that use neither HTTP nor DB (parsing, next-thread detection).
 
 pub mod dat;
 pub mod http;

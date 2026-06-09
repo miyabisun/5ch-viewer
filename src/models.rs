@@ -1,8 +1,8 @@
 use crate::goch::dat::Res;
 use serde::{Deserialize, Serialize};
 
-/// お気に入りスレッド（一覧 API レスポンス）。
-/// 並べ替えはフロント責務のため ORDER BY せず順不同で返す。
+/// Favorite thread (list API response).
+/// Returned unordered (no ORDER BY) since sorting is the frontend's responsibility.
 #[derive(Debug, Serialize)]
 pub struct Favorite {
     pub server: String,
@@ -16,7 +16,7 @@ pub struct Favorite {
     pub status: String,
 }
 
-/// お気に入り追加リクエスト。url 直接 か server/board/thread_id のどちらか。
+/// Add-favorite request. Either a direct url or server/board/thread_id.
 #[derive(Debug, Deserialize)]
 pub struct AddRequest {
     pub url: Option<String>,
@@ -36,7 +36,7 @@ pub struct RatingRequest {
     pub rating: i64,
 }
 
-/// スレ本文（保存済み dat）レスポンス。
+/// Thread body (stored dat) response.
 #[derive(Debug, Serialize)]
 pub struct DatResponse {
     pub title: String,
@@ -46,12 +46,12 @@ pub struct DatResponse {
     pub res: Vec<Res>,
 }
 
-/// リロード（Range 差分取得）結果。
+/// Reload (Range incremental fetch) result.
 #[derive(Debug, Serialize)]
 pub struct ReloadResponse {
     pub res_count: i64,
     pub read_res: i64,
     pub status: String,
-    /// dat に変化があったか（NotModified なら false）。
+    /// Whether the dat changed (false on NotModified).
     pub updated: bool,
 }

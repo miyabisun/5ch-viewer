@@ -3,8 +3,8 @@
 スマホ・タブレット・PC のどこからでも、5ch スレッドの続きを同じ既読位置で読む
 個人用ビューワー。dat と既読位置をサーバー（SQLite）に集約して端末間同期する。
 
-- 仕様: [docs/spec.md](docs/spec.md)
-- 実装メモ・判断ポイント: [docs/implementation-notes.md](docs/implementation-notes.md)
+- 本アプリの仕様: [docs/spec.md](docs/spec.md)
+- 5ch 側の仕様（調査メモ）: [docs/5ch-spec.md](docs/5ch-spec.md)
 
 ## 構成
 
