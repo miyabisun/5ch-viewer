@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+cleanup() { kill "${VITE_PID:-}" 2>/dev/null || true; }
+trap cleanup EXIT
+
+echo "==> frontend setup & watch build..."
+cd client
+npm install
+npx vite build
+npx vite build --watch &
+VITE_PID=$!
+cd ..
+
+echo "==> building server..."
+cargo build
+
+echo "==> starting server (http://localhost:3000)..."
+target/debug/goch-viewer
