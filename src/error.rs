@@ -25,6 +25,14 @@ impl IntoResponse for AppError {
             AppError::Upstream(msg) => (StatusCode::BAD_GATEWAY, msg),
             AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
+        // Never swallow errors silently: server-side faults (5xx) must always be logged
+        // so they are visible in the dev server window. Client faults (4xx) are logged
+        // at a lower level for context without being noisy.
+        if status.is_server_error() {
+            tracing::error!(%status, "{message}");
+        } else {
+            tracing::debug!(%status, "{message}");
+        }
         let body = axum::Json(json!({ "error": message }));
         (status, body).into_response()
     }

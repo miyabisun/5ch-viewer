@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA: &str = "
+pub(crate) const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS favorites (
         thread_id   TEXT    NOT NULL,
         server      TEXT    NOT NULL,

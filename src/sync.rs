@@ -88,22 +88,26 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
         Some(e) => {
             let status = status_for(e.res_count);
             let conn = state.db.lock().unwrap();
-            let _ = conn.execute(
+            if let Err(err) = conn.execute(
                 "UPDATE favorites SET res_count=?4,
                  title = CASE WHEN title='' THEN ?5 ELSE title END,
                  status=?6, updated_at=strftime('%s','now')
                  WHERE server=?1 AND board=?2 AND thread_id=?3",
                 rusqlite::params![server, board, w.thread_id, e.res_count, e.title, status],
-            );
+            ) {
+                tracing::error!("[sync] update {server}/{board}/{}: {err}", w.thread_id);
+            }
             status == "dead"
         }
         None => {
             let conn = state.db.lock().unwrap();
-            let _ = conn.execute(
+            if let Err(err) = conn.execute(
                 "UPDATE favorites SET status='dead', updated_at=strftime('%s','now')
                  WHERE server=?1 AND board=?2 AND thread_id=?3",
                 rusqlite::params![server, board, w.thread_id],
-            );
+            ) {
+                tracing::error!("[sync] mark dead {server}/{board}/{}: {err}", w.thread_id);
+            }
             true
         }
     };
@@ -132,14 +136,17 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
             )
             .unwrap_or_else(|_| board.to_string());
         // Auto-add inheriting the rating (ignore if it already exists).
-        let _ = conn.execute(
+        if let Err(err) = conn.execute(
             "INSERT OR IGNORE INTO favorites
              (server, board, thread_id, board_name, title, res_count, rating)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 server, board, next.thread_id, board_name, next.title, next.res_count, w.rating
             ],
-        );
+        ) {
+            tracing::error!("[sync] auto-add next {server}/{board}/{}: {err}", next.thread_id);
+            return;
+        }
         tracing::info!("[sync] next thread added: {} -> {}", title, next.title);
     }
 }

@@ -245,11 +245,7 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
                 None
             }
             DatFetch::Append { bytes, total } => {
-                conn.execute(
-                    "INSERT INTO dat_blobs (server, board, thread_id, raw) VALUES (?1,?2,?3,?4)
-                     ON CONFLICT(server, board, thread_id) DO UPDATE SET raw = raw || excluded.raw",
-                    params![server, board, thread_id, bytes],
-                )?;
+                append_blob(&conn, &server, &board, &thread_id, bytes)?;
                 Some(*total)
             }
             DatFetch::Replace { bytes, total } => {
@@ -325,6 +321,30 @@ fn read_blob_text(
     Ok(http::decode_shift_jis(&raw))
 }
 
+/// Appends bytes to the existing raw, keeping the column's BLOB type.
+///
+/// NOTE: SQLite's `||` operator coerces BLOB operands to TEXT, which would corrupt
+/// the stored bytes (later `r.get::<Vec<u8>>` fails with "Invalid column type Text").
+/// We therefore read the existing bytes and concatenate in Rust, then write back a BLOB.
+fn append_blob(
+    conn: &rusqlite::Connection,
+    server: &str,
+    board: &str,
+    thread_id: &str,
+    bytes: &[u8],
+) -> Result<(), AppError> {
+    let mut raw: Vec<u8> = conn
+        .query_row(
+            "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![server, board, thread_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or_default();
+    raw.extend_from_slice(bytes);
+    replace_blob(conn, server, board, thread_id, &raw)
+}
+
 /// Replaces the raw in dat_blobs entirely (inserts if absent).
 fn replace_blob(
     conn: &rusqlite::Connection,
@@ -348,5 +368,104 @@ fn compute_status(res_count: i64, dat_bytes: u64) -> &'static str {
         "warned"
     } else {
         "active"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    const SERVER: &str = "egg";
+    const BOARD: &str = "applism";
+    const THREAD: &str = "1771127145";
+
+    fn setup() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        conn.execute_batch(crate::db::SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO favorites (thread_id, server, board, board_name, title)
+             VALUES (?1, ?2, ?3, 'name', '')",
+            params![THREAD, SERVER, BOARD],
+        )
+        .unwrap();
+        conn
+    }
+
+    /// Encodes UTF-8 text to Shift_JIS bytes (as a real dat is stored).
+    fn sjis(text: &str) -> Vec<u8> {
+        let (cow, _, _) = encoding_rs::SHIFT_JIS.encode(text);
+        cow.into_owned()
+    }
+
+    fn column_type(conn: &Connection) -> String {
+        conn.query_row(
+            "SELECT typeof(raw) FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![SERVER, BOARD, THREAD],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap()
+    }
+
+    /// Regression: appending a diff must keep `raw` as a BLOB so that later reads
+    /// (`r.get::<Vec<u8>>`) succeed and the dat parses. The previous SQLite `||`
+    /// based append coerced the column to TEXT and broke both.
+    #[test]
+    fn append_blob_keeps_blob_type_and_parses() {
+        let conn = setup();
+        let first = sjis("名無し<>sage<>2025/01/01 ID:abc<>本文1<>スレタイ\n");
+        let diff = sjis("名無し<><>2025/01/02 ID:def<>本文2<>\n");
+
+        // initial store
+        append_blob(&conn, SERVER, BOARD, THREAD, &first).unwrap();
+        // incremental append (the path that used to corrupt the column type)
+        append_blob(&conn, SERVER, BOARD, THREAD, &diff).unwrap();
+
+        // (a) the column type stays BLOB
+        assert_eq!(column_type(&conn), "blob");
+
+        // (b) reading as bytes succeeds (would error "Invalid column type Text" if TEXT)
+        let raw: Vec<u8> = conn
+            .query_row(
+                "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
+                params![SERVER, BOARD, THREAD],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        // (c) the appended dat still parses into both posts
+        let res = parse_dat(&http::decode_shift_jis(&raw));
+        assert_eq!(res.len(), 2);
+        assert_eq!(res[0].body, "本文1");
+        assert_eq!(res[1].body, "本文2");
+    }
+
+    /// Documents the original bug: SQLite's `||` operator coerces BLOB to TEXT,
+    /// corrupting non-ASCII (Shift_JIS) bytes. Guards against regressing the fix.
+    #[test]
+    fn sqlite_concat_operator_corrupts_blob() {
+        let conn = setup();
+        let first = sjis("名無し<>sage<>2025/01/01 ID:abc<>本文1<>スレタイ\n");
+        let diff = sjis("名無し<><>2025/01/02 ID:def<>本文2<>\n");
+        conn.execute(
+            "INSERT INTO dat_blobs (server, board, thread_id, raw) VALUES (?1,?2,?3,?4)",
+            params![SERVER, BOARD, THREAD, first],
+        )
+        .unwrap();
+        // the old (buggy) append
+        conn.execute(
+            "UPDATE dat_blobs SET raw = raw || ?4 WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![SERVER, BOARD, THREAD, diff],
+        )
+        .unwrap();
+        // the column is now TEXT, so reading as bytes fails
+        assert_eq!(column_type(&conn), "text");
+        let read: Result<Vec<u8>, _> = conn.query_row(
+            "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![SERVER, BOARD, THREAD],
+            |r| r.get(0),
+        );
+        assert!(read.is_err(), "expected Invalid column type Text");
     }
 }
