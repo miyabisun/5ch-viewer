@@ -68,7 +68,8 @@ async fn add(
     Json(req): Json<AddRequest>,
 ) -> Result<Json<Value>, AppError> {
     let (server, board, thread_id) = resolve_ref(&req)?;
-    let board_name = http::fetch_board_name(&state.http, &server, &board).await;
+    let board_name =
+        http::fetch_board_name(&state.http, &state.config.goch_base_url, &server, &board).await;
     let title = req.title.unwrap_or_default();
     {
         let conn = state.db.lock().unwrap();
@@ -241,7 +242,14 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
 
     // 2. Check subject.txt to see how many posts the board reports (load-reduction gate).
     //    On subject failure, fall back to fetching the dat (cannot prove "no change").
-    let subject_count: Option<i64> = match http::fetch_subject(&state.http, &server, &board).await {
+    let subject_count: Option<i64> = match http::fetch_subject(
+        &state.http,
+        &state.config.goch_base_url,
+        &server,
+        &board,
+    )
+    .await
+    {
         Ok(entries) => entries
             .iter()
             .find(|e| e.thread_id == thread_id)
@@ -286,7 +294,9 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
     tracing::info!(
         "[reload] {server}/{board}/{thread_id}: subject={subject_count:?} stored={stored_res_count} -> fetching dat"
     );
-    let fetch = http::fetch_dat(&state.http, &server, &board, &thread_id).await?;
+    let fetch =
+        http::fetch_dat(&state.http, &state.config.goch_base_url, &server, &board, &thread_id)
+            .await?;
 
     // 5. Persist the result: a full BLOB replace + metadata recompute, or mark dead on Gone.
     //    The fetched bytes are used directly (no DB read-back), since we already hold the body.

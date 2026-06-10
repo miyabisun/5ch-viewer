@@ -1,16 +1,6 @@
-mod config;
-mod db;
-mod error;
-mod goch;
-mod models;
-mod routes;
-mod sanitize;
-mod spa;
-mod state;
-mod sync;
-
-use config::Config;
-use state::AppState;
+use goch_viewer::config::Config;
+use goch_viewer::state::{self, AppState};
+use goch_viewer::{db, routes, sync};
 use std::sync::{Arc, Mutex};
 
 #[tokio::main]
@@ -20,15 +10,11 @@ async fn main() {
 
     let config = Config::from_env();
     let conn = db::open(&config.db_path);
-    let http = reqwest::Client::builder()
-        .user_agent(state::USER_AGENT)
-        .build()
-        .expect("Failed to build HTTP client");
 
     let state = AppState {
         db: Arc::new(Mutex::new(conn)),
         config: config.clone(),
-        http,
+        http: state::build_http_client(),
     };
 
     sync::start_sync(state.clone());

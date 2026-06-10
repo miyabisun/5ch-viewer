@@ -5,6 +5,10 @@ pub struct Config {
     pub port: u16,
     pub base_path: String,
     pub db_path: String,
+    /// Origin used to reach 5ch. Empty = production default (`https://{server}.5ch.io`).
+    /// When set (e.g. a local mock in integration tests), every board/thread URL is built
+    /// against this single origin instead of per-server 5ch.io hosts.
+    pub goch_base_url: String,
 }
 
 impl Config {
@@ -29,10 +33,17 @@ impl Config {
         let db_path =
             env::var("DATABASE_PATH").unwrap_or_else(|_| "./data/5ch-viewer.db".to_string());
 
+        // GOCH_BASE_URL overrides the 5ch origin (used by integration tests to point at a mock).
+        let goch_base_url = env::var("GOCH_BASE_URL")
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
+
         Self {
             port,
             base_path,
             db_path,
+            goch_base_url,
         }
     }
 }

@@ -20,14 +20,26 @@ pub fn decode_shift_jis(bytes: &[u8]) -> String {
     cow.into_owned()
 }
 
-fn subject_url(server: &str, board: &str) -> String {
-    format!("https://{server}.{HOST_SUFFIX}/{board}/subject.txt")
+/// Origin to reach a given server. When `base` is empty, use the production per-server
+/// 5ch.io host; otherwise route every server through the single override origin (a mock in
+/// integration tests). `server`/`board`/`thread_id` are still SSRF-validated by the callers,
+/// so only the host part changes — path segments remain fixed and safe.
+fn origin(base: &str, server: &str) -> String {
+    if base.is_empty() {
+        format!("https://{server}.{HOST_SUFFIX}")
+    } else {
+        base.to_string()
+    }
 }
-fn dat_url(server: &str, board: &str, thread_id: &str) -> String {
-    format!("https://{server}.{HOST_SUFFIX}/{board}/dat/{thread_id}.dat")
+
+fn subject_url(base: &str, server: &str, board: &str) -> String {
+    format!("{}/{board}/subject.txt", origin(base, server))
 }
-fn setting_url(server: &str, board: &str) -> String {
-    format!("https://{server}.{HOST_SUFFIX}/{board}/SETTING.TXT")
+fn dat_url(base: &str, server: &str, board: &str, thread_id: &str) -> String {
+    format!("{}/{board}/dat/{thread_id}.dat", origin(base, server))
+}
+fn setting_url(base: &str, server: &str, board: &str) -> String {
+    format!("{}/{board}/SETTING.TXT", origin(base, server))
 }
 
 /// GET (fixed identity). Retries on network errors and 5xx.
@@ -59,12 +71,13 @@ async fn get(client: &Client, url: &str) -> Result<Response, AppError> {
 /// Fetches and parses subject.txt.
 pub async fn fetch_subject(
     client: &Client,
+    base: &str,
     server: &str,
     board: &str,
 ) -> Result<Vec<SubjectEntry>, AppError> {
     // SSRF defense-in-depth: validate before assembling the URL (thread_id is unused, so a dummy).
     validate_ref(server, board, "0")?;
-    let resp = get(client, &subject_url(server, board)).await?;
+    let resp = get(client, &subject_url(base, server, board)).await?;
     if !resp.status().is_success() {
         return Err(AppError::Upstream(format!("subject.txt HTTP {}", resp.status())));
     }
@@ -73,12 +86,12 @@ pub async fn fetch_subject(
 }
 
 /// Fetches BBS_TITLE (the board's display name) from SETTING.TXT. Returns the board ID on failure.
-pub async fn fetch_board_name(client: &Client, server: &str, board: &str) -> String {
+pub async fn fetch_board_name(client: &Client, base: &str, server: &str, board: &str) -> String {
     // SSRF defense-in-depth: on invalid server/board, fall back to the board ID without any request.
     if validate_ref(server, board, "0").is_err() {
         return board.to_string();
     }
-    let resp = match get(client, &setting_url(server, board)).await {
+    let resp = match get(client, &setting_url(base, server, board)).await {
         Ok(r) if r.status().is_success() => r,
         _ => return board.to_string(),
     };
@@ -111,13 +124,14 @@ pub enum DatFetch {
 /// (it checks subject.txt's res_count before calling this, so 5ch is not hit needlessly).
 pub async fn fetch_dat(
     client: &Client,
+    base: &str,
     server: &str,
     board: &str,
     thread_id: &str,
 ) -> Result<DatFetch, AppError> {
     // SSRF defense-in-depth: validate before assembling the URL.
     validate_ref(server, board, thread_id)?;
-    let url = dat_url(server, board, thread_id);
+    let url = dat_url(base, server, board, thread_id);
     let resp = get(client, &url).await?;
     match resp.status() {
         StatusCode::NOT_FOUND => Ok(DatFetch::Gone),

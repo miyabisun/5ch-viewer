@@ -68,7 +68,7 @@ async fn run_once(state: &AppState) -> Result<(), AppError> {
     }
 
     for ((server, board), threads) in by_board {
-        match http::fetch_subject(&state.http, &server, &board).await {
+        match http::fetch_subject(&state.http, &state.config.goch_base_url, &server, &board).await {
             Ok(entries) => {
                 for w in &threads {
                     process_thread(state, &server, &board, w, &entries);

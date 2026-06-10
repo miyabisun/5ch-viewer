@@ -9,7 +9,9 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     proxy: {
-      '/api': 'http://localhost:3000',
+      // Integration tests point this at the in-memory itest-server (port 3001) via
+      // VITE_API_TARGET so the Svelte app talks to the real Rust backend.
+      '/api': process.env.VITE_API_TARGET || 'http://localhost:3000',
     },
   },
 })
