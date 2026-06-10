@@ -162,20 +162,49 @@
     return data?.res.find((r) => r.num === num) ?? { num, missing: true }
   }
 
-  // The modal is stack-based; the top is the currently displayed res.
-  // Tapping either an anchor target or source pushes; "back" pops.
-  let anchorStack = $state([])
-  const currentAnchor = $derived(anchorStack[anchorStack.length - 1] ?? null)
+  // Root anchor number; null means the modal is closed.
+  let anchorRoot = $state(null)
 
   function openAnchor(num) {
-    anchorStack = [...anchorStack, resOf(num)]
-  }
-  function popAnchor() {
-    anchorStack = anchorStack.slice(0, -1)
+    anchorRoot = num
   }
   function closeAnchor() {
-    anchorStack = []
+    anchorRoot = null
   }
+
+  // Pre-computed child list for the current anchor tree.
+  // Built once from (anchorRoot, data) with no rendering side-effects.
+  // BFS over the forward-anchor graph: each res number enters the visited set
+  // when it is *enqueued* (not when dequeued), so DAG nodes reachable via
+  // multiple paths are only expanded once and appear exactly once in the tree.
+  // Maps res number -> array of child res numbers to display under it.
+  const anchorChildren = $derived.by(() => {
+    const map = new Map()
+    if (anchorRoot == null || !data?.res) return map
+    const visited = new Set([anchorRoot])
+    const queue = [anchorRoot]
+    while (queue.length > 0) {
+      const num = queue.shift()
+      const r = resOf(num)
+      if (r.missing) {
+        map.set(num, [])
+        continue
+      }
+      const children = []
+      // matchAll clones the regex internally, so sharing ANCHOR_RE here does not
+      // corrupt the lastIndex used by the exec-based backrefs loop.
+      for (const m of r.body.matchAll(ANCHOR_RE)) {
+        const n = Number(m[1])
+        // Skip: self-reference or already enqueued/visited (prevents cycles and DAG duplication).
+        if (n === r.num || visited.has(n)) continue
+        visited.add(n)
+        children.push(n)
+        queue.push(n)
+      }
+      map.set(num, children)
+    }
+    return map
+  })
 
   // Body click (shared by list and modal). Follow the anchor when tapped.
   function onBodyClick(e) {
@@ -221,7 +250,7 @@
     function onEnd(e) {
       if (ignore || !locked || !horizontal) return
       // A modal owns the interaction while open; don't leave the thread.
-      if (anchorStack.length > 0) return
+      if (anchorRoot != null) return
       const dx = e.changedTouches[0].clientX - startX
       const dy = e.changedTouches[0].clientY - startY
       if (dx >= 60 && Math.abs(dx) > Math.abs(dy) * 1.5) onback()
@@ -256,13 +285,39 @@
   {/if}
 {/snippet}
 
-<!-- Res body (shared by list and modal). Anchors in body and back-references are followable. -->
-{#snippet resBody(r)}
+<!-- Res header + body, shared by every render site. -->
+{#snippet resHead(r)}
   <span class="num">{r.num}</span>
   <span class="name">{formatName(r.name)}</span>
   <span class="date">{r.date}</span>
   {@render body(r.body)}
+{/snippet}
+
+<!-- Res body (list/modal): header + body + followable back-references. -->
+{#snippet resBody(r)}
+  {@render resHead(r)}
   {@render refs(r.num)}
+{/snippet}
+
+<!-- Recursive anchor tree node.
+     Reads pre-computed anchorChildren (a derived Map) — no rendering side-effects.
+     Each res appears at most once in the tree (DAG/cycle-safe by construction). -->
+{#snippet anchorNode(num)}
+  {@const r = resOf(num)}
+  {@const children = anchorChildren.get(num) ?? []}
+  <div class="anchor-node">
+    {#if r.missing}
+      <div class="res missing">レス {num} は未取得です</div>
+    {:else}
+      <!-- No back-references inside the tree, to reduce noise. -->
+      <div class="res">
+        {@render resHead(r)}
+      </div>
+      {#each children as child (child)}
+        {@render anchorNode(child)}
+      {/each}
+    {/if}
+  </div>
 {/snippet}
 
 <!-- Sticky title header: stays visible while scrolling (replaces the removed
@@ -285,21 +340,12 @@
   </div>
 {/if}
 
-{#if currentAnchor}
+{#if anchorRoot != null}
   <Modal onclose={closeAnchor}>
-    {#snippet header()}
-      {#if anchorStack.length > 1}
-        <button class="back" onclick={popAnchor}>← 戻る</button>
-      {/if}
-    {/snippet}
-    {#if currentAnchor.missing}
-      <p>レス {currentAnchor.num} は未取得です</p>
-    {:else}
-      <!-- Anchors inside the modal are also followable (recursively pushed onto the stack). -->
-      <div class="res">
-        {@render resBody(currentAnchor)}
-      </div>
-    {/if}
+    <!-- Clicking >>N inside the tree replaces the root (no stacking). -->
+    <div role="presentation" onclick={onBodyClick}>
+      {@render anchorNode(anchorRoot)}
+    </div>
   </Modal>
 {/if}
 
@@ -365,13 +411,19 @@
     gap: 0.4rem;
     font-size: 0.8rem;
   }
-  .back {
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0.2rem 0.5rem;
-    color: var(--fg);
-    cursor: pointer;
+  /* Indent each level of the anchor tree with a visible left border. */
+  .anchor-node > .anchor-node {
+    margin-left: 0.6rem;
+    padding-left: 0.5rem;
+    border-left: 2px solid var(--border);
+  }
+  /* Tighter vertical spacing inside the tree for scannability. */
+  .anchor-node .res {
+    margin-bottom: 0.2rem;
+  }
+  .anchor-node .res.missing {
+    color: var(--muted);
+    font-size: 0.85rem;
   }
   .refresh-error {
     margin: 0.4rem 0;
