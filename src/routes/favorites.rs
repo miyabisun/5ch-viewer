@@ -28,7 +28,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/favorites/{server}/{board}/{thread_id}/reload", get(reload))
         .route(
             "/api/favorites/{server}/{board}/{thread_id}/progress",
-            patch(patch_progress),
+            // Read position: GET fetches, POST saves (POST so sendBeacon can be used on unload).
+            get(get_progress).post(post_progress),
         )
         .route(
             "/api/favorites/{server}/{board}/{thread_id}/rating",
@@ -115,7 +116,24 @@ async fn remove(State(state): State<AppState>, Path((server, board, thread_id)):
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn patch_progress(
+/// Read position: GET the saved read_res for a thread (viewer semantics).
+async fn get_progress(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<Value>, AppError> {
+    validate_ref(&server, &board, &thread_id)?;
+    let conn = state.db.lock().unwrap();
+    let read_res: i64 = conn
+        .query_row(
+            "SELECT read_res FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![server, board, thread_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("favorite not found".into()))?;
+    Ok(Json(json!({ "read_res": read_res })))
+}
+
+/// Read position: POST saves read_res. POST (not PATCH) so the client can use
+/// navigator.sendBeacon on unload, which only issues POST.
+async fn post_progress(
     State(state): State<AppState>,
     Path((server, board, thread_id)): ThreadPath,
     Json(req): Json<ProgressRequest>,

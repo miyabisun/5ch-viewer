@@ -31,8 +31,11 @@ export const api = {
     request('GET', `/api/favorites/${s}/${b}/${t}/reload`, undefined, {
       cache: 'no-store',
     }),
+  // Read position: GET fetches the saved value, POST saves it (POST so the
+  // unload path can reuse the same route via sendBeacon).
+  getProgress: (s, b, t) => request('GET', `/api/favorites/${s}/${b}/${t}/progress`),
   setProgress: (s, b, t, readRes) =>
-    request('PATCH', `/api/favorites/${s}/${b}/${t}/progress`, { read_res: readRes }),
+    request('POST', `/api/favorites/${s}/${b}/${t}/progress`, { read_res: readRes }),
   setRating: (s, b, t, rating) =>
     request('PATCH', `/api/favorites/${s}/${b}/${t}/rating`, { rating }),
   search: (q) => request('GET', `/api/search?q=${encodeURIComponent(q)}`),

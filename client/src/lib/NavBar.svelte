@@ -18,7 +18,7 @@
       data-testid="tab-favorites"
       onclick={() => onnavigate('favorites')}
     >
-      お気に入り一覧
+      お気に入り
     </button>
     <button
       class="tab"

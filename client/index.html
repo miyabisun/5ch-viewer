@@ -8,6 +8,23 @@
     <script>
       window.__BASE_PATH__ = ""
     </script>
+    <!-- Apply theme before first paint to avoid FOUC. Mirrors lib/theme.js (key/resolve). -->
+    <script>
+      ;(function () {
+        try {
+          var saved = localStorage.getItem('goch-theme')
+          var theme =
+            saved === 'light' || saved === 'dark'
+              ? saved
+              : matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+          document.documentElement.dataset.theme = theme
+        } catch (e) {
+          /* ignore */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

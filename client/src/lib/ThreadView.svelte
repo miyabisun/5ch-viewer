@@ -1,6 +1,7 @@
 <script>
   import { untrack } from 'svelte'
   import { api, beaconProgress } from './api.js'
+  import { formatName } from './name.js'
 
   let { fav, onback } = $props()
 
@@ -8,9 +9,13 @@
   let loading = $state(false)
   // Read position (max res number that has passed through the viewport). Initialized from the saved read_res (only on first mount).
   let maxRead = $state(untrack(() => fav.read_res))
+  // Restore-on-open guard: scroll to the saved read position only after the first
+  // successful load, never after a manual reload.
+  let restored = $state(false)
 
   async function load() {
     data = await api.getDat(fav.server, fav.board, fav.thread_id)
+    // The dat response is authoritative (set even on direct-URL open with no fav data).
     if (data.read_res > maxRead) maxRead = data.read_res
   }
 
@@ -29,6 +34,22 @@
   // Initial load.
   $effect(() => {
     load()
+  })
+
+  // Restore the saved read position by scrolling the last-read res into view.
+  // Runs once after the dat has rendered (in an effect, not load, so the res
+  // nodes exist in the DOM); the `restored` guard prevents re-runs on reload.
+  $effect(() => {
+    if (!data || restored) return
+    restored = true
+    const target = Math.max(data.read_res, fav.read_res)
+    if (target < 1) return
+    // Defer to after the list renders, then scroll the saved res into view.
+    requestAnimationFrame(() => {
+      const node = document.querySelector(`.res[data-res="${target}"]`)
+      if (node) node.scrollIntoView({ block: 'end' })
+      else window.scrollTo(0, document.body.scrollHeight)
+    })
   })
 
   // Track visible reses with IntersectionObserver and update maxRead.
@@ -170,7 +191,7 @@
 <!-- Res body (shared by list and modal). Anchors in body and back-references are followable. -->
 {#snippet resBody(r)}
   <span class="num">{r.num}</span>
-  <span class="name">{r.name}</span>
+  <span class="name">{formatName(r.name)}</span>
   <span class="date">{r.date}</span>
   {@render body(r.body)}
   {@render refs(r.num)}
