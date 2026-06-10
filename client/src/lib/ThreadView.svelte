@@ -52,7 +52,21 @@
     // Defer to after the list renders, then scroll the saved res into view.
     requestAnimationFrame(() => {
       const node = document.querySelector(`.res[data-res="${target}"]`)
-      if (node) node.scrollIntoView({ block: 'end' })
+      if (node) {
+        // scrollIntoView automatically targets the nearest scrollable ancestor
+        // (detail-pane on PC, window on phone) — no manual branching needed.
+        node.scrollIntoView({ block: 'end' })
+        return
+      }
+      // Fallback (target res not rendered): scroll to the bottom of whichever
+      // element actually scrolls. On PC (>=768px) the detail-pane is the scroll
+      // container; on phone it is window. matchMedia is the reliable signal —
+      // on phone the detail-pane is display:block, so offsetParent is non-null
+      // and cannot be used to tell the two apart.
+      const pane = window.matchMedia('(min-width: 768px)').matches
+        ? document.querySelector('.detail-pane')
+        : null
+      if (pane) pane.scrollTop = pane.scrollHeight
       else window.scrollTo(0, document.body.scrollHeight)
     })
   })
@@ -290,11 +304,12 @@
 {/if}
 
 <style>
-  /* Sticky title header. Sits below the global NavBar (which is sticky at top:0
-     and ~2.8rem tall: theme toggle 2rem + 0.4rem padding x2). */
+  /* Sticky title header. Sits below the global NavBar (sticky at top:0,
+     height = --navbar-h). On PC (>=768px) the detail-pane is the scroll
+     container so NavBar no longer overlaps the pane content — reset top to 0. */
   .title {
     position: sticky;
-    top: 2.8rem;
+    top: var(--navbar-h, 3.2rem);
     z-index: 5;
     margin: 0;
     padding: 0.5rem 0;
@@ -304,6 +319,11 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  @media (min-width: 768px) {
+    .title {
+      top: 0;
+    }
   }
   .res {
     background: var(--card-bg);

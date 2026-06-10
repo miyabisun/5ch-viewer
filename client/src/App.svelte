@@ -161,6 +161,8 @@
     --rate-3: #e0c000;
     --rate-4: #ef8c00;
     --rate-5: #e23b3b;
+    /* NavBar height token: shared by NavBar layout and main PC height calc. */
+    --navbar-h: 3.2rem;
   }
   :global([data-theme='dark']) {
     --bg: #1a1a1a;
@@ -218,17 +220,40 @@
     Wide (PC, >=768px): classic 2ch-style two columns — favorites list pinned on
     the left, thread detail on the right. Both panes are always visible; the
     placeholder fills the right column until a thread is selected.
+
+    Each pane gets its own scroll container so that scrolling in the detail pane
+    (e.g. restore-to-read-position) does not move the list pane. The main grid
+    is fixed to the viewport height (below NavBar, height = --navbar-h) with
+    overflow:hidden; panes fill that height and scroll independently.
   */
   @media (min-width: 768px) {
     main {
       max-width: 1100px;
+      /* Fix main to viewport height below NavBar. box-sizing:border-box ensures
+         the base padding (0.5rem) does not overflow the calculated height.
+         Fallback 100vh for browsers without dvh support (PC only, so mobile
+         address-bar resize is not a concern). */
+      box-sizing: border-box;
+      padding: 0;
+      height: calc(100vh - var(--navbar-h, 3.2rem));
+      height: calc(100dvh - var(--navbar-h, 3.2rem));
+      overflow: hidden;
       display: grid;
       grid-template-columns: minmax(18rem, 22rem) 1fr;
       gap: 0.75rem;
-      align-items: start;
+      /* stretch (default) so panes fill the grid row height */
+      align-items: stretch;
     }
     .error {
       grid-column: 1 / -1;
+    }
+    /* Independent scroll per pane. min-height:0 prevents grid items from
+       refusing to shrink below their content height (grid item default is auto). */
+    .list-pane,
+    .detail-pane {
+      overflow-y: auto;
+      height: 100%;
+      min-height: 0;
     }
     .detail-pane,
     .layout.has-thread .list-pane,

@@ -48,6 +48,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
+    /* Use box-sizing:border-box so padding is included in --navbar-h. */
+    box-sizing: border-box;
+    height: var(--navbar-h, 3.2rem);
     padding: 0.4rem 0.5rem;
     background: var(--nav-bg);
     border-bottom: 1px solid var(--border);

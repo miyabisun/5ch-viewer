@@ -37,6 +37,34 @@ function mock(page) {
   )
 }
 
+// Many-res mock for scroll isolation tests.
+function mockLong(page, resCount = 60) {
+  page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
+  page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+    route.fulfill({
+      json: {
+        title: FAV.title,
+        res_count: resCount,
+        read_res: 0,
+        status: 'active',
+        res: Array.from({ length: resCount }, (_, i) => ({
+          num: i + 1,
+          name: '名無し',
+          mail: '',
+          date: `2025 ID:x${i}`,
+          body: `本文${i + 1}`,
+        })),
+      },
+    }),
+  )
+  page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: resCount, read_res: 0, status: 'active' } }),
+  )
+}
+
 test.describe('PC: two-column layout', () => {
   test.use({ viewport: { width: 1024, height: 800 } })
 
@@ -66,6 +94,38 @@ test.describe('PC: two-column layout', () => {
 
     await expect(page.locator('.thread .info')).toBeVisible()
     await expect(page.getByText('本文1')).toBeVisible()
+  })
+
+  test('scrolling in the detail pane does not move the list pane', async ({ page }) => {
+    await mockLong(page)
+    await page.goto(THREAD_PATH)
+    // Wait for thread content to render.
+    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
+
+    // Record initial list-pane scroll position (should be 0).
+    const listScrollBefore = await page.locator('.list-pane').evaluate((el) => el.scrollTop)
+
+    // Scroll the detail pane to the bottom.
+    await page.locator('.detail-pane').evaluate((el) => el.scrollTo(0, el.scrollHeight))
+    await expect
+      .poll(() => page.locator('.detail-pane').evaluate((el) => el.scrollTop))
+      .toBeGreaterThan(0)
+
+    // The list pane must not have scrolled.
+    const listScrollAfter = await page.locator('.list-pane').evaluate((el) => el.scrollTop)
+    expect(listScrollAfter).toBe(listScrollBefore)
+
+    // The favorite entry in the list pane remains visible.
+    await expect(page.locator('.thread .info')).toBeVisible()
+
+    // window must not scroll: main is fixed to viewport height so
+    // document.scrollHeight should not exceed innerHeight.
+    const windowScrollY = await page.evaluate(() => window.scrollY)
+    expect(windowScrollY).toBe(0)
+    const docOverflow = await page.evaluate(
+      () => document.documentElement.scrollHeight <= window.innerHeight,
+    )
+    expect(docOverflow).toBe(true)
   })
 })
 
