@@ -35,6 +35,7 @@ test('opening a thread auto-refreshes via GET (no POST, no buttons)', async ({
   page,
 }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
 
   // dat starts at 1 post; the auto reload grows it to 2.
   let count = 1
@@ -70,6 +71,7 @@ test('opening a thread shows the grown dat (111 -> 117) after reload', async ({
   page,
 }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
 
   // Stored dat is 111; the reload pulls the latest (117).
   let count = 111
@@ -101,6 +103,7 @@ test('opening a thread shows the grown dat (111 -> 117) after reload', async ({
 // The NavBar お気に入り tab is the back path now (always visible, sticky).
 test('favorites tab returns from a thread to the list', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({ json: datResponse(1) }),
   )

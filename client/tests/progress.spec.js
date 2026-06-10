@@ -36,6 +36,7 @@ test('opening a thread restores the saved read position (auto-scroll)', async ({
   page,
 }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({ json: datResponse() }),
   )

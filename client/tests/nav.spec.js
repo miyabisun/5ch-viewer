@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test'
 
 test('nav tabs switch between favorites and register pages', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [] }))
+  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
   await page.goto('/')
 
   // Default: favorites page. The register form (mode select) is not shown.

@@ -20,6 +20,7 @@ const THREAD_PATH = `/${FAV.server}/${FAV.board}/${FAV.thread_id}`
 
 function mock(page) {
   page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
   page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({
       json: {

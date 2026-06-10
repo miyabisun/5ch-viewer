@@ -22,6 +22,29 @@
     }
   }
 
+  // Board-level prefetch then re-list so freshly downloaded counts surface.
+  //
+  // The server returns from /refresh *immediately* and does the heavy work
+  // (subject.txt per board + bulk dat DL) in the background, so re-listing the
+  // instant /refresh resolves would race the DL and still show stale counts.
+  // We therefore re-list after a short delay to let the background DL land in the
+  // DB. This is best-effort surfacing, not a correctness guarantee: very slow DLs
+  // may not be reflected until the next manual list refresh (e.g. reopening the
+  // list), which is acceptable for a warm-on-open hint.
+  //
+  // Fire-and-forget: a refresh failure must not block the list (the stored
+  // favorites still render). The timer is cleared on unmount.
+  const REFRESH_RELIST_DELAY_MS = 1500
+  let relistTimer = null
+  function refreshAndReload() {
+    api
+      .refreshFavorites()
+      .then(() => {
+        relistTimer = setTimeout(() => load(), REFRESH_RELIST_DELAY_MS)
+      })
+      .catch((e) => console.error('[refresh]', e))
+  }
+
   // Find the matching favorite for a thread descriptor, or build a minimal
   // fav so a thread URL still opens even when it is not in the list.
   function favFor({ server, board, thread_id }) {
@@ -43,11 +66,18 @@
     // apply the initial route. Use replaceState to normalize the entry.
     const route = parseLocation()
     replace(route)
-    load().then(() => applyRoute(route))
+    load().then(() => {
+      applyRoute(route)
+      // Warm favorites in the background (board-level subject + bulk dat).
+      refreshAndReload()
+    })
 
     const onpop = () => applyRoute(parseLocation())
     window.addEventListener('popstate', onpop)
-    return () => window.removeEventListener('popstate', onpop)
+    return () => {
+      window.removeEventListener('popstate', onpop)
+      if (relistTimer) clearTimeout(relistTimer)
+    }
   })
 
   function open(fav) {

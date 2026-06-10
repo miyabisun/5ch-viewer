@@ -59,6 +59,10 @@ APP_PORT=3001 MOCK_PORT=3002 cargo run --bin itest-server
   `{ server, board, thread_id, title, res_count, dat_posts, gone }`
   subject.txt が報告するレス数(`res_count`)と dat が返すレス数(`dat_posts`)を指定。
   `gone: true` で dat を 404 にしてスレ落ちを再現。
+- `POST /_control/reset` — モックのスレ定義と subject ヒットカウンタを全消去。
+- `GET /_control/subject-hits/{board}` — その板の subject.txt が叩かれた回数を返す。
+  「板単位の先読み」が subject.txt を**板 1 回**に抑える(スレ数分叩かない)ことを
+  検証するためのカウンタ。
 
 ## 総合テストの動かし方
 

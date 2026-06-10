@@ -18,6 +18,11 @@ export const MOCK_URL = `http://127.0.0.1:${MOCK_PORT}`
 
 export default defineConfig({
   testDir: './integration',
+  // The Rust backend is a SINGLE shared process with one in-memory DB and one mock 5ch.
+  // Tests reset that global state in beforeEach, so they must run serially — parallel
+  // workers would wipe each other's seeded favorites mid-test.
+  fullyParallel: false,
+  workers: 1,
   use: {
     baseURL: `http://localhost:${WEB_PORT}`,
   },

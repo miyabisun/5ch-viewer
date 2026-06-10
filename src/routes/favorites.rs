@@ -1,28 +1,23 @@
 use crate::error::AppError;
-use crate::goch::dat::{parse_dat, title_from_dat};
-use crate::goch::http::{self, DatFetch};
+use crate::goch::http;
+use crate::goch::refresh::{self, read_blob_posts};
 use crate::goch::url::{parse_thread_url, validate_ref};
 use crate::models::{
     AddRequest, DatResponse, Favorite, ProgressRequest, RatingRequest, ReloadResponse,
 };
 use crate::state::AppState;
 use axum::extract::{Path, State};
-use axum::routing::{delete, get, patch};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
-
-// End-of-thread thresholds (spec ch.7). dat size is in bytes.
-const RES_WARN: i64 = 980;
-const RES_DEAD: i64 = 1000;
-const DAT_WARN: u64 = 900 * 1024;
-const DAT_DEAD: u64 = 1024 * 1024;
 
 type ThreadPath = Path<(String, String, String)>;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/favorites", get(list).post(add))
+        .route("/api/favorites/refresh", post(refresh_all))
         .route("/api/favorites/{server}/{board}/{thread_id}", delete(remove))
         .route("/api/favorites/{server}/{board}/{thread_id}/dat", get(get_dat))
         .route("/api/favorites/{server}/{board}/{thread_id}/reload", get(reload))
@@ -82,6 +77,34 @@ async fn add(
     Ok(Json(json!({
         "ok": true, "server": server, "board": board, "thread_id": thread_id,
     })))
+}
+
+/// Refreshes all favorites with one subject.txt read per board, downloading every grown
+/// dat in the background. Returns immediately so the list display is never blocked: the
+/// heavy work (subject + bulk dat) runs in a spawned task. Failures are logged inside
+/// `refresh_board` (never silently swallowed).
+async fn refresh_all(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    // Distinct (server, board) pairs that have at least one non-dead favorite.
+    let boards: Vec<(String, String)> = {
+        let conn = state.db.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT server, board FROM favorites WHERE status != 'dead'")?;
+        let boards = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        boards
+    };
+
+    let count = boards.len();
+    tokio::spawn(async move {
+        for (server, board) in boards {
+            let n = refresh::refresh_board(&state, &server, &board).await;
+            tracing::info!("[refresh] {server}/{board}: {n} dat(s) updated");
+        }
+    });
+
+    // The board count is informational; the work continues in the background.
+    Ok(Json(json!({ "ok": true, "boards": count })))
 }
 
 fn resolve_ref(req: &AddRequest) -> Result<(String, String, String), AppError> {
@@ -260,15 +283,8 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
         }
     };
 
-    // 3. Decide whether to fetch the dat: only when subject reports more posts than we have.
-    //    When subject is unavailable or the thread is absent from it, fall back to fetching
-    //    (we cannot prove "no change", and a 404 dat will be handled as Gone below).
-    let needs_fetch = match subject_count {
-        Some(sc) => sc > stored_res_count,
-        None => true,
-    };
-
-    if !needs_fetch {
+    // 3. Decide whether to fetch the dat (shared gate: only when subject reports growth).
+    if !refresh::needs_fetch(subject_count, stored_res_count) {
         // No new posts: skip the 5ch dat fetch entirely. The dat is unchanged, so the
         // stored status (which may be byte-derived warned/dead) must be preserved; only
         // touch updated_at. Recomputing from res_count alone would silently roll a
@@ -294,42 +310,34 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
     tracing::info!(
         "[reload] {server}/{board}/{thread_id}: subject={subject_count:?} stored={stored_res_count} -> fetching dat"
     );
-    let fetch =
-        http::fetch_dat(&state.http, &state.config.goch_base_url, &server, &board, &thread_id)
-            .await?;
 
-    // 5. Persist the result: a full BLOB replace + metadata recompute, or mark dead on Gone.
-    //    The fetched bytes are used directly (no DB read-back), since we already hold the body.
-    let updated = match fetch {
-        DatFetch::Gone => {
-            let conn = state.db.lock().unwrap();
-            conn.execute(
-                "UPDATE favorites SET status='dead', updated_at=strftime('%s','now')
-                 WHERE server=?1 AND board=?2 AND thread_id=?3",
-                params![server, board, thread_id],
-            )?;
+    // Claim the dat so a concurrent board prefetch does not also download it. If the prefetch
+    // already holds it, wait for it to finish, then serve the (now refreshed) stored dat
+    // instead of a duplicate fetch — the prefetch's full-replace is authoritative.
+    let updated = match state.claim_dat(&(server.clone(), board.clone(), thread_id.clone())) {
+        Some(_guard) => {
+            let fetch = http::fetch_dat(
+                &state.http,
+                &state.config.goch_base_url,
+                &server,
+                &board,
+                &thread_id,
+            )
+            .await?;
+            // Persist: a full BLOB replace + metadata recompute, or mark dead on Gone.
+            refresh::persist_fetch(&state, &server, &board, &thread_id, fetch)?
+        }
+        None => {
+            tracing::info!(
+                "[reload] {server}/{board}/{thread_id}: dat already in flight (prefetch), skipping duplicate fetch"
+            );
             false
         }
-        DatFetch::Replace { bytes, total } => {
-            let text = http::decode_shift_jis(&bytes);
-            let res_count = parse_dat(&text).len() as i64;
-            let title = title_from_dat(&text).unwrap_or_default();
-            let status = compute_status(res_count, total);
-            tracing::info!(
-                "[reload] {server}/{board}/{thread_id}: fetched {res_count} posts ({total} bytes), replacing blob"
-            );
-            let conn = state.db.lock().unwrap();
-            replace_blob(&conn, &server, &board, &thread_id, &bytes)?;
-            conn.execute(
-                "UPDATE favorites SET res_count=?4, dat_bytes=?5, status=?6,
-                 title = CASE WHEN title='' THEN ?7 ELSE title END,
-                 updated_at=strftime('%s','now')
-                 WHERE server=?1 AND board=?2 AND thread_id=?3",
-                params![server, board, thread_id, res_count, total as i64, status, title],
-            )?;
-            true
-        }
     };
+
+    // 5. Kick off a background prefetch of the rest of this board's favorites so opening
+    //    one thread warms the others (the in-flight guard skips this thread). Best-effort.
+    spawn_board_prefetch(&state, &server, &board);
 
     let conn = state.db.lock().unwrap();
     let (res_count, read_res, status) = read_meta(&conn, &server, &board, &thread_id)?;
@@ -339,6 +347,20 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
         status,
         updated,
     }))
+}
+
+/// Spawns a background board-level prefetch (one subject.txt + bulk dat for grown threads).
+/// Non-blocking; failures are logged inside `refresh_board`.
+fn spawn_board_prefetch(state: &AppState, server: &str, board: &str) {
+    let state = state.clone();
+    let server = server.to_string();
+    let board = board.to_string();
+    tokio::spawn(async move {
+        let n = refresh::refresh_board(&state, &server, &board).await;
+        if n > 0 {
+            tracing::info!("[reload] prefetch {server}/{board}: {n} dat(s) updated");
+        }
+    });
 }
 
 /// Reads the favorite's current res_count / read_res / status.
@@ -356,58 +378,16 @@ fn read_meta(
     )?)
 }
 
-/// Replaces the raw in dat_blobs entirely (inserts if absent).
-fn replace_blob(
-    conn: &rusqlite::Connection,
-    server: &str,
-    board: &str,
-    thread_id: &str,
-    bytes: &[u8],
-) -> Result<(), AppError> {
-    conn.execute(
-        "INSERT INTO dat_blobs (server, board, thread_id, raw) VALUES (?1,?2,?3,?4)
-         ON CONFLICT(server, board, thread_id) DO UPDATE SET raw=excluded.raw",
-        params![server, board, thread_id, bytes],
-    )?;
-    Ok(())
-}
-
-/// Reads the stored dat blob and parses it into posts (empty when no blob exists).
-/// The single source of truth for "what posts do we actually hold", so callers
-/// (get_dat, the reload gate) never disagree on the stored count.
-fn read_blob_posts(
-    conn: &rusqlite::Connection,
-    server: &str,
-    board: &str,
-    thread_id: &str,
-) -> Result<Vec<crate::goch::dat::Res>, AppError> {
-    let raw: Option<Vec<u8>> = conn
-        .query_row(
-            "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
-            params![server, board, thread_id],
-            |r| r.get(0),
-        )
-        .optional()?;
-    Ok(match raw {
-        Some(bytes) => parse_dat(&http::decode_shift_jis(&bytes)),
-        None => vec![],
-    })
-}
-
-fn compute_status(res_count: i64, dat_bytes: u64) -> &'static str {
-    if res_count >= RES_DEAD || dat_bytes >= DAT_DEAD {
-        "dead"
-    } else if res_count >= RES_WARN || dat_bytes >= DAT_WARN {
-        "warned"
-    } else {
-        "active"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::goch::dat::parse_dat;
+    use crate::goch::refresh::{compute_status, replace_blob};
     use rusqlite::Connection;
+
+    // Mirrors the thresholds in goch::refresh (used to build byte-derived-warned fixtures).
+    const RES_WARN: i64 = 980;
+    const DAT_WARN: u64 = 900 * 1024;
 
     const SERVER: &str = "egg";
     const BOARD: &str = "applism";

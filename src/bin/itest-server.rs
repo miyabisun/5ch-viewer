@@ -30,7 +30,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use goch_viewer::config::Config;
-use goch_viewer::state::{self, AppState};
+use goch_viewer::state::AppState;
 use goch_viewer::{db, routes};
 use rusqlite::{params, Connection};
 use serde::Deserialize;
@@ -51,7 +51,15 @@ struct MockThread {
     gone: bool,
 }
 
-type MockState = Arc<Mutex<HashMap<(String, String), MockThread>>>;
+/// Mock state: programmed threads plus per-board subject.txt request counts. The counts let
+/// tests assert that subject.txt is hit exactly once per board (not once per thread).
+#[derive(Default)]
+struct MockInner {
+    threads: HashMap<(String, String), MockThread>,
+    subject_hits: HashMap<String, u64>,
+}
+
+type MockState = Arc<Mutex<MockInner>>;
 
 fn sjis(text: &str) -> Vec<u8> {
     let (cow, _, _) = encoding_rs::SHIFT_JIS.encode(text);
@@ -100,9 +108,10 @@ async fn mock_subject(
     State(mock): State<MockState>,
     AxPath(board): AxPath<String>,
 ) -> Response {
-    let map = mock.lock().unwrap();
+    let mut inner = mock.lock().unwrap();
+    *inner.subject_hits.entry(board.clone()).or_insert(0) += 1;
     let mut lines = String::new();
-    for t in map.values().filter(|t| t.board == board) {
+    for t in inner.threads.values().filter(|t| t.board == board) {
         lines.push_str(&format!(
             "{}.dat<>{} ({})\n",
             t.thread_id, t.title, t.res_count
@@ -116,8 +125,8 @@ async fn mock_dat(
     AxPath((board, file)): AxPath<(String, String)>,
 ) -> Response {
     let thread_id = file.trim_end_matches(".dat").to_string();
-    let map = mock.lock().unwrap();
-    match map.get(&(board.clone(), thread_id.clone())) {
+    let inner = mock.lock().unwrap();
+    match inner.threads.get(&(board.clone(), thread_id.clone())) {
         Some(t) if !t.gone => {
             (StatusCode::OK, build_dat(&t.title, t.dat_posts)).into_response()
         }
@@ -129,8 +138,9 @@ async fn mock_setting(
     State(mock): State<MockState>,
     AxPath(board): AxPath<String>,
 ) -> Response {
-    let map = mock.lock().unwrap();
-    let name = map
+    let inner = mock.lock().unwrap();
+    let name = inner
+        .threads
         .values()
         .find(|t| t.board == board)
         .map(|t| t.board.clone())
@@ -139,7 +149,7 @@ async fn mock_setting(
 }
 
 async fn ctl_thread(State(mock): State<MockState>, Json(c): Json<ThreadCtl>) -> Json<bool> {
-    mock.lock().unwrap().insert(
+    mock.lock().unwrap().threads.insert(
         (c.board.clone(), c.thread_id.clone()),
         MockThread {
             board: c.board,
@@ -155,6 +165,24 @@ async fn ctl_thread(State(mock): State<MockState>, Json(c): Json<ThreadCtl>) -> 
         },
     );
     let _ = c.server;
+    Json(true)
+}
+
+/// Returns how many times subject.txt has been requested for `board` (tests assert this is
+/// exactly 1 per board per refresh, proving we do not hit subject once per thread).
+async fn ctl_subject_hits(
+    State(mock): State<MockState>,
+    AxPath(board): AxPath<String>,
+) -> Json<u64> {
+    let inner = mock.lock().unwrap();
+    Json(inner.subject_hits.get(&board).copied().unwrap_or(0))
+}
+
+/// Clears programmed threads and hit counters so each test starts from a clean mock.
+async fn ctl_mock_reset(State(mock): State<MockState>) -> Json<bool> {
+    let mut inner = mock.lock().unwrap();
+    inner.threads.clear();
+    inner.subject_hits.clear();
     Json(true)
 }
 
@@ -199,12 +227,14 @@ async fn main() {
     let mock_port: u16 = std::env::var("MOCK_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(3002);
 
     // 1. Mock 5ch server.
-    let mock_state: MockState = Arc::new(Mutex::new(HashMap::new()));
+    let mock_state: MockState = Arc::new(Mutex::new(MockInner::default()));
     let mock_app = Router::new()
         .route("/{board}/subject.txt", get(mock_subject))
         .route("/{board}/dat/{file}", get(mock_dat))
         .route("/{board}/SETTING.TXT", get(mock_setting))
         .route("/_control/thread", post(ctl_thread))
+        .route("/_control/subject-hits/{board}", get(ctl_subject_hits))
+        .route("/_control/reset", post(ctl_mock_reset))
         .with_state(mock_state.clone());
     let mock_addr = format!("127.0.0.1:{mock_port}");
     let mock_listener = tokio::net::TcpListener::bind(&mock_addr).await.expect("bind mock");
@@ -223,11 +253,7 @@ async fn main() {
         db_path: ":memory:".into(),
         goch_base_url: format!("http://127.0.0.1:{mock_port}"),
     };
-    let app_state = AppState {
-        db: Arc::new(Mutex::new(conn)),
-        config,
-        http: state::build_http_client(),
-    };
+    let app_state = AppState::new(conn, config);
 
     // The real router + test-only control endpoints (seed / reset the in-memory DB).
     // start_sync is intentionally NOT spawned: the integration tests drive reload

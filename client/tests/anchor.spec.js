@@ -30,6 +30,7 @@ function datResponse() {
 
 test('clicking a >>N anchor opens the modal without navigating', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({ json: datResponse() }),
   )
@@ -61,6 +62,7 @@ test('anchor modal closes via × and via outside click (no bottom 閉じる)', a
   page,
 }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({ json: datResponse() }),
   )
@@ -126,6 +128,7 @@ test.describe('touch: anchor tap vs swipe-back', () => {
 
   test('a swipe starting on an anchor does not navigate back', async ({ page }) => {
     await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+    await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
     await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
       route.fulfill({ json: datResponse() }),
     )
@@ -145,6 +148,7 @@ test.describe('touch: anchor tap vs swipe-back', () => {
 
   test('a clear right-swipe on the body returns to the list', async ({ page }) => {
     await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+    await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
     await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
       route.fulfill({ json: datResponse() }),
     )
