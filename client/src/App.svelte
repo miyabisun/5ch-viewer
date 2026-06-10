@@ -52,6 +52,9 @@
 
   function open(fav) {
     current = fav
+    // On wide screens the favorites list stays in the left column, so opening a
+    // thread is a "favorites + thread" route. On narrow screens it is the
+    // full-screen thread view. The route descriptor is the same either way.
     push({ page: 'favorites', thread: fav })
   }
   function back() {
@@ -64,22 +67,45 @@
     current = null
     push({ page: p })
   }
+
+  // A `keyed` id forces ThreadView to remount when the selected thread changes.
+  // Without this, switching threads in the persistent right column (PC) would
+  // reuse the component instance and skip the open-time auto-refresh / restore.
+  const threadKey = $derived(
+    current ? `${current.server}/${current.board}/${current.thread_id}` : null,
+  )
 </script>
 
 <NavBar {page} onnavigate={navigate} />
 
-<main>
+<main class="layout" class:has-thread={!!current}>
   {#if error}
     <p class="error">{error}</p>
   {/if}
 
-  {#if current}
-    <ThreadView fav={current} onback={back} />
-  {:else if page === 'register'}
-    <RegisterThread onchange={load} />
-  {:else}
-    <FavoritesList {favorites} onopen={open} onchange={load} />
-  {/if}
+  <!--
+    Two-pane layout. On narrow screens CSS shows exactly one pane (single view);
+    on wide screens both panes are shown side by side (left list / right detail).
+    Both panes are always mounted so state stays shared and there is no double
+    rendering or duplicate event wiring — visibility is purely CSS-driven.
+  -->
+  <section class="pane list-pane">
+    {#if page === 'register'}
+      <RegisterThread onchange={load} />
+    {:else}
+      <FavoritesList {favorites} onopen={open} onchange={load} />
+    {/if}
+  </section>
+
+  <section class="pane detail-pane">
+    {#if current}
+      {#key threadKey}
+        <ThreadView fav={current} onback={back} />
+      {/key}
+    {:else}
+      <p class="placeholder">スレッドを選択してください</p>
+    {/if}
+  </section>
 </main>
 
 <style>
@@ -139,6 +165,51 @@
     max-width: 720px;
     margin: 0 auto;
     padding: 0.5rem;
+  }
+  .pane {
+    min-width: 0;
+  }
+
+  /*
+    Narrow (phone): single view. Exactly one pane shows — the list by default,
+    the detail full-width once a thread is open. The "選択してください"
+    placeholder is desktop-only.
+  */
+  .detail-pane,
+  .layout.has-thread .list-pane,
+  .placeholder {
+    display: none;
+  }
+  .layout.has-thread .detail-pane {
+    display: block;
+  }
+
+  /*
+    Wide (PC, >=768px): classic 2ch-style two columns — favorites list pinned on
+    the left, thread detail on the right. Both panes are always visible; the
+    placeholder fills the right column until a thread is selected.
+  */
+  @media (min-width: 768px) {
+    main {
+      max-width: 1100px;
+      display: grid;
+      grid-template-columns: minmax(18rem, 22rem) 1fr;
+      gap: 0.75rem;
+      align-items: start;
+    }
+    .error {
+      grid-column: 1 / -1;
+    }
+    .detail-pane,
+    .layout.has-thread .list-pane,
+    .placeholder {
+      display: block;
+    }
+    .placeholder {
+      color: var(--muted);
+      text-align: center;
+      margin-top: 3rem;
+    }
   }
   .error {
     color: var(--danger);
