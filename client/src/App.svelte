@@ -95,6 +95,13 @@
     --error-bg: #fee;
     --name: #060;
     --link: #1a6;
+    /* Rating color bar (★5..★1, 0=none). Tuned for the light theme. */
+    --rate-0: #bbb;
+    --rate-1: #29b6d8;
+    --rate-2: #3fae5a;
+    --rate-3: #e0c000;
+    --rate-4: #ef8c00;
+    --rate-5: #e23b3b;
   }
   :global([data-theme='dark']) {
     --bg: #1a1a1a;
@@ -108,6 +115,13 @@
     --error-bg: #3a1a1a;
     --name: #5bbf7a;
     --link: #4dd0a0;
+    /* Slightly brighter on dark so the bar stays visible. */
+    --rate-0: #555;
+    --rate-1: #4dd6f0;
+    --rate-2: #57c46f;
+    --rate-3: #f0d020;
+    --rate-4: #ff9e1f;
+    --rate-5: #ff5a5a;
   }
   :global(body) {
     margin: 0;
