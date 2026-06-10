@@ -113,8 +113,8 @@ pub async fn fetch_board_name(client: &Client, base: &str, server: &str, board: 
 /// Result of a full dat fetch.
 #[derive(Debug)]
 pub enum DatFetch {
-    /// 2xx: the whole dat body and its byte count (always a full replace).
-    Replace { bytes: Vec<u8>, total: u64 },
+    /// 2xx: the whole dat body (always a full replace).
+    Replace { bytes: Vec<u8> },
     /// 404: thread is gone.
     Gone,
 }
@@ -136,9 +136,7 @@ pub async fn fetch_dat(
     match resp.status() {
         StatusCode::NOT_FOUND => Ok(DatFetch::Gone),
         s if s.is_success() => {
-            let bytes = resp.bytes().await?.to_vec();
-            let total = bytes.len() as u64;
-            Ok(DatFetch::Replace { bytes, total })
+            Ok(DatFetch::Replace { bytes: resp.bytes().await?.to_vec() })
         }
         s => Err(AppError::Upstream(format!("dat HTTP {s}"))),
     }

@@ -18,11 +18,10 @@ use crate::state::AppState;
 use rusqlite::{params, OptionalExtension};
 use std::collections::HashMap;
 
-// End-of-thread thresholds (spec ch.7). Kept in sync with routes::favorites.
+// End-of-thread thresholds (spec ch.7). Status is derived from res_count only;
+// dat byte size is no longer used for status (removed: dat_bytes, DAT_WARN, DAT_DEAD).
 const RES_WARN: i64 = 980;
 const RES_DEAD: i64 = 1000;
-const DAT_WARN: u64 = 900 * 1024;
-const DAT_DEAD: u64 = 1024 * 1024;
 
 /// The reload/prefetch gate: fetch the dat only when subject.txt proves the thread grew past
 /// the count we already hold in the blob. When subject is unavailable or the thread is absent
@@ -141,22 +140,22 @@ pub fn persist_fetch(
             )?;
             Ok(false)
         }
-        DatFetch::Replace { bytes, total } => {
+        DatFetch::Replace { bytes } => {
             let text = http::decode_shift_jis(&bytes);
             let res_count = parse_dat(&text).len() as i64;
             let title = title_from_dat(&text).unwrap_or_default();
-            let status = compute_status(res_count, total);
+            let status = compute_status(res_count);
             tracing::info!(
-                "[refresh] {server}/{board}/{thread_id}: fetched {res_count} posts ({total} bytes), replacing blob"
+                "[refresh] {server}/{board}/{thread_id}: fetched {res_count} posts, replacing blob"
             );
             let conn = state.db.lock().unwrap();
             replace_blob(&conn, server, board, thread_id, &bytes)?;
             conn.execute(
-                "UPDATE favorites SET res_count=?4, dat_bytes=?5, status=?6,
-                 title = CASE WHEN title='' THEN ?7 ELSE title END,
+                "UPDATE favorites SET res_count=?4, status=?5,
+                 title = CASE WHEN title='' THEN ?6 ELSE title END,
                  updated_at=strftime('%s','now')
                  WHERE server=?1 AND board=?2 AND thread_id=?3",
-                params![server, board, thread_id, res_count, total as i64, status, title],
+                params![server, board, thread_id, res_count, status, title],
             )?;
             Ok(true)
         }
@@ -228,10 +227,14 @@ pub fn read_blob_posts(
     })
 }
 
-pub fn compute_status(res_count: i64, dat_bytes: u64) -> &'static str {
-    if res_count >= RES_DEAD || dat_bytes >= DAT_DEAD {
+/// Derives thread status from res_count alone (dat byte size is not used).
+/// dead  = 1000 or more posts (thread is full).
+/// warned = 980..999 (approaching the limit).
+/// active = below 980.
+pub fn compute_status(res_count: i64) -> &'static str {
+    if res_count >= RES_DEAD {
         "dead"
-    } else if res_count >= RES_WARN || dat_bytes >= DAT_WARN {
+    } else if res_count >= RES_WARN {
         "warned"
     } else {
         "active"

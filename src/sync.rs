@@ -4,15 +4,13 @@
 use crate::error::AppError;
 use crate::goch::http;
 use crate::goch::next_thread::find_next_thread;
+use crate::goch::refresh::compute_status;
 use crate::goch::subject::SubjectEntry;
 use crate::state::AppState;
 use std::collections::HashMap;
 use std::time::Duration;
 
 const INTERVAL: Duration = Duration::from_secs(60);
-// Monitoring decides based only on subject's res_count (the dat size is checked at reload time).
-const RES_WARN: i64 = 980;
-const RES_DEAD: i64 = 1000;
 
 pub fn start_sync(state: AppState) {
     tokio::spawn(async move {
@@ -86,7 +84,7 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
     // Reflect the state from subject. If absent from subject, treat as dropped.
     let is_dead = match found {
         Some(e) => {
-            let status = status_for(e.res_count);
+            let status = compute_status(e.res_count);
             let conn = state.db.lock().unwrap();
             if let Err(err) = conn.execute(
                 "UPDATE favorites SET res_count=?4,
@@ -148,15 +146,5 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
             return;
         }
         tracing::info!("[sync] next thread added: {} -> {}", title, next.title);
-    }
-}
-
-fn status_for(res_count: i64) -> &'static str {
-    if res_count >= RES_DEAD {
-        "dead"
-    } else if res_count >= RES_WARN {
-        "warned"
-    } else {
-        "active"
     }
 }

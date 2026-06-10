@@ -285,10 +285,8 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
 
     // 3. Decide whether to fetch the dat (shared gate: only when subject reports growth).
     if !refresh::needs_fetch(subject_count, stored_res_count) {
-        // No new posts: skip the 5ch dat fetch entirely. The dat is unchanged, so the
-        // stored status (which may be byte-derived warned/dead) must be preserved; only
-        // touch updated_at. Recomputing from res_count alone would silently roll a
-        // byte-over (DAT_WARN/DAT_DEAD) thread back to active.
+        // No new posts: skip the 5ch dat fetch entirely. Only touch updated_at so the
+        // stored status (res_count-derived warned/dead) is preserved unchanged.
         let conn = state.db.lock().unwrap();
         conn.execute(
             "UPDATE favorites SET updated_at=strftime('%s','now')
@@ -385,9 +383,8 @@ mod tests {
     use crate::goch::refresh::{compute_status, replace_blob};
     use rusqlite::Connection;
 
-    // Mirrors the thresholds in goch::refresh (used to build byte-derived-warned fixtures).
+    // Mirrors the threshold in goch::refresh (status is now res_count-only).
     const RES_WARN: i64 = 980;
-    const DAT_WARN: u64 = 900 * 1024;
 
     const SERVER: &str = "egg";
     const BOARD: &str = "applism";
@@ -466,21 +463,19 @@ mod tests {
     }
 
     /// Regression: when subject reports no new posts, the reload skip path must NOT recompute
-    /// status. A thread that turned 'warned' by byte size (DAT_WARN) while its res_count is
-    /// still below RES_WARN must keep 'warned' across no-growth reloads (it must not roll back
-    /// to 'active'). The skip path only touches updated_at, so the stored status is preserved.
+    /// status. A thread that turned 'warned' by res_count must keep 'warned' across no-growth
+    /// reloads. The skip path only touches updated_at, so the stored status is preserved.
     #[test]
-    fn skip_path_preserves_byte_derived_status() {
+    fn skip_path_preserves_res_count_derived_status() {
         let conn = setup();
-        // A byte-over thread: low res_count but warned because dat_bytes >= DAT_WARN.
-        let res_count: i64 = (RES_WARN - 50).max(1);
-        let dat_bytes = DAT_WARN as i64;
-        let status = compute_status(res_count, dat_bytes as u64);
-        assert_eq!(status, "warned", "fixture must be byte-derived warned");
+        // A near-full thread: res_count is in the warned range.
+        let res_count: i64 = RES_WARN;
+        let status = compute_status(res_count);
+        assert_eq!(status, "warned", "fixture must be warned");
         conn.execute(
-            "UPDATE favorites SET res_count=?4, dat_bytes=?5, status=?6
+            "UPDATE favorites SET res_count=?4, status=?5
              WHERE server=?1 AND board=?2 AND thread_id=?3",
-            params![SERVER, BOARD, THREAD, res_count, dat_bytes, status],
+            params![SERVER, BOARD, THREAD, res_count, status],
         )
         .unwrap();
 

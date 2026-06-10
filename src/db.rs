@@ -8,7 +8,6 @@ pub const SCHEMA: &str = "
         board_name  TEXT    NOT NULL,
         title       TEXT    NOT NULL,
         res_count   INTEGER NOT NULL DEFAULT 0,
-        dat_bytes   INTEGER NOT NULL DEFAULT 0,
         read_res    INTEGER NOT NULL DEFAULT 0,
         rating      INTEGER NOT NULL DEFAULT 0,
         status      TEXT    NOT NULL DEFAULT 'active',
