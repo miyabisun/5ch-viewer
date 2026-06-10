@@ -2,10 +2,14 @@
   import { untrack } from 'svelte'
   import { api, beaconProgress } from './api.js'
   import { formatName } from './name.js'
+  import Modal from './Modal.svelte'
 
   let { fav, onback } = $props()
 
   let data = $state(null)
+  // Surfaced when the auto-refresh (reload) fails. The stored dat is still shown
+  // below, so this is a non-blocking notice rather than a hard error.
+  let refreshError = $state(null)
   // Read position (max res number that has passed through the viewport). Initialized from the saved read_res (only on first mount).
   let maxRead = $state(untrack(() => fav.read_res))
   // Restore-on-open guard: scroll to the saved read position only after the first
@@ -20,8 +24,13 @@
   async function load() {
     try {
       await api.reload(fav.server, fav.board, fav.thread_id)
-    } catch {
-      // Refresh is best-effort; fall back to whatever the dat endpoint returns.
+      refreshError = null
+    } catch (e) {
+      // Refresh is best-effort for display (the stored dat is still shown below),
+      // but the failure must not be silently swallowed: surface it to the user and
+      // the console so a "stuck on old posts" situation is diagnosable.
+      refreshError = e.message
+      console.error('[reload]', e)
     }
     data = await api.getDat(fav.server, fav.board, fav.thread_id)
     if (data.read_res > maxRead) maxRead = data.read_res
@@ -165,9 +174,19 @@
   // Thresholds (mirrors novel-server's reader swipe to avoid misfires):
   //   - lock the gesture as horizontal only when |dx| > |dy| after 5px of travel,
   //   - require |dx| >= 60px and a horizontal dominance (|dx| > |dy| * 1.5) on end.
+  //
+  // The swipe must never be confused with an anchor tap (regression: tapping >>N
+  // opened the modal but then navigated back to the list). Guards:
+  //   1. A touch that *starts* on an anchor is an anchor interaction, not a swipe
+  //      candidate -> never trigger back for it.
+  //   2. While a modal is open, the gesture is for the modal, not for leaving the
+  //      thread -> never trigger back.
+  //   3. Multi-touch (pinch/zoom) is ignored.
   function backSwipe(node) {
-    let startX, startY, locked, horizontal
+    let startX, startY, locked, horizontal, ignore
     function onStart(e) {
+      // Ignore multi-touch and touches that begin on an interactive anchor.
+      ignore = e.touches.length > 1 || !!e.target.closest('.anchor')
       const t = e.touches[0]
       startX = t.clientX
       startY = t.clientY
@@ -175,6 +194,7 @@
       horizontal = false
     }
     function onMove(e) {
+      if (ignore) return
       const t = e.touches[0]
       const dx = t.clientX - startX
       const dy = t.clientY - startY
@@ -185,7 +205,9 @@
       }
     }
     function onEnd(e) {
-      if (!locked || !horizontal) return
+      if (ignore || !locked || !horizontal) return
+      // A modal owns the interaction while open; don't leave the thread.
+      if (anchorStack.length > 0) return
       const dx = e.changedTouches[0].clientX - startX
       const dy = e.changedTouches[0].clientY - startY
       if (dx >= 60 && Math.abs(dx) > Math.abs(dy) * 1.5) onback()
@@ -233,6 +255,12 @@
      back/update bar). Sits just below the global NavBar. -->
 <h1 class="title" data-testid="thread-title">{data?.title || fav.title}</h1>
 
+{#if refreshError}
+  <p class="refresh-error" data-testid="refresh-error" role="alert">
+    更新に失敗しました（表示は前回取得分です）: {refreshError}
+  </p>
+{/if}
+
 {#if data}
   <div class="thread-body" use:backSwipe>
     {#each data.res as r (r.num)}
@@ -244,24 +272,21 @@
 {/if}
 
 {#if currentAnchor}
-  <div class="modal-bg" role="presentation" onclick={closeAnchor}>
-    <div class="modal" role="presentation" onclick={(e) => e.stopPropagation()}>
-      <div class="modal-bar">
-        {#if anchorStack.length > 1}
-          <button onclick={popAnchor}>← 戻る</button>
-        {/if}
-        <button class="close" onclick={closeAnchor}>閉じる</button>
-      </div>
-      {#if currentAnchor.missing}
-        <p>レス {currentAnchor.num} は未取得です</p>
-      {:else}
-        <!-- Anchors inside the modal are also followable (recursively pushed onto the stack). -->
-        <div class="res">
-          {@render resBody(currentAnchor)}
-        </div>
+  <Modal onclose={closeAnchor}>
+    {#snippet header()}
+      {#if anchorStack.length > 1}
+        <button class="back" onclick={popAnchor}>← 戻る</button>
       {/if}
-    </div>
-  </div>
+    {/snippet}
+    {#if currentAnchor.missing}
+      <p>レス {currentAnchor.num} は未取得です</p>
+    {:else}
+      <!-- Anchors inside the modal are also followable (recursively pushed onto the stack). -->
+      <div class="res">
+        {@render resBody(currentAnchor)}
+      </div>
+    {/if}
+  </Modal>
 {/if}
 
 <style>
@@ -320,30 +345,20 @@
     gap: 0.4rem;
     font-size: 0.8rem;
   }
-  .modal-bar {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
+  .back {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.2rem 0.5rem;
+    color: var(--fg);
+    cursor: pointer;
   }
-  .modal-bar .close {
-    margin-left: auto;
-  }
-  .modal-bg {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1rem;
-  }
-  .modal {
-    background: var(--card-bg);
-    border-radius: 8px;
-    padding: 1rem;
-    max-width: 100%;
-    max-height: 80%;
-    overflow: auto;
+  .refresh-error {
+    margin: 0.4rem 0;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+    color: var(--danger);
+    background: var(--error-bg);
+    border-radius: 4px;
   }
 </style>

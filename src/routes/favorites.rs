@@ -193,18 +193,7 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
         .optional()?
         .ok_or_else(|| AppError::NotFound("favorite not found".into()))?;
 
-    let raw: Option<Vec<u8>> = conn
-        .query_row(
-            "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
-            params![server, board, thread_id],
-            |r| r.get(0),
-        )
-        .optional()?;
-
-    let mut res = match raw {
-        Some(bytes) => parse_dat(&http::decode_shift_jis(&bytes)),
-        None => vec![],
-    };
+    let mut res = read_blob_posts(&conn, &server, &board, &thread_id)?;
     // HTML-sanitize post bodies (XSS mitigation; the frontend uses {@html}).
     for r in &mut res {
         r.body = crate::sanitize::clean(&r.body);
@@ -227,16 +216,27 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
 async fn reload(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<ReloadResponse>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
 
-    // 1. Read the locally known res_count (used to decide whether to fetch the dat).
-    let old_res_count: i64 = {
+    // 1. Determine how many posts we actually hold in the stored dat. The gate must
+    //    compare subject.txt against the BLOB, not against `favorites.res_count`:
+    //    those two can drift apart (e.g. res_count was bumped to the subject value
+    //    while a prior fetch stored fewer posts). Trusting res_count then makes the
+    //    gate believe "no growth" forever and the blob never catches up. Counting the
+    //    parsed posts in the blob is self-healing.
+    let stored_res_count: i64 = {
         let conn = state.db.lock().unwrap();
-        conn.query_row(
-            "SELECT res_count FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
-            params![server, board, thread_id],
-            |r| r.get(0),
-        )
-        .optional()?
-        .ok_or_else(|| AppError::NotFound("favorite not found".into()))?
+        // Existence check (404 a removed favorite, not a missing blob).
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
+                params![server, board, thread_id],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+        if !exists {
+            return Err(AppError::NotFound("favorite not found".into()));
+        }
+        read_blob_posts(&conn, &server, &board, &thread_id)?.len() as i64
     };
 
     // 2. Check subject.txt to see how many posts the board reports (load-reduction gate).
@@ -256,7 +256,7 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
     //    When subject is unavailable or the thread is absent from it, fall back to fetching
     //    (we cannot prove "no change", and a 404 dat will be handled as Gone below).
     let needs_fetch = match subject_count {
-        Some(sc) => sc > old_res_count,
+        Some(sc) => sc > stored_res_count,
         None => true,
     };
 
@@ -281,6 +281,11 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
     }
 
     // 4. Fetch the entire dat (await without holding the lock).
+    //    Log the decision so a "stuck thread" can be diagnosed from the server logs:
+    //    subject vs stored counts and whether a fetch is triggered.
+    tracing::info!(
+        "[reload] {server}/{board}/{thread_id}: subject={subject_count:?} stored={stored_res_count} -> fetching dat"
+    );
     let fetch = http::fetch_dat(&state.http, &server, &board, &thread_id).await?;
 
     // 5. Persist the result: a full BLOB replace + metadata recompute, or mark dead on Gone.
@@ -300,6 +305,9 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
             let res_count = parse_dat(&text).len() as i64;
             let title = title_from_dat(&text).unwrap_or_default();
             let status = compute_status(res_count, total);
+            tracing::info!(
+                "[reload] {server}/{board}/{thread_id}: fetched {res_count} posts ({total} bytes), replacing blob"
+            );
             let conn = state.db.lock().unwrap();
             replace_blob(&conn, &server, &board, &thread_id, &bytes)?;
             conn.execute(
@@ -352,6 +360,28 @@ fn replace_blob(
         params![server, board, thread_id, bytes],
     )?;
     Ok(())
+}
+
+/// Reads the stored dat blob and parses it into posts (empty when no blob exists).
+/// The single source of truth for "what posts do we actually hold", so callers
+/// (get_dat, the reload gate) never disagree on the stored count.
+fn read_blob_posts(
+    conn: &rusqlite::Connection,
+    server: &str,
+    board: &str,
+    thread_id: &str,
+) -> Result<Vec<crate::goch::dat::Res>, AppError> {
+    let raw: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![server, board, thread_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(match raw {
+        Some(bytes) => parse_dat(&http::decode_shift_jis(&bytes)),
+        None => vec![],
+    })
 }
 
 fn compute_status(res_count: i64, dat_bytes: u64) -> &'static str {
@@ -473,6 +503,48 @@ mod tests {
         .unwrap();
 
         assert_eq!(read_status(&conn), "warned");
+    }
+
+    /// Counts the posts parsed from the stored blob (mirrors the reload gate's baseline).
+    fn stored_count(conn: &Connection) -> i64 {
+        read_blob_posts(conn, SERVER, BOARD, THREAD).unwrap().len() as i64
+    }
+
+    /// Regression (the "stuck at 111" bug): the reload gate must compare subject.txt
+    /// against the actual stored blob, not against `favorites.res_count`. When res_count
+    /// drifted ahead of the blob (res_count=117 but the blob holds only 111 posts), a
+    /// gate keyed on res_count computes `117 > 117 == false` and never re-fetches, so the
+    /// blob is stuck. Keying on the blob count yields `117 > 111 == true` (fetch needed).
+    #[test]
+    fn reload_gate_keys_on_blob_count_not_metadata() {
+        let conn = setup();
+        // Blob with 2 posts, but metadata res_count bumped to 3 (drifted ahead).
+        let blob = sjis("名無し<>sage<>d ID:a<>本文1<>スレタイ\n名無し<><>d ID:b<>本文2<>\n");
+        replace_blob(&conn, SERVER, BOARD, THREAD, &blob).unwrap();
+        conn.execute(
+            "UPDATE favorites SET res_count=3 WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![SERVER, BOARD, THREAD],
+        )
+        .unwrap();
+
+        // The blob baseline is 2 (the truth), not the metadata's 3.
+        assert_eq!(stored_count(&conn), 2);
+
+        // Subject reports 3. Gate keyed on the blob -> needs_fetch (3 > 2).
+        let subject_count = 3i64;
+        assert!(
+            subject_count > stored_count(&conn),
+            "gate must fetch when the blob is behind subject, even if res_count says otherwise",
+        );
+        // Sanity: the broken gate (keyed on res_count=3) would NOT fetch.
+        let metadata_res_count: i64 = conn
+            .query_row(
+                "SELECT res_count FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
+                params![SERVER, BOARD, THREAD],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!(subject_count > metadata_res_count));
     }
 
     /// A second replace fully overwrites the previous body (no leftover bytes appended).

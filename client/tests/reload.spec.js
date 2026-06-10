@@ -63,6 +63,41 @@ test('opening a thread auto-refreshes via GET (no POST, no buttons)', async ({
   await expect(page.getByRole('button', { name: /戻る/ })).toHaveCount(0)
 })
 
+// Regression (the "stuck at 111" bug): opening a thread must run the reload (GET)
+// and render the grown dat, not the stale stored copy. Here the stored dat starts
+// at 111 posts and the reload grows it to 117; the view must show 117.
+test('opening a thread shows the grown dat (111 -> 117) after reload', async ({
+  page,
+}) => {
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+
+  // Stored dat is 111; the reload pulls the latest (117).
+  let count = 111
+  let datRequests = 0
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => {
+    datRequests += 1
+    route.fulfill({ json: datResponse(count) })
+  })
+
+  let reloadCalled = false
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) => {
+    reloadCalled = true
+    count = 117 // the reload grew the dat
+    route.fulfill({
+      json: { res_count: 117, read_res: 0, status: 'active', updated: true },
+    })
+  })
+
+  await page.goto('/')
+  await page.locator('.info').first().click()
+
+  // The latest post (117) is rendered; the old ceiling (111) is no longer the last.
+  await expect(page.getByText('本文117')).toBeVisible()
+  expect(reloadCalled).toBe(true)
+  // The dat is read after the reload (so the grown copy is what renders).
+  expect(datRequests).toBeGreaterThan(0)
+})
+
 // The NavBar お気に入り tab is the back path now (always visible, sticky).
 test('favorites tab returns from a thread to the list', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
