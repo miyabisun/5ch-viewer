@@ -49,13 +49,70 @@ test('right-click opens the action menu and rating change is sent', async ({
   await page.locator('.thread.rate-0').click({ button: 'right' })
   await expect(page.locator('.menu')).toBeVisible()
 
-  // Change the rating to ★4.
-  await page.locator('.rate-btn[data-rating="4"]').click()
+  // The URL row is shown so the user knows what "URL をコピー" copies.
+  await expect(page.locator('.menu-url')).toHaveText(
+    'https://egg.5ch.io/test/read.cgi/applism/1000000000/',
+  )
+
+  // Change the rating to ★4 by clicking the 4th star.
+  await page.locator('.star[data-rating="4"]').click()
   await expect.poll(() => sent.length).toBe(1)
   expect(sent[0]).toEqual({ rating: 4 })
 
   // Menu closes after the action.
   await expect(page.locator('.menu')).toHaveCount(0)
+})
+
+test('stars reflect the current rating with color, and modal closes via × / scrim', async ({
+  page,
+}) => {
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: FAVS }))
+  await page.goto('/')
+
+  // ★3 item: stars 1..3 lit, 4..5 off — selection shown by color (not underline).
+  await page.locator('.thread.rate-3').click({ button: 'right' })
+  await expect(page.locator('.star.on')).toHaveCount(3)
+  await expect(page.locator('.star.off')).toHaveCount(2)
+  await expect(page.locator('.star[data-rating="3"]')).toHaveText('★')
+  await expect(page.locator('.star[data-rating="4"]')).toHaveText('☆')
+
+  // Close via the top-right ×.
+  await page.getByRole('button', { name: '閉じる' }).click()
+  await expect(page.locator('.menu')).toHaveCount(0)
+
+  // Reopen and close via a scrim (outside) click.
+  await page.locator('.thread.rate-3').click({ button: 'right' })
+  await expect(page.locator('.menu')).toBeVisible()
+  await page.locator('.modal-bg').click({ position: { x: 5, y: 5 } })
+  await expect(page.locator('.menu')).toHaveCount(0)
+
+  // The dropped bottom "閉じる" button must not exist (only the × remains).
+  await page.locator('.thread.rate-3').click({ button: 'right' })
+  await expect(page.locator('.action.close')).toHaveCount(0)
+})
+
+test('unread badge: shown (rounded, colored) when unread > 0, hidden at 0', async ({
+  page,
+}) => {
+  const favs = [
+    { ...FAVS[3], thread_id: '2000000001', title: 'unread', res_count: 10, read_res: 4 },
+    { ...FAVS[3], thread_id: '2000000002', title: 'read', res_count: 10, read_res: 10 },
+  ]
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: favs }))
+  await page.goto('/')
+
+  // Exactly one badge (the unread item); the fully-read item shows none.
+  await expect(page.locator('.unread')).toHaveCount(1)
+  const badge = page.locator('.unread')
+  await expect(badge).toHaveText('6')
+
+  const style = await badge.evaluate((el) => {
+    const s = getComputedStyle(el)
+    return { bg: s.backgroundColor, radius: s.borderTopLeftRadius }
+  })
+  // Dark-red background (not transparent) and a rounded pill.
+  expect(style.bg).not.toBe('rgba(0, 0, 0, 0)')
+  expect(parseFloat(style.radius)).toBeGreaterThan(0)
 })
 
 test('copy actions write title / url / share text to the clipboard', async ({

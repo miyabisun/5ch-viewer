@@ -95,6 +95,9 @@
     --error-bg: #fee;
     --name: #060;
     --link: #1a6;
+    /* Unread badge: dark-red pill with white text. */
+    --badge-bg: #a01818;
+    --badge-fg: #fff;
     /* Rating color bar (★5..★1, 0=none). Tuned for the light theme. */
     --rate-0: #bbb;
     --rate-1: #29b6d8;
@@ -115,6 +118,9 @@
     --error-bg: #3a1a1a;
     --name: #5bbf7a;
     --link: #4dd0a0;
+    /* Unread badge: dark-red pill with white text. */
+    --badge-bg: #8c1f1f;
+    --badge-fg: #fff;
     /* Slightly brighter on dark so the bar stays visible. */
     --rate-0: #555;
     --rate-1: #4dd6f0;

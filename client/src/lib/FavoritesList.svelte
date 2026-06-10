@@ -1,5 +1,6 @@
 <script>
   import { api } from './api.js'
+  import Modal from './Modal.svelte'
 
   let { favorites, onopen, onchange } = $props()
 
@@ -109,28 +110,43 @@
         <div class="sub">{f.board_name} {f.res_count}</div>
       </div>
       {#if unread > 0}
-        <span class="unread">[{unread}]</span>
+        <span class="unread">{unread}</span>
       {/if}
     </div>
   {/each}
 {/each}
 
 {#if menu}
-  <div class="menu-bg" role="presentation" onclick={closeMenu}>
-    <div class="menu" role="presentation" onclick={(e) => e.stopPropagation()}>
+  <Modal onclose={closeMenu}>
+    {#snippet header()}
       <div class="menu-title">{menu.title || '(未取得)'}</div>
+      <div class="menu-url">{threadUrl(menu)}</div>
+    {/snippet}
 
+    <!-- .menu is the action body and the stable E2E hook for the open menu. -->
+    <div class="menu">
       <div class="section-label">お気に入りレベル</div>
-      <div class="ratings">
-        {#each [0, 1, 2, 3, 4, 5] as r}
-          <button
-            class="rate-btn rate-{r}"
-            class:current={menu.rating === r}
+      <!--
+        Star rating: each star (1..5) is a clickable anchor. Lit stars (<= rating)
+        use the "on" color, the rest the "off" color — selection is shown by COLOR,
+        not underline. Clicking the leftmost lit star again clears to level 0.
+      -->
+      <div class="stars">
+        {#each [1, 2, 3, 4, 5] as r}
+          {@const lit = menu.rating >= r}
+          <a
+            href="#rate-{r}"
+            class="star"
+            class:on={lit}
+            class:off={!lit}
             data-rating={r}
-            onclick={() => setRating(menu, r)}
-          >
-            {r > 0 ? '★'.repeat(r) : '☆'}
-          </button>
+            aria-label="レベル {r}"
+            onclick={(e) => {
+              e.preventDefault()
+              // Click the only lit star (level 1) again -> clear to 0.
+              setRating(menu, menu.rating === 1 && r === 1 ? 0 : r)
+            }}
+          >{lit ? '★' : '☆'}</a>
         {/each}
       </div>
 
@@ -142,9 +158,8 @@
       </button>
 
       <button class="action danger" onclick={() => remove(menu)}>削除</button>
-      <button class="action close" onclick={closeMenu}>閉じる</button>
     </div>
-  </div>
+  </Modal>
 {/if}
 
 <style>
@@ -203,61 +218,56 @@
     font-size: 0.8rem;
     color: var(--muted);
   }
+  /* Unread badge: dark-red rounded pill, white text. Hidden when 0 (not rendered). */
   .unread {
-    color: var(--danger);
+    flex: none;
+    background: var(--badge-bg);
+    color: var(--badge-fg);
+    font-size: 0.75rem;
     font-weight: bold;
+    line-height: 1;
+    padding: 0.2rem 0.45rem;
+    border-radius: 999px;
   }
 
-  .menu-bg {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1rem;
-    z-index: 10;
-  }
   .menu {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1rem;
-    width: 100%;
-    max-width: 360px;
-    max-height: 80%;
-    overflow: auto;
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
+    width: 18rem;
+    max-width: 100%;
   }
   .menu-title {
     font-weight: 600;
     word-break: break-word;
-    margin-bottom: 0.3rem;
+  }
+  .menu-url {
+    font-size: 0.75rem;
+    color: var(--muted);
+    word-break: break-all;
+    margin-top: 0.15rem;
   }
   .section-label {
     font-size: 0.75rem;
     color: var(--muted);
     margin-top: 0.4rem;
   }
-  .ratings {
+  /* Star rating: color, not underline, conveys selection. */
+  .stars {
     display: flex;
-    gap: 0.3rem;
+    gap: 0.2rem;
+    font-size: 1.6rem;
+    line-height: 1;
   }
-  .rate-btn {
-    flex: 1;
-    padding: 0.5rem 0;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
-    color: var(--fg);
+  .star {
+    text-decoration: none;
     cursor: pointer;
-    font-size: 0.75rem;
-    border-bottom: 3px solid var(--rate-color);
   }
-  .rate-btn.current {
-    outline: 2px solid var(--accent);
+  .star.on {
+    color: var(--accent);
+  }
+  .star.off {
+    color: var(--rate-0);
   }
   .action {
     padding: 0.7rem;
@@ -266,14 +276,11 @@
     background: var(--bg);
     color: var(--fg);
     cursor: pointer;
-    text-align: left;
+    text-align: center;
     font-size: 0.95rem;
   }
   .action.danger {
     color: var(--danger);
     margin-top: 0.4rem;
-  }
-  .action.close {
-    text-align: center;
   }
 </style>
