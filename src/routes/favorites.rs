@@ -1,6 +1,6 @@
 use crate::error::AppError;
 use crate::goch::http;
-use crate::goch::refresh::{self, read_blob_posts};
+use crate::goch::refresh::{self, count_blob_posts, read_blob_posts};
 use crate::goch::url::{parse_thread_url, validate_ref};
 use crate::models::{
     AddRequest, DatResponse, Favorite, ProgressRequest, RatingRequest, ReloadResponse,
@@ -235,17 +235,17 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
 ///
 /// Take-or-skip is gated by subject.txt's res_count to keep 5ch load low:
 /// if the count has not grown, the dat is NOT fetched (only local metadata is updated).
-/// When a fetch is needed, the entire dat is GET (no Range / no diff) and the BLOB is
-/// fully replaced, so the stored bytes can never be corrupted into TEXT.
+/// When a fetch is needed, the entire dat is GET (no Range / no diff) and the stored
+/// dat is fully replaced as UTF-8 TEXT (decoded once on write, never re-decoded on read).
 async fn reload(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<ReloadResponse>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
 
     // 1. Determine how many posts we actually hold in the stored dat. The gate must
-    //    compare subject.txt against the BLOB, not against `favorites.res_count`:
+    //    compare subject.txt against the stored dat, not against `favorites.res_count`:
     //    those two can drift apart (e.g. res_count was bumped to the subject value
     //    while a prior fetch stored fewer posts). Trusting res_count then makes the
-    //    gate believe "no growth" forever and the blob never catches up. Counting the
-    //    parsed posts in the blob is self-healing.
+    //    gate believe "no growth" forever and the stored dat never catches up. Counting
+    //    the parsed posts in the stored dat is self-healing.
     let stored_res_count: i64 = {
         let conn = state.db.lock().unwrap();
         // Existence check (404 a removed favorite, not a missing blob).
@@ -260,7 +260,7 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
         if !exists {
             return Err(AppError::NotFound("favorite not found".into()));
         }
-        read_blob_posts(&conn, &server, &board, &thread_id)?.len() as i64
+        count_blob_posts(&conn, &server, &board, &thread_id)?
     };
 
     // 2. Check subject.txt to see how many posts the board reports (load-reduction gate).
@@ -322,7 +322,7 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
                 &thread_id,
             )
             .await?;
-            // Persist: a full BLOB replace + metadata recompute, or mark dead on Gone.
+            // Persist: a full UTF-8 TEXT replace + metadata recompute, or mark dead on Gone.
             refresh::persist_fetch(&state, &server, &board, &thread_id, fetch)?
         }
         None => {
@@ -403,12 +403,6 @@ mod tests {
         conn
     }
 
-    /// Encodes UTF-8 text to Shift_JIS bytes (as a real dat is stored).
-    fn sjis(text: &str) -> Vec<u8> {
-        let (cow, _, _) = encoding_rs::SHIFT_JIS.encode(text);
-        cow.into_owned()
-    }
-
     fn column_type(conn: &Connection) -> String {
         conn.query_row(
             "SELECT typeof(raw) FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -418,26 +412,25 @@ mod tests {
         .unwrap()
     }
 
-    /// Regression: a full replace must keep `raw` as a BLOB so that later reads
-    /// (`r.get::<Vec<u8>>`) succeed and the dat parses. Because we always store the
-    /// whole body (never SQLite `||` concatenation), the column can never become TEXT.
+    /// Verifies that replace_blob stores the dat as TEXT (UTF-8) and that it parses correctly
+    /// without any Shift-JIS decoding step. The column type must be "text", and reading via
+    /// r.get::<String> must succeed.
     #[test]
-    fn replace_blob_keeps_blob_type_and_parses() {
+    fn replace_blob_stores_text_and_parses() {
         let conn = setup();
-        let first = sjis("名無し<>sage<>2025/01/01 ID:abc<>本文1<>スレタイ\n");
-        let full = sjis(
-            "名無し<>sage<>2025/01/01 ID:abc<>本文1<>スレタイ\n名無し<><>2025/01/02 ID:def<>本文2<>\n",
-        );
+        let first = "名無し<>sage<>2025/01/01 ID:abc<>本文1<>スレタイ\n";
+        let full =
+            "名無し<>sage<>2025/01/01 ID:abc<>本文1<>スレタイ\n名無し<><>2025/01/02 ID:def<>本文2<>\n";
 
         // initial store, then a full replace (the only write path now)
-        replace_blob(&conn, SERVER, BOARD, THREAD, &first).unwrap();
-        replace_blob(&conn, SERVER, BOARD, THREAD, &full).unwrap();
+        replace_blob(&conn, SERVER, BOARD, THREAD, first).unwrap();
+        replace_blob(&conn, SERVER, BOARD, THREAD, full).unwrap();
 
-        // (a) the column type stays BLOB
-        assert_eq!(column_type(&conn), "blob");
+        // (a) the column type is TEXT (not BLOB)
+        assert_eq!(column_type(&conn), "text");
 
-        // (b) reading as bytes succeeds (would error "Invalid column type Text" if TEXT)
-        let raw: Vec<u8> = conn
+        // (b) reading as String succeeds
+        let raw: String = conn
             .query_row(
                 "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
                 params![SERVER, BOARD, THREAD],
@@ -445,8 +438,8 @@ mod tests {
             )
             .unwrap();
 
-        // (c) the replaced dat parses into both posts
-        let res = parse_dat(&http::decode_shift_jis(&raw));
+        // (c) the replaced dat parses into both posts without any decode_shift_jis call
+        let res = parse_dat(&raw);
         assert_eq!(res.len(), 2);
         assert_eq!(res[0].body, "本文1");
         assert_eq!(res[1].body, "本文2");
@@ -503,9 +496,9 @@ mod tests {
     #[test]
     fn reload_gate_keys_on_blob_count_not_metadata() {
         let conn = setup();
-        // Blob with 2 posts, but metadata res_count bumped to 3 (drifted ahead).
-        let blob = sjis("名無し<>sage<>d ID:a<>本文1<>スレタイ\n名無し<><>d ID:b<>本文2<>\n");
-        replace_blob(&conn, SERVER, BOARD, THREAD, &blob).unwrap();
+        // Dat text with 2 posts, but metadata res_count bumped to 3 (drifted ahead).
+        let dat = "名無し<>sage<>d ID:a<>本文1<>スレタイ\n名無し<><>d ID:b<>本文2<>\n";
+        replace_blob(&conn, SERVER, BOARD, THREAD, dat).unwrap();
         conn.execute(
             "UPDATE favorites SET res_count=3 WHERE server=?1 AND board=?2 AND thread_id=?3",
             params![SERVER, BOARD, THREAD],
@@ -532,20 +525,20 @@ mod tests {
         assert!(!(subject_count > metadata_res_count));
     }
 
-    /// A second replace fully overwrites the previous body (no leftover bytes appended).
+    /// A second replace fully overwrites the previous body (no leftover text from the first).
     #[test]
     fn replace_blob_overwrites_previous_body() {
         let conn = setup();
-        replace_blob(&conn, SERVER, BOARD, THREAD, &sjis("古い<>sage<>d ID:x<>古い本文<>t\n")).unwrap();
-        replace_blob(&conn, SERVER, BOARD, THREAD, &sjis("新しい<>sage<>d ID:y<>新本文<>t\n")).unwrap();
-        let raw: Vec<u8> = conn
+        replace_blob(&conn, SERVER, BOARD, THREAD, "古い<>sage<>d ID:x<>古い本文<>t\n").unwrap();
+        replace_blob(&conn, SERVER, BOARD, THREAD, "新しい<>sage<>d ID:y<>新本文<>t\n").unwrap();
+        let raw: String = conn
             .query_row(
                 "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
                 params![SERVER, BOARD, THREAD],
                 |r| r.get(0),
             )
             .unwrap();
-        let res = parse_dat(&http::decode_shift_jis(&raw));
+        let res = parse_dat(&raw);
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].body, "新本文");
     }

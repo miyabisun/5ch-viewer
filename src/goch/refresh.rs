@@ -12,7 +12,7 @@
 //! twice.
 
 use crate::error::AppError;
-use crate::goch::dat::{parse_dat, title_from_dat};
+use crate::goch::dat::{count_dat_posts, parse_dat, title_from_dat};
 use crate::goch::http::{self, DatFetch};
 use crate::state::AppState;
 use rusqlite::{params, OptionalExtension};
@@ -149,7 +149,7 @@ pub fn persist_fetch(
                 "[refresh] {server}/{board}/{thread_id}: fetched {res_count} posts, replacing blob"
             );
             let conn = state.db.lock().unwrap();
-            replace_blob(&conn, server, board, thread_id, &bytes)?;
+            replace_blob(&conn, server, board, thread_id, &text)?;
             conn.execute(
                 "UPDATE favorites SET res_count=?4, status=?5,
                  title = CASE WHEN title='' THEN ?6 ELSE title END,
@@ -179,7 +179,7 @@ fn collect_board_threads(
     drop(stmt);
     let mut out = Vec::with_capacity(ids.len());
     for thread_id in ids {
-        let stored = read_blob_posts(&conn, server, board, &thread_id)?.len() as i64;
+        let stored = count_blob_posts(&conn, server, board, &thread_id)?;
         out.push(BoardThread {
             thread_id,
             stored_res_count: stored,
@@ -188,24 +188,41 @@ fn collect_board_threads(
     Ok(out)
 }
 
-/// Replaces the raw in dat_blobs entirely (inserts if absent). Always a full body, so the
-/// column can never be corrupted into TEXT by concatenation.
+/// Replaces the raw in dat_blobs entirely (inserts if absent). Always stores the full
+/// UTF-8-decoded body, so a subsequent read never needs Shift-JIS decoding.
 pub fn replace_blob(
     conn: &rusqlite::Connection,
     server: &str,
     board: &str,
     thread_id: &str,
-    bytes: &[u8],
+    text: &str,
 ) -> Result<(), AppError> {
     conn.execute(
         "INSERT INTO dat_blobs (server, board, thread_id, raw) VALUES (?1,?2,?3,?4)
          ON CONFLICT(server, board, thread_id) DO UPDATE SET raw=excluded.raw",
-        params![server, board, thread_id, bytes],
+        params![server, board, thread_id, text],
     )?;
     Ok(())
 }
 
-/// Reads the stored dat blob and parses it into posts (empty when no blob exists). The single
+/// Reads the stored dat text (UTF-8, decoded once at write time — no Shift-JIS decode here).
+/// `None` when no blob exists yet.
+fn read_blob_raw(
+    conn: &rusqlite::Connection,
+    server: &str,
+    board: &str,
+    thread_id: &str,
+) -> Result<Option<String>, AppError> {
+    Ok(conn
+        .query_row(
+            "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![server, board, thread_id],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// Reads the stored dat text and parses it into posts (empty when no blob exists). The single
 /// source of truth for "what posts do we actually hold", so the reload gate and the prefetch
 /// gate never disagree on the stored count.
 pub fn read_blob_posts(
@@ -214,17 +231,23 @@ pub fn read_blob_posts(
     board: &str,
     thread_id: &str,
 ) -> Result<Vec<crate::goch::dat::Res>, AppError> {
-    let raw: Option<Vec<u8>> = conn
-        .query_row(
-            "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
-            params![server, board, thread_id],
-            |r| r.get(0),
-        )
-        .optional()?;
-    Ok(match raw {
-        Some(bytes) => parse_dat(&http::decode_shift_jis(&bytes)),
-        None => vec![],
-    })
+    Ok(read_blob_raw(conn, server, board, thread_id)?
+        .map(|text| parse_dat(&text))
+        .unwrap_or_default())
+}
+
+/// Counts the posts in the stored dat without allocating them (0 when no blob exists). The
+/// cheap path for the reload/prefetch gate's baseline, which only needs the count — counts
+/// exactly the posts `read_blob_posts` would return.
+pub fn count_blob_posts(
+    conn: &rusqlite::Connection,
+    server: &str,
+    board: &str,
+    thread_id: &str,
+) -> Result<i64, AppError> {
+    Ok(read_blob_raw(conn, server, board, thread_id)?
+        .map(|text| count_dat_posts(&text))
+        .unwrap_or(0))
 }
 
 /// Derives thread status from res_count alone (dat byte size is not used).

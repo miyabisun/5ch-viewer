@@ -66,8 +66,9 @@ fn sjis(text: &str) -> Vec<u8> {
     cow.into_owned()
 }
 
-/// Builds a dat body (Shift_JIS) with `n` posts. The first post carries the thread title.
-fn build_dat(title: &str, n: i64) -> Vec<u8> {
+/// Builds a dat body as UTF-8 text with `n` posts. The first post carries the thread title.
+/// Used for DB seeding (dat_blobs.raw is UTF-8 TEXT).
+fn build_dat_text(title: &str, n: i64) -> String {
     let mut s = String::new();
     for i in 1..=n {
         let title_field = if i == 1 { title } else { "" };
@@ -75,7 +76,13 @@ fn build_dat(title: &str, n: i64) -> Vec<u8> {
             "名無し<>sage<>2025/01/01 00:00 ID:abc{i}<>本文{i}<>{title_field}\n"
         ));
     }
-    sjis(&s)
+    s
+}
+
+/// Builds a dat body as Shift_JIS bytes with `n` posts. The first post carries the thread title.
+/// Used for mock HTTP responses that mimic the real 5ch server (which always returns Shift-JIS).
+fn build_dat_sjis(title: &str, n: i64) -> Vec<u8> {
+    sjis(&build_dat_text(title, n))
 }
 
 #[derive(Deserialize)]
@@ -128,7 +135,7 @@ async fn mock_dat(
     let inner = mock.lock().unwrap();
     match inner.threads.get(&(board.clone(), thread_id.clone())) {
         Some(t) if !t.gone => {
-            (StatusCode::OK, build_dat(&t.title, t.dat_posts)).into_response()
+            (StatusCode::OK, build_dat_sjis(&t.title, t.dat_posts)).into_response()
         }
         _ => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
@@ -194,7 +201,8 @@ async fn ctl_seed(State(app): State<AppState>, Json(c): Json<SeedCtl>) -> Json<b
     } else {
         c.title
     };
-    let blob = build_dat(&title, c.blob_posts);
+    // Build UTF-8 dat text for DB storage (dat_blobs.raw is TEXT, Shift-JIS decoded once on write).
+    let dat_text = build_dat_text(&title, c.blob_posts);
     let conn = app.db.lock().unwrap();
     conn.execute(
         "INSERT OR REPLACE INTO favorites
@@ -206,7 +214,7 @@ async fn ctl_seed(State(app): State<AppState>, Json(c): Json<SeedCtl>) -> Json<b
     conn.execute(
         "INSERT OR REPLACE INTO dat_blobs (server, board, thread_id, raw)
          VALUES (?1, ?2, ?3, ?4)",
-        params![c.server, c.board, c.thread_id, blob],
+        params![c.server, c.board, c.thread_id, dat_text],
     )
     .unwrap();
     Json(true)

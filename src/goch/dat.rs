@@ -14,26 +14,39 @@ pub struct Res {
     pub body: String,
 }
 
+/// Splits one dat line into its `<>`-separated fields, or `None` if it is empty or
+/// malformed (fewer than 4 fields). The single predicate shared by `parse_dat` (which
+/// builds posts) and `count_dat_posts` (which only counts), so the two never disagree.
+fn dat_fields(line: &str) -> Option<Vec<&str>> {
+    if line.is_empty() {
+        return None;
+    }
+    let f: Vec<&str> = line.split("<>").collect();
+    (f.len() >= 4).then_some(f)
+}
+
 /// Parses dat content (already UTF-8 decoded) into an array of posts.
 pub fn parse_dat(text: &str) -> Vec<Res> {
-    let mut out = Vec::new();
-    for (i, line) in text.split('\n').enumerate() {
-        if line.is_empty() {
-            continue;
-        }
-        let f: Vec<&str> = line.split("<>").collect();
-        if f.len() < 4 {
-            continue;
-        }
-        out.push(Res {
-            num: (i + 1) as i64,
-            name: f[0].to_string(),
-            mail: f[1].to_string(),
-            date: f[2].to_string(),
-            body: f[3].to_string(),
-        });
-    }
-    out
+    text.split('\n')
+        .enumerate()
+        .filter_map(|(i, line)| {
+            let f = dat_fields(line)?;
+            Some(Res {
+                num: (i + 1) as i64,
+                name: f[0].to_string(),
+                mail: f[1].to_string(),
+                date: f[2].to_string(),
+                body: f[3].to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Counts the posts in dat content without allocating them — the cheap path for the
+/// reload/prefetch gate, which only needs "how many posts do we hold". Counts exactly
+/// the lines `parse_dat` would keep.
+pub fn count_dat_posts(text: &str) -> i64 {
+    text.split('\n').filter(|l| dat_fields(l).is_some()).count() as i64
 }
 
 /// Extracts the thread title from the first post (the 5th field).
