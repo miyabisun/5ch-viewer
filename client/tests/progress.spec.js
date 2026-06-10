@@ -39,6 +39,10 @@ test('opening a thread restores the saved read position (auto-scroll)', async ({
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({ json: datResponse() }),
   )
+  // Opening auto-refreshes (GET reload); mock it so the open path is deterministic.
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: COUNT, read_res: FAV.read_res, status: 'active' } }),
+  )
   // progress GET/POST must not 405; respond to both so the page logic completes.
   await page.route(/\/api\/favorites\/.+\/progress$/, (route) => {
     if (route.request().method() === 'GET') {

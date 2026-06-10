@@ -98,6 +98,9 @@ test('plain click still opens the thread', async ({ page }) => {
       },
     }),
   )
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 1, read_res: 0, status: 'active' } }),
+  )
   await page.goto('/')
 
   await page.locator('.thread.rate-3 .info').click()

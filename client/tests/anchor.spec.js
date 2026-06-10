@@ -33,6 +33,9 @@ test('clicking a >>N anchor opens the modal without navigating', async ({ page }
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({ json: datResponse() }),
   )
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
+  )
 
   await page.goto(THREAD_PATH)
   await expect(page.getByText('これはアンカー')).toBeVisible()

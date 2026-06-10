@@ -6,39 +6,35 @@
   let { fav, onback } = $props()
 
   let data = $state(null)
-  let loading = $state(false)
   // Read position (max res number that has passed through the viewport). Initialized from the saved read_res (only on first mount).
   let maxRead = $state(untrack(() => fav.read_res))
   // Restore-on-open guard: scroll to the saved read position only after the first
   // successful load, never after a manual reload.
   let restored = $state(false)
 
+  // Open = auto-refresh. Fetch the latest (GET reload: checks subject.txt's
+  // res_count and pulls new dat if it grew), then render the dat. The restore
+  // effect runs after this single load, so there is no double-fetch and the
+  // read-position restore happens against the up-to-date list (new posts land
+  // naturally below the restored position).
   async function load() {
+    try {
+      await api.reload(fav.server, fav.board, fav.thread_id)
+    } catch {
+      // Refresh is best-effort; fall back to whatever the dat endpoint returns.
+    }
     data = await api.getDat(fav.server, fav.board, fav.thread_id)
-    // The dat response is authoritative (set even on direct-URL open with no fav data).
     if (data.read_res > maxRead) maxRead = data.read_res
   }
 
-  async function reload() {
-    loading = true
-    try {
-      await api.reload(fav.server, fav.board, fav.thread_id)
-      await load()
-    } catch (e) {
-      alert(e.message)
-    } finally {
-      loading = false
-    }
-  }
-
-  // Initial load.
+  // Initial load (auto-refresh on open).
   $effect(() => {
     load()
   })
 
   // Restore the saved read position by scrolling the last-read res into view.
   // Runs once after the dat has rendered (in an effect, not load, so the res
-  // nodes exist in the DOM); the `restored` guard prevents re-runs on reload.
+  // nodes exist in the DOM); the `restored` guard prevents re-runs.
   $effect(() => {
     if (!data || restored) return
     restored = true
@@ -164,12 +160,48 @@
     if (!a) return
     openAnchor(Number(a.dataset.anchor))
   }
-</script>
 
-<div class="bar">
-  <button onclick={onback}>← 戻る</button>
-  <button onclick={reload} disabled={loading}>{loading ? '更新中…' : '↻ 更新'}</button>
-</div>
+  // Touch action: a clear right-swipe goes back to the list.
+  // Thresholds (mirrors novel-server's reader swipe to avoid misfires):
+  //   - lock the gesture as horizontal only when |dx| > |dy| after 5px of travel,
+  //   - require |dx| >= 60px and a horizontal dominance (|dx| > |dy| * 1.5) on end.
+  function backSwipe(node) {
+    let startX, startY, locked, horizontal
+    function onStart(e) {
+      const t = e.touches[0]
+      startX = t.clientX
+      startY = t.clientY
+      locked = false
+      horizontal = false
+    }
+    function onMove(e) {
+      const t = e.touches[0]
+      const dx = t.clientX - startX
+      const dy = t.clientY - startY
+      if (!locked) {
+        if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return
+        locked = true
+        horizontal = Math.abs(dx) > Math.abs(dy)
+      }
+    }
+    function onEnd(e) {
+      if (!locked || !horizontal) return
+      const dx = e.changedTouches[0].clientX - startX
+      const dy = e.changedTouches[0].clientY - startY
+      if (dx >= 60 && Math.abs(dx) > Math.abs(dy) * 1.5) onback()
+    }
+    node.addEventListener('touchstart', onStart, { passive: true })
+    node.addEventListener('touchmove', onMove, { passive: true })
+    node.addEventListener('touchend', onEnd, { passive: true })
+    return {
+      destroy() {
+        node.removeEventListener('touchstart', onStart)
+        node.removeEventListener('touchmove', onMove)
+        node.removeEventListener('touchend', onEnd)
+      },
+    }
+  }
+</script>
 
 <!-- body is already sanitized on the server. linkify makes anchors clickable. -->
 {#snippet body(html)}
@@ -197,13 +229,18 @@
   {@render refs(r.num)}
 {/snippet}
 
+<!-- Sticky title header: stays visible while scrolling (replaces the removed
+     back/update bar). Sits just below the global NavBar. -->
+<h1 class="title" data-testid="thread-title">{data?.title || fav.title}</h1>
+
 {#if data}
-  <h1>{data.title || fav.title}</h1>
-  {#each data.res as r (r.num)}
-    <div class="res" use:track={r.num} class:unread={r.num > fav.read_res}>
-      {@render resBody(r)}
-    </div>
-  {/each}
+  <div class="thread-body" use:backSwipe>
+    {#each data.res as r (r.num)}
+      <div class="res" use:track={r.num} class:unread={r.num > fav.read_res}>
+        {@render resBody(r)}
+      </div>
+    {/each}
+  </div>
 {/if}
 
 {#if currentAnchor}
@@ -228,16 +265,20 @@
 {/if}
 
 <style>
-  .bar {
+  /* Sticky title header. Sits below the global NavBar (which is sticky at top:0
+     and ~2.8rem tall: theme toggle 2rem + 0.4rem padding x2). */
+  .title {
     position: sticky;
-    top: 0;
-    background: var(--bg);
-    display: flex;
-    gap: 0.5rem;
+    top: 2.8rem;
+    z-index: 5;
+    margin: 0;
     padding: 0.5rem 0;
-  }
-  h1 {
-    font-size: 1.1rem;
+    font-size: 1.05rem;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .res {
     background: var(--card-bg);

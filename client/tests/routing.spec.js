@@ -29,6 +29,10 @@ function mock(page) {
   page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({ json: datResponse() }),
   )
+  // Opening auto-refreshes (GET reload); mock it so the open path is deterministic.
+  page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 1, read_res: 0, status: 'active' } }),
+  )
 }
 
 test('opening a thread pushes its URL', async ({ page }) => {
