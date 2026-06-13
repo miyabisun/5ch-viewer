@@ -1,0 +1,314 @@
+import { test, expect } from '@playwright/test'
+
+const FAV = {
+  server: 'egg',
+  board: 'applism',
+  board_name: 'アプリ',
+  thread_id: '1771127145',
+  title: 'NGテストスレ',
+  res_count: 3,
+  read_res: 0,
+  rating: 0,
+  status: 'active',
+}
+
+const THREAD_PATH = `/${FAV.server}/${FAV.board}/${FAV.thread_id}`
+
+// Two posts share ID:target (appears twice -> badge shown), one post has a different ID.
+function datResponse(ngIds = []) {
+  return {
+    title: FAV.title,
+    res_count: 3,
+    read_res: 0,
+    status: 'active',
+    res: [
+      { num: 1, name: '名無し', mail: '', date: '2025/01/01(水) 00:00:00.00 ID:target', body: '本文1', id: 'target' },
+      { num: 2, name: '名無し', mail: '', date: '2025/01/01(水) 00:01:00.00 ID:other', body: '本文2', id: 'other' },
+      { num: 3, name: '名無し', mail: '', date: '2025/01/01(水) 00:02:00.00 ID:target', body: '本文3', id: 'target' },
+    ],
+  }
+}
+
+// Standard route setup shared across tests.
+async function setupRoutes(page, { ngIds = [], searchResult = [] } = {}) {
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+    route.fulfill({ json: datResponse() }),
+  )
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 3, read_res: 0, status: 'active' } }),
+  )
+  await page.route('**/api/ng-ids', (route) => {
+    if (route.request().method() === 'GET') {
+      route.fulfill({ json: ngIds.map((ng_id) => ({ ng_id, created_at: 0 })) })
+    } else {
+      route.fulfill({ json: { ok: true } })
+    }
+  })
+  await page.route(/\/api\/ng-ids\/.*/, (route) =>
+    route.fulfill({ json: { ok: true } }),
+  )
+  await page.route(/\/api\/boards\/.+\/id-search/, (route) =>
+    route.fulfill({ json: searchResult }),
+  )
+}
+
+test('right-click on ID badge opens the ID menu', async ({ page }) => {
+  await setupRoutes(page)
+  await page.goto(THREAD_PATH)
+
+  // Wait for the thread body to render.
+  await expect(page.getByText('本文1')).toBeVisible()
+
+  // The ID badge shows for "target" (appears twice -> stats.total >= 2).
+  const badge = page.locator('.resid').first()
+  await expect(badge).toBeVisible()
+
+  // Right-click opens the ID menu.
+  await badge.click({ button: 'right' })
+  await expect(page.locator('[data-testid="id-menu"]')).toBeVisible()
+
+  // Menu contains the three expected actions.
+  await expect(page.getByRole('button', { name: 'NGIDに追加' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'コピー' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '取得済みスレから検索' })).toBeVisible()
+})
+
+test('NG post: header struck-through, body hidden', async ({ page }) => {
+  // Simulate "target" already in the NG list.
+  await setupRoutes(page, { ngIds: ['target'] })
+  await page.goto(THREAD_PATH)
+
+  await expect(page.getByText('本文1')).toHaveCount(0)
+  await expect(page.getByText('本文3')).toHaveCount(0)
+  // Non-NG post body is still shown.
+  await expect(page.getByText('本文2')).toBeVisible()
+
+  // The NG res has the del.ng wrapper.
+  const ngDel = page.locator('del.ng')
+  await expect(ngDel).toHaveCount(2) // two posts with ID:target
+})
+
+test('NGID追加 adds ID to NG and menu shows NGIDから削除 on reopen', async ({ page }) => {
+  const addRequests = []
+  await setupRoutes(page)
+  await page.route('**/api/ng-ids', async (route) => {
+    if (route.request().method() === 'POST') {
+      addRequests.push(route.request().postDataJSON())
+      route.fulfill({ json: { ok: true } })
+    } else {
+      // First GET returns empty; second GET (after add) returns the new ID.
+      const call = addRequests.length
+      route.fulfill({
+        json: call > 0 ? [{ ng_id: 'target', created_at: 0 }] : [],
+      })
+    }
+  })
+
+  await page.goto(THREAD_PATH)
+  await expect(page.getByText('本文1')).toBeVisible()
+
+  const badge = page.locator('.resid').first()
+  await badge.click({ button: 'right' })
+  await expect(page.locator('[data-testid="id-menu"]')).toBeVisible()
+
+  await page.getByRole('button', { name: 'NGIDに追加' }).click()
+
+  // The API was called.
+  await expect.poll(() => addRequests.length).toBe(1)
+  expect(addRequests[0]).toEqual({ ng_id: 'target' })
+})
+
+test('copy writes "ID:xxx" to clipboard', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await setupRoutes(page)
+  await page.goto(THREAD_PATH)
+
+  await expect(page.getByText('本文1')).toBeVisible()
+  const badge = page.locator('.resid').first()
+  await badge.click({ button: 'right' })
+  await page.getByRole('button', { name: 'コピー' }).click()
+
+  const text = await page.evaluate(() => navigator.clipboard.readText())
+  expect(text).toBe('ID:target')
+})
+
+test('id-search shows results modal', async ({ page }) => {
+  const searchResult = [
+    {
+      thread_id: '1771127145',
+      title: 'NGテストスレ',
+      res: [
+        { num: 1, name: '名無し', mail: '', date: '2025/01/01 ID:target', body: '検索ヒット本文', id: 'target' },
+      ],
+    },
+  ]
+  await setupRoutes(page, { searchResult })
+  await page.goto(THREAD_PATH)
+
+  await expect(page.getByText('本文1')).toBeVisible()
+  const badge = page.locator('.resid').first()
+  await badge.click({ button: 'right' })
+  await page.getByRole('button', { name: '取得済みスレから検索' }).click()
+
+  // Search result modal appears.
+  const resultModal = page.locator('[data-testid="id-search-result"]')
+  await expect(resultModal).toBeVisible()
+  await expect(page.getByText('検索ヒット本文')).toBeVisible()
+})
+
+test('id-search shows 該当なし when no results', async ({ page }) => {
+  await setupRoutes(page, { searchResult: [] })
+  await page.goto(THREAD_PATH)
+
+  await expect(page.getByText('本文1')).toBeVisible()
+  const badge = page.locator('.resid').first()
+  await badge.click({ button: 'right' })
+  await page.getByRole('button', { name: '取得済みスレから検索' }).click()
+
+  await expect(page.locator('[data-testid="id-search-result"]')).toBeVisible()
+  await expect(page.getByText('該当なし')).toBeVisible()
+})
+
+test('ID menu closes via × button', async ({ page }) => {
+  await setupRoutes(page)
+  await page.goto(THREAD_PATH)
+
+  await expect(page.getByText('本文1')).toBeVisible()
+  const badge = page.locator('.resid').first()
+  await badge.click({ button: 'right' })
+  await expect(page.locator('[data-testid="id-menu"]')).toBeVisible()
+
+  await page.getByRole('button', { name: '閉じる' }).click()
+  await expect(page.locator('[data-testid="id-menu"]')).toHaveCount(0)
+})
+
+// Regression (review warning): NG body must be hidden even when the res is
+// opened via an anchor tree (>>N click). Previously anchorNode called
+// resHead+body directly and bypassed NG filtering, allowing the body to show.
+test('NG body is hidden inside the anchor tree (anchorNode uses resHeadAndBody)', async ({
+  page,
+}) => {
+  // res1 anchors to res2 (NG); res2 body must not appear in the anchor tree.
+  const datWithAnchor = {
+    title: FAV.title,
+    res_count: 2,
+    read_res: 0,
+    status: 'active',
+    res: [
+      {
+        num: 1,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01(水) 00:00:00.00 ID:normal',
+        body: 'アンカー &gt;&gt;2',
+        id: 'normal',
+      },
+      {
+        num: 2,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01(水) 00:01:00.00 ID:target',
+        body: 'NG本文がここに表示されてはいけない',
+        id: 'target',
+      },
+    ],
+  }
+
+  // Register "target" as NG so res2 body should be hidden everywhere.
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+    route.fulfill({ json: datWithAnchor }),
+  )
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
+  )
+  await page.route('**/api/ng-ids', (route) => {
+    if (route.request().method() === 'GET') {
+      route.fulfill({ json: [{ ng_id: 'target', created_at: 0 }] })
+    } else {
+      route.fulfill({ json: { ok: true } })
+    }
+  })
+  await page.route(/\/api\/ng-ids\/.*/, (route) =>
+    route.fulfill({ json: { ok: true } }),
+  )
+  await page.route(/\/api\/boards\/.+\/id-search/, (route) =>
+    route.fulfill({ json: [] }),
+  )
+
+  await page.goto(THREAD_PATH)
+
+  // The anchor >>2 is rendered in res1's body (server sends &gt;&gt;2).
+  await expect(page.locator('.anchor[data-anchor="2"]')).toBeVisible()
+
+  // Click the >>2 anchor to open the anchor-tree modal.
+  await page.locator('.anchor[data-anchor="2"]').click()
+  await expect(page.locator('.modal')).toBeVisible()
+
+  // The NG body text must NOT appear anywhere in the modal.
+  await expect(
+    page.locator('.modal').getByText('NG本文がここに表示されてはいけない'),
+  ).toHaveCount(0)
+
+  // The NG res header (del.ng) must appear inside the modal (struck-through header is shown).
+  await expect(page.locator('.modal del.ng')).toHaveCount(1)
+})
+
+// Regression (review warning): single-occurrence ID (total=1) must also show a
+// clickable ID element so Copy / Search / NGID-add are accessible for any post.
+test('single-occurrence ID shows a clickable resid span', async ({ page }) => {
+  // Use a dat where each post has a unique ID (all total=1).
+  const datUniqueIds = {
+    title: FAV.title,
+    res_count: 2,
+    read_res: 0,
+    status: 'active',
+    res: [
+      { num: 1, name: '名無し', mail: '', date: '2025/01/01 00:00:00 ID:uniq1', body: '本文A', id: 'uniq1' },
+      { num: 2, name: '名無し', mail: '', date: '2025/01/01 00:01:00 ID:uniq2', body: '本文B', id: 'uniq2' },
+    ],
+  }
+
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+    route.fulfill({ json: datUniqueIds }),
+  )
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
+  )
+  await page.route('**/api/ng-ids', (route) => {
+    if (route.request().method() === 'GET') {
+      route.fulfill({ json: [] })
+    } else {
+      route.fulfill({ json: { ok: true } })
+    }
+  })
+  await page.route(/\/api\/ng-ids\/.*/, (route) =>
+    route.fulfill({ json: { ok: true } }),
+  )
+  await page.route(/\/api\/boards\/.+\/id-search/, (route) =>
+    route.fulfill({ json: [] }),
+  )
+
+  await page.goto(THREAD_PATH)
+  await expect(page.getByText('本文A')).toBeVisible()
+
+  // Both single-occurrence IDs must have a .resid span (not hidden).
+  const badges = page.locator('.resid')
+  await expect(badges).toHaveCount(2)
+
+  // Right-clicking the first badge opens the ID menu.
+  await badges.first().click({ button: 'right' })
+  await expect(page.locator('[data-testid="id-menu"]')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'NGIDに追加' })).toBeVisible()
+})

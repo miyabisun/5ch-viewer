@@ -2,9 +2,10 @@
   import { untrack } from 'svelte'
   import { api, beaconProgress } from './api.js'
   import { formatName } from './name.js'
+  import { stripId, buildIdStats } from './id.js'
   import Modal from './Modal.svelte'
 
-  let { fav, onback } = $props()
+  let { fav, onback, ngIds = new Set(), onngchange = () => {} } = $props()
 
   let data = $state(null)
   // Surfaced when the auto-refresh (reload) fails. The stored dat is still shown
@@ -157,6 +158,10 @@
     return map
   })
 
+  // Per-res ID stats: Map<resNum, { id, total, order, colorLevel }>.
+  // Built from all reses in one pass; used by resHead to colour-code same-ID posts.
+  const idStats = $derived.by(() => buildIdStats(data?.res ?? []))
+
   // Look up a res by number (missing if not found).
   function resOf(num) {
     return data?.res.find((r) => r.num === num) ?? { num, missing: true }
@@ -266,6 +271,90 @@
       },
     }
   }
+
+  // --- ID right-click / long-press menu ---
+  // Menu state: the ID string the menu acts on, or null (closed).
+  let idMenu = $state(null)
+
+  function openIdMenu(id) {
+    idMenu = id
+  }
+  function closeIdMenu() {
+    idMenu = null
+  }
+
+  // Long-press detection for the ID span (touch devices, 500ms, same threshold as FavoritesList).
+  let idPressTimer
+  let idLongPressed = false
+  function onIdPointerDown(e, id) {
+    if (e.pointerType !== 'touch') return
+    idLongPressed = false
+    idPressTimer = setTimeout(() => {
+      idLongPressed = true
+      openIdMenu(id)
+    }, 500)
+  }
+  function cancelIdPress() {
+    clearTimeout(idPressTimer)
+  }
+  function onIdClick(e, id) {
+    // Swallow the click that ends a long-press so it does not also open an anchor.
+    if (idLongPressed) {
+      idLongPressed = false
+      e.stopPropagation()
+      return
+    }
+  }
+
+  // Copy the ID string (with the "ID:" prefix) to the clipboard.
+  async function copyId(id) {
+    try {
+      await navigator.clipboard.writeText('ID:' + id)
+    } catch {
+      /* clipboard may be unavailable; fail silently */
+    }
+    closeIdMenu()
+  }
+
+  // Add or remove the ID from the NG list. Calls onngchange to let the parent reload.
+  async function toggleNg(id) {
+    try {
+      if (ngIds.has(id)) {
+        await api.removeNgId(id)
+      } else {
+        await api.addNgId(id)
+      }
+      onngchange()
+    } catch (e) {
+      console.error('[ng]', e)
+    }
+    closeIdMenu()
+  }
+
+  // --- ID search ---
+  let idSearchLoading = $state(false)
+  let idSearchResult = $state(null) // null = closed, [] = empty result, [...] = results
+  let idSearchTarget = $state(null) // the ID that was searched
+
+  async function startIdSearch(id) {
+    closeIdMenu()
+    idSearchTarget = id
+    idSearchLoading = true
+    idSearchResult = null
+    try {
+      idSearchResult = await api.idSearch(fav.server, fav.board, id)
+    } catch (e) {
+      console.error('[id-search]', e)
+      idSearchResult = []
+    } finally {
+      idSearchLoading = false
+    }
+  }
+
+  function closeIdSearch() {
+    idSearchResult = null
+    idSearchTarget = null
+  }
 </script>
 
 <!-- body is already sanitized on the server. linkify makes anchors clickable. -->
@@ -287,15 +376,55 @@
 
 <!-- Res header + body, shared by every render site. -->
 {#snippet resHead(r)}
+  {@const stats = idStats.get(r.num)}
+  <!-- Resolve the ID: server-extracted r.id is authoritative; fall back to client
+       extraction for edge cases (e.g. reses from the id-search result set). -->
+  {@const resolvedId = r.id ?? stats?.id ?? null}
   <span class="num">{r.num}</span>
   <span class="name">{formatName(r.name)}</span>
-  <span class="date">{r.date}</span>
-  {@render body(r.body)}
+  <span class="date">
+    {stripId(r.date)}{#if resolvedId}
+      <!-- ID span: always shown when an ID exists (total>=2 only controls colour).
+           Right-click (PC) or long-press (touch) opens the ID context menu.
+           For total>=2 the span is coloured and shows order/total counts. -->
+      {@const colorCls = stats && stats.total >= 2 ? `id-${stats.colorLevel}` : 'id-l1'}
+      {@const label = stats && stats.total >= 2
+        ? `ID:${resolvedId} (${stats.order}/${stats.total})`
+        : `ID:${resolvedId}`}
+      <span
+        class="id-badge {colorCls} resid"
+        role="button"
+        tabindex="0"
+        data-id={resolvedId}
+        oncontextmenu={(e) => { e.preventDefault(); openIdMenu(resolvedId) }}
+        onpointerdown={(e) => onIdPointerDown(e, resolvedId)}
+        onpointerup={cancelIdPress}
+        onpointerleave={cancelIdPress}
+        onpointercancel={cancelIdPress}
+        onclick={(e) => onIdClick(e, resolvedId)}
+        onkeydown={(e) => e.key === 'Enter' && openIdMenu(resolvedId)}
+      >{label}</span>
+    {/if}
+  </span>
 {/snippet}
 
-<!-- Res body (list/modal): header + body + followable back-references. -->
+<!-- resHead + body snippet combined (used in main list). -->
+{#snippet resHeadAndBody(r)}
+  {@const ngd = r.id ? ngIds.has(r.id) : false}
+  {#if ngd}
+    <!-- NG post: header shown struck-through + muted, body hidden completely. -->
+    <del class="ng">
+      {@render resHead(r)}
+    </del>
+  {:else}
+    {@render resHead(r)}
+    {@render body(r.body)}
+  {/if}
+{/snippet}
+
+<!-- Res body (list): header + body + followable back-references. -->
 {#snippet resBody(r)}
-  {@render resHead(r)}
+  {@render resHeadAndBody(r)}
   {@render refs(r.num)}
 {/snippet}
 
@@ -309,9 +438,10 @@
     {#if r.missing}
       <div class="res missing">レス {num} は未取得です</div>
     {:else}
-      <!-- No back-references inside the tree, to reduce noise. -->
+      <!-- No back-references inside the tree, to reduce noise.
+           Uses resHeadAndBody so NG posts are hidden even inside the anchor tree. -->
       <div class="res">
-        {@render resHead(r)}
+        {@render resHeadAndBody(r)}
       </div>
       {#each children as child (child)}
         {@render anchorNode(child)}
@@ -345,6 +475,57 @@
     <!-- Clicking >>N inside the tree replaces the root (no stacking). -->
     <div role="presentation" onclick={onBodyClick}>
       {@render anchorNode(anchorRoot)}
+    </div>
+  </Modal>
+{/if}
+
+<!-- ID right-click / long-press menu modal. -->
+{#if idMenu != null}
+  <Modal onclose={closeIdMenu}>
+    {#snippet header()}
+      <div class="menu-title">ID:{idMenu}</div>
+    {/snippet}
+    <div class="menu" data-testid="id-menu">
+      <button class="action" onclick={() => toggleNg(idMenu)}>
+        {ngIds.has(idMenu) ? 'NGIDから削除' : 'NGIDに追加'}
+      </button>
+      <button class="action" onclick={() => copyId(idMenu)}>コピー</button>
+      <button class="action" onclick={() => startIdSearch(idMenu)}>取得済みスレから検索</button>
+    </div>
+  </Modal>
+{/if}
+
+<!-- ID search loading indicator (shown while idSearchLoading and no result yet). -->
+{#if idSearchLoading}
+  <Modal onclose={closeIdSearch}>
+    <p class="search-loading">ID:{idSearchTarget} を検索中…</p>
+  </Modal>
+{/if}
+
+<!-- ID search result modal. -->
+{#if idSearchResult != null && !idSearchLoading}
+  <Modal onclose={closeIdSearch}>
+    {#snippet header()}
+      <div class="menu-title">
+        ID:{idSearchTarget} の検索結果（{idSearchResult.reduce((s, t) => s + t.res.length, 0)}件）
+      </div>
+    {/snippet}
+    <div class="search-result" data-testid="id-search-result">
+      {#if idSearchResult.length === 0}
+        <p class="search-empty">該当なし</p>
+      {:else}
+        {#each idSearchResult as thread (thread.thread_id)}
+          <h3 class="search-thread-title">{thread.title}</h3>
+          {#each thread.res as r (r.num)}
+            <div class="res search-res">
+              <span class="num">{r.num}</span>
+              <span class="name">{formatName(r.name)}</span>
+              <span class="date">{r.date}</span>
+              <div class="body" role="presentation">{@html linkify(r.body)}</div>
+            </div>
+          {/each}
+        {/each}
+      {/if}
     </div>
   </Modal>
 {/if}
@@ -432,5 +613,75 @@
     color: var(--danger);
     background: var(--error-bg);
     border-radius: 4px;
+  }
+  /* ID badge: same size as the surrounding .date text. */
+  .id-badge {
+    font-size: 0.75rem;
+  }
+  /* id-l1: single-occurrence ID — shown as muted text (clickable but no colour accent). */
+  .id-l1 { color: var(--muted); }
+  .id-l2 { color: var(--id-l2); }
+  .id-l3 { color: var(--id-l3); }
+  .id-l4 { color: var(--id-l4); }
+  .id-l5 { color: var(--id-l5); font-weight: bold; }
+
+  /* Clickable ID badge affordance. */
+  .resid {
+    cursor: pointer;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
+  /* NG post: header is struck-through + muted; body is not rendered. */
+  .ng {
+    color: var(--muted);
+    text-decoration: line-through;
+  }
+
+  /* ID action menu (same layout as FavoritesList menu). */
+  .menu {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    width: 16rem;
+    max-width: 100%;
+  }
+  .menu-title {
+    font-weight: 600;
+    word-break: break-all;
+    font-size: 0.9rem;
+  }
+  .action {
+    padding: 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    cursor: pointer;
+    text-align: center;
+    font-size: 0.95rem;
+  }
+
+  /* ID search result modal content. */
+  .search-result {
+    min-width: min(32rem, 90vw);
+    max-width: 90vw;
+  }
+  .search-thread-title {
+    font-size: 0.9rem;
+    color: var(--accent);
+    margin: 0.8rem 0 0.3rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.2rem;
+  }
+  .search-res {
+    font-size: 0.9rem;
+  }
+  .search-empty {
+    color: var(--muted);
+  }
+  .search-loading {
+    color: var(--muted);
+    padding: 1rem 0;
   }
 </style>

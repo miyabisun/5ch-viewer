@@ -2,7 +2,24 @@
 //!   name<>mail<>date ID etc.<>body<>thread title (first post only)
 //! The post number is the line number (1-based).
 
+use regex_lite::Regex;
 use serde::Serialize;
+use std::sync::LazyLock;
+
+// Matches "ID:" followed by non-whitespace characters.
+// 5ch IDs appear after the date/time and are delimited by whitespace (ASCII or full-width)
+// or end of string. We capture everything after "ID:" until the next whitespace or EOL.
+static ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"ID:([^\s\u{3000}]+)").unwrap());
+
+/// Extracts the raw ID string (the part after "ID:") from the dat date field.
+/// Returns None when no ID token is present (e.g., the OP post on some boards).
+pub fn extract_id(date: &str) -> Option<String> {
+    ID_RE
+        .captures(date)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Res {
@@ -12,6 +29,8 @@ pub struct Res {
     /// Date + ID etc. (the dat's 3rd field as-is).
     pub date: String,
     pub body: String,
+    /// Extracted ID key (the part after "ID:"), or null when absent.
+    pub id: Option<String>,
 }
 
 /// Splits one dat line into its `<>`-separated fields, or `None` if it is empty or
@@ -31,12 +50,15 @@ pub fn parse_dat(text: &str) -> Vec<Res> {
         .enumerate()
         .filter_map(|(i, line)| {
             let f = dat_fields(line)?;
+            let date = f[2].to_string();
+            let id = extract_id(&date);
             Some(Res {
                 num: (i + 1) as i64,
                 name: f[0].to_string(),
                 mail: f[1].to_string(),
-                date: f[2].to_string(),
+                date,
                 body: f[3].to_string(),
+                id,
             })
         })
         .collect()
@@ -100,5 +122,65 @@ mod tests {
     fn title_none_when_absent() {
         let text = "名無し<>sage<>2025 ID:x<>本文\n";
         assert_eq!(title_from_dat(text), None);
+    }
+
+    // --- extract_id tests ---
+
+    #[test]
+    fn extract_id_typical() {
+        assert_eq!(
+            extract_id("2025/01/01(水) 12:34:56.78 ID:klSUPSuq0"),
+            Some("klSUPSuq0".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_id_none_when_absent() {
+        assert_eq!(extract_id("2025/01/01(水) 12:34:56.78"), None);
+    }
+
+    #[test]
+    fn extract_id_full_width_space_separator() {
+        // Some 5ch boards use a full-width space (U+3000) before or after the ID.
+        assert_eq!(
+            extract_id("2025/01/01(水) 12:34:56.78\u{3000}ID:abc123\u{3000}BE:123"),
+            Some("abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_id_at_end_of_string() {
+        // ID at end with no trailing space.
+        assert_eq!(
+            extract_id("2025/01/01(水) 12:34:56.78 ID:AbC123"),
+            Some("AbC123".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_id_multiple_spaces() {
+        // Extra spaces before ID are fine.
+        assert_eq!(
+            extract_id("2025/01/01  12:00:00  ID:xyz99"),
+            Some("xyz99".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_id_with_symbols() {
+        // IDs can contain +, /, = (base64-like).
+        assert_eq!(
+            extract_id("2025/06/01(月) 00:00:00.00 ID:a+b/c=="),
+            Some("a+b/c==".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_dat_populates_id_field() {
+        let text = "名無し<>sage<>2025/01/01 ID:hello<>本文<>スレ\n\
+                    名無し<><>2025/01/02<>本文2<>\n";
+        let res = parse_dat(text);
+        assert_eq!(res[0].id, Some("hello".to_string()));
+        assert_eq!(res[1].id, None);
     }
 }

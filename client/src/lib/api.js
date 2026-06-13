@@ -44,6 +44,11 @@ export const api = {
   setRating: (s, b, t, rating) =>
     request('PATCH', `/api/favorites/${s}/${b}/${t}/rating`, { rating }),
   search: (q) => request('GET', `/api/search?q=${encodeURIComponent(q)}`),
+  listNgIds: () => request('GET', '/api/ng-ids'),
+  addNgId: (ngId) => request('POST', '/api/ng-ids', { ng_id: ngId }),
+  removeNgId: (ngId) => request('DELETE', `/api/ng-ids/${encodeURIComponent(ngId)}`),
+  idSearch: (s, b, ngId) =>
+    request('GET', `/api/boards/${s}/${b}/id-search?id=${encodeURIComponent(ngId)}`),
 }
 
 // Reliably send read progress on page unload (via sendBeacon).

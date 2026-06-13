@@ -12,6 +12,8 @@
   let current = $state(null)
   let error = $state(null)
   let page = $state('favorites') // 'favorites' | 'register'
+  // Global NG ID set: loaded once on mount, updated on change via onngchange callback.
+  let ngIds = $state(new Set())
 
   async function load() {
     try {
@@ -19,6 +21,15 @@
       error = null
     } catch (e) {
       error = e.message
+    }
+  }
+
+  async function loadNgIds() {
+    try {
+      const list = await api.listNgIds()
+      ngIds = new Set(list.map((x) => x.ng_id))
+    } catch {
+      /* non-critical; NG filtering just won't apply */
     }
   }
 
@@ -71,6 +82,7 @@
       // Warm favorites in the background (board-level subject + bulk dat).
       refreshAndReload()
     })
+    loadNgIds()
 
     const onpop = () => applyRoute(parseLocation())
     window.addEventListener('popstate', onpop)
@@ -130,7 +142,7 @@
   <section class="pane detail-pane">
     {#if current}
       {#key threadKey}
-        <ThreadView fav={current} onback={back} />
+        <ThreadView fav={current} onback={back} {ngIds} onngchange={loadNgIds} />
       {/key}
     {:else}
       <p class="placeholder">スレッドを選択してください</p>
@@ -163,6 +175,11 @@
     --rate-5: #e23b3b;
     /* NavBar height token: shared by NavBar layout and main PC height calc. */
     --navbar-h: 3.2rem;
+    /* ID badge colours (light theme). l1=none (ID hidden), l2-l5=blue→red. */
+    --id-l2: #1a6fd8;
+    --id-l3: #8a4fd8;
+    --id-l4: #e84d9e;
+    --id-l5: #e23b3b;
   }
   :global([data-theme='dark']) {
     --bg: #1a1a1a;
@@ -179,6 +196,11 @@
     /* Unread badge: dark-red pill with white text. */
     --badge-bg: #8c1f1f;
     --badge-fg: #fff;
+    /* ID badge colours (dark theme): brighter to stay readable on dark backgrounds. */
+    --id-l2: #4d9ff0;
+    --id-l3: #a878f0;
+    --id-l4: #ff7ac0;
+    --id-l5: #ff5a5a;
     /* Slightly brighter on dark so the bar stays visible. */
     --rate-0: #555;
     --rate-1: #4dd6f0;

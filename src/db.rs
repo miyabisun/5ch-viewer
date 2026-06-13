@@ -27,6 +27,11 @@ pub const SCHEMA: &str = "
         FOREIGN KEY (server, board, thread_id)
             REFERENCES favorites(server, board, thread_id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS ng_ids (
+        ng_id      TEXT PRIMARY KEY,
+        created_at INTEGER DEFAULT (strftime('%s','now'))
+    );
 ";
 
 pub fn open(path: &str) -> Connection {
@@ -99,7 +104,33 @@ mod tests {
     #[test]
     fn schema_is_idempotent() {
         let conn = open_memory();
+        // Running SCHEMA twice must not fail (all CREATE IF NOT EXISTS).
         conn.execute_batch(SCHEMA).unwrap();
+    }
+
+    #[test]
+    fn ng_ids_table_exists_and_accepts_rows() {
+        let conn = open_memory();
+        conn.execute(
+            "INSERT INTO ng_ids (ng_id) VALUES ('testUser123')",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ng_ids", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // INSERT OR IGNORE must be idempotent (PRIMARY KEY conflict).
+        conn.execute(
+            "INSERT OR IGNORE INTO ng_ids (ng_id) VALUES ('testUser123')",
+            [],
+        )
+        .unwrap();
+        let count2: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ng_ids", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count2, 1);
     }
 
     #[test]

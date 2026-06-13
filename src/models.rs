@@ -55,3 +55,24 @@ pub struct ReloadResponse {
     /// Whether the dat changed (false on NotModified).
     pub updated: bool,
 }
+
+/// One NGID entry returned by the list endpoint.
+#[derive(Debug, Serialize)]
+pub struct NgId {
+    pub ng_id: String,
+    pub created_at: i64,
+}
+
+/// Request body for POST /api/ng-ids.
+#[derive(Debug, Deserialize)]
+pub struct AddNgRequest {
+    pub ng_id: String,
+}
+
+/// One thread's matching posts, returned by the id-search endpoint.
+#[derive(Debug, Serialize)]
+pub struct IdSearchThread {
+    pub thread_id: String,
+    pub title: String,
+    pub res: Vec<Res>,
+}

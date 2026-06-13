@@ -48,6 +48,19 @@ pub fn validate_ref(server: &str, board: &str, thread_id: &str) -> Result<(), Ap
     Ok(())
 }
 
+/// Validates only server and board segments (no thread_id). Used for board-level
+/// endpoints (e.g. id-search) where thread_id is not part of the path.
+pub fn validate_board(server: &str, board: &str) -> Result<(), AppError> {
+    let check = |re: &Regex, name: &str, value: &str| {
+        re.is_match(value)
+            .then_some(())
+            .ok_or_else(|| AppError::BadRequest(format!("invalid {name}: {value}")))
+    };
+    check(&SEGMENT_RE, "server", server)?;
+    check(&SEGMENT_RE, "board", board)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +171,23 @@ mod tests {
     fn validate_ref_rejects_empty_segments() {
         assert!(validate_ref("", "board", "123").is_err());
         assert!(validate_ref("server", "", "123").is_err());
+    }
+
+    #[test]
+    fn validate_board_accepts_normal_values() {
+        assert!(validate_board("kizuna", "iPhone").is_ok());
+        assert!(validate_board("eagle", "livejupiter").is_ok());
+    }
+
+    #[test]
+    fn validate_board_rejects_bad_server() {
+        assert!(validate_board("evil/host", "board").is_err());
+        assert!(validate_board("", "board").is_err());
+    }
+
+    #[test]
+    fn validate_board_rejects_bad_board() {
+        assert!(validate_board("server", "bo.ard").is_err());
+        assert!(validate_board("server", "").is_err());
     }
 }
