@@ -297,12 +297,11 @@
   function cancelIdPress() {
     clearTimeout(idPressTimer)
   }
-  function onIdClick(e, id) {
-    // Swallow the click that ends a long-press so it does not also open an anchor.
+  // Swallow the click that ends a long-press so it does not also open an anchor.
+  function onIdClick(e) {
     if (idLongPressed) {
       idLongPressed = false
       e.stopPropagation()
-      return
     }
   }
 
@@ -335,6 +334,9 @@
   let idSearchLoading = $state(false)
   let idSearchResult = $state(null) // null = closed, [] = empty result, [...] = results
   let idSearchTarget = $state(null) // the ID that was searched
+  const idSearchHits = $derived(
+    idSearchResult?.reduce((s, t) => s + t.res.length, 0) ?? 0,
+  )
 
   async function startIdSearch(id) {
     closeIdMenu()
@@ -401,7 +403,7 @@
         onpointerup={cancelIdPress}
         onpointerleave={cancelIdPress}
         onpointercancel={cancelIdPress}
-        onclick={(e) => onIdClick(e, resolvedId)}
+        onclick={onIdClick}
         onkeydown={(e) => e.key === 'Enter' && openIdMenu(resolvedId)}
       >{label}</span>
     {/if}
@@ -495,38 +497,37 @@
   </Modal>
 {/if}
 
-<!-- ID search loading indicator (shown while idSearchLoading and no result yet). -->
-{#if idSearchLoading}
-  <Modal onclose={closeIdSearch}>
-    <p class="search-loading">ID:{idSearchTarget} を検索中…</p>
-  </Modal>
-{/if}
-
-<!-- ID search result modal. -->
-{#if idSearchResult != null && !idSearchLoading}
+<!-- ID search modal: shows a loading notice while fetching, then the result list. -->
+{#if idSearchLoading || idSearchResult != null}
   <Modal onclose={closeIdSearch}>
     {#snippet header()}
       <div class="menu-title">
-        ID:{idSearchTarget} の検索結果（{idSearchResult.reduce((s, t) => s + t.res.length, 0)}件）
+        {#if idSearchLoading}
+          ID:{idSearchTarget} を検索中…
+        {:else}
+          ID:{idSearchTarget} の検索結果（{idSearchHits}件）
+        {/if}
       </div>
     {/snippet}
-    <div class="search-result" data-testid="id-search-result">
-      {#if idSearchResult.length === 0}
-        <p class="search-empty">該当なし</p>
-      {:else}
-        {#each idSearchResult as thread (thread.thread_id)}
-          <h3 class="search-thread-title">{thread.title}</h3>
-          {#each thread.res as r (r.num)}
-            <div class="res search-res">
-              <span class="num">{r.num}</span>
-              <span class="name">{formatName(r.name)}</span>
-              <span class="date">{r.date}</span>
-              <div class="body" role="presentation">{@html linkify(r.body)}</div>
-            </div>
+    {#if !idSearchLoading}
+      <div class="search-result" data-testid="id-search-result">
+        {#if idSearchResult.length === 0}
+          <p class="search-empty">該当なし</p>
+        {:else}
+          {#each idSearchResult as thread (thread.thread_id)}
+            <h3 class="search-thread-title">{thread.title}</h3>
+            {#each thread.res as r (r.num)}
+              <div class="res search-res">
+                <span class="num">{r.num}</span>
+                <span class="name">{formatName(r.name)}</span>
+                <span class="date">{r.date}</span>
+                <div class="body" role="presentation">{@html linkify(r.body)}</div>
+              </div>
+            {/each}
           {/each}
-        {/each}
-      {/if}
-    </div>
+        {/if}
+      </div>
+    {/if}
   </Modal>
 {/if}
 
@@ -679,9 +680,5 @@
   }
   .search-empty {
     color: var(--muted);
-  }
-  .search-loading {
-    color: var(--muted);
-    padding: 1rem 0;
   }
 </style>

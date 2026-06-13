@@ -34,30 +34,25 @@ pub fn parse_thread_url(url: &str) -> Option<ThreadRef> {
     })
 }
 
-/// Strictly validates server/board/thread_id (defense-in-depth against SSRF).
-/// Call at the entry of every path that receives user input (URL/direct/search result).
-pub fn validate_ref(server: &str, board: &str, thread_id: &str) -> Result<(), AppError> {
-    let check = |re: &Regex, name: &str, value: &str| {
-        re.is_match(value)
-            .then_some(())
-            .ok_or_else(|| AppError::BadRequest(format!("invalid {name}: {value}")))
-    };
-    check(&SEGMENT_RE, "server", server)?;
-    check(&SEGMENT_RE, "board", board)?;
-    check(&THREAD_ID_RE, "thread_id", thread_id)?;
-    Ok(())
+fn check_segment(re: &Regex, name: &str, value: &str) -> Result<(), AppError> {
+    re.is_match(value)
+        .then_some(())
+        .ok_or_else(|| AppError::BadRequest(format!("invalid {name}: {value}")))
 }
 
 /// Validates only server and board segments (no thread_id). Used for board-level
 /// endpoints (e.g. id-search) where thread_id is not part of the path.
 pub fn validate_board(server: &str, board: &str) -> Result<(), AppError> {
-    let check = |re: &Regex, name: &str, value: &str| {
-        re.is_match(value)
-            .then_some(())
-            .ok_or_else(|| AppError::BadRequest(format!("invalid {name}: {value}")))
-    };
-    check(&SEGMENT_RE, "server", server)?;
-    check(&SEGMENT_RE, "board", board)?;
+    check_segment(&SEGMENT_RE, "server", server)?;
+    check_segment(&SEGMENT_RE, "board", board)?;
+    Ok(())
+}
+
+/// Strictly validates server/board/thread_id (defense-in-depth against SSRF).
+/// Call at the entry of every path that receives user input (URL/direct/search result).
+pub fn validate_ref(server: &str, board: &str, thread_id: &str) -> Result<(), AppError> {
+    validate_board(server, board)?;
+    check_segment(&THREAD_ID_RE, "thread_id", thread_id)?;
     Ok(())
 }
 
