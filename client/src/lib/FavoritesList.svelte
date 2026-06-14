@@ -119,19 +119,31 @@
 {#if menu}
   <Modal onclose={closeMenu}>
     {#snippet header()}
-      <div class="menu-title">{menu.title || '(未取得)'}</div>
-      <div class="menu-url">{threadUrl(menu)}</div>
+      {menu.title || '(未取得)'}
     {/snippet}
 
     <!-- .menu is the action body and the stable E2E hook for the open menu. -->
     <div class="menu">
+      <div class="menu-url">{threadUrl(menu)}</div>
+
       <div class="section-label">お気に入りレベル</div>
       <!--
-        Star rating: each star (1..5) is a clickable anchor. Lit stars (<= rating)
-        use the "on" color, the rest the "off" color — selection is shown by COLOR,
-        not underline. Clicking the leftmost lit star again clears to level 0.
+        Star rating: 6 characters total — leftmost ☆ (r=0) always clears to rating 0;
+        r=1..5 are lit (★) when menu.rating >= r, otherwise ☆.
+        Selection is shown by COLOR, not underline.
       -->
       <div class="stars">
+        <!-- r=0: always ☆, clicking sets rating to 0 (remove from favorites level). -->
+        <a
+          href="#rate-0"
+          class="star off"
+          data-rating={0}
+          aria-label="お気に入り解除"
+          onclick={(e) => {
+            e.preventDefault()
+            setRating(menu, 0)
+          }}
+        >☆</a>
         {#each [1, 2, 3, 4, 5] as r}
           {@const lit = menu.rating >= r}
           <a
@@ -143,8 +155,7 @@
             aria-label="レベル {r}"
             onclick={(e) => {
               e.preventDefault()
-              // Click the only lit star (level 1) again -> clear to 0.
-              setRating(menu, menu.rating === 1 && r === 1 ? 0 : r)
+              setRating(menu, r)
             }}
           >{lit ? '★' : '☆'}</a>
         {/each}
@@ -237,10 +248,6 @@
     width: 18rem;
     max-width: 100%;
   }
-  .menu-title {
-    font-weight: 600;
-    word-break: break-word;
-  }
   .menu-url {
     font-size: 0.75rem;
     color: var(--muted);
@@ -255,6 +262,7 @@
   /* Star rating: color, not underline, conveys selection. */
   .stars {
     display: flex;
+    justify-content: center;
     gap: 0.2rem;
     font-size: 1.6rem;
     line-height: 1;
@@ -270,6 +278,7 @@
     color: var(--rate-0);
   }
   .action {
+    width: 100%;
     padding: 0.7rem;
     border: 1px solid var(--border);
     border-radius: 6px;

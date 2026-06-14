@@ -72,10 +72,10 @@ test('stars reflect the current rating with color, and modal closes via × / scr
   await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
   await page.goto('/')
 
-  // ★3 item: stars 1..3 lit, 4..5 off — selection shown by color (not underline).
+  // ★3 item: stars 1..3 lit, 4..5 off plus the fixed ☆ (r=0) — off total = 3.
   await page.locator('.thread.rate-3').click({ button: 'right' })
   await expect(page.locator('.star.on')).toHaveCount(3)
-  await expect(page.locator('.star.off')).toHaveCount(2)
+  await expect(page.locator('.star.off')).toHaveCount(3)
   await expect(page.locator('.star[data-rating="3"]')).toHaveText('★')
   await expect(page.locator('.star[data-rating="4"]')).toHaveText('☆')
 
@@ -92,6 +92,20 @@ test('stars reflect the current rating with color, and modal closes via × / scr
   // The dropped bottom "閉じる" button must not exist (only the × remains).
   await page.locator('.thread.rate-3').click({ button: 'right' })
   await expect(page.locator('.action.close')).toHaveCount(0)
+})
+
+test('☆ (data-rating=0) clears rating to 0 unconditionally', async ({ page }) => {
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: FAVS }))
+  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  const sent = []
+  await ratingRoute(page, sent)
+  await page.goto('/')
+
+  // Open menu for the ★3 item and click the leftmost ☆ (r=0).
+  await page.locator('.thread.rate-3').click({ button: 'right' })
+  await page.locator('.star[data-rating="0"]').click()
+  await expect.poll(() => sent.length).toBe(1)
+  expect(sent[0]).toEqual({ rating: 0 })
 })
 
 test('unread badge: shown (rounded, colored) when unread > 0, hidden at 0', async ({
