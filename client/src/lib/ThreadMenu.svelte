@@ -49,6 +49,7 @@
       タイトル+URL をコピー
     </button>
 
+    <div class="section-label">整理</div>
     {#if onarchive}
       <button class="action" onclick={() => onarchive(menu)}>アーカイブ</button>
     {/if}
