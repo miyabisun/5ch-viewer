@@ -28,6 +28,14 @@
     >
       スレッド登録
     </button>
+    <button
+      class="tab"
+      class:active={page === 'archive'}
+      data-testid="tab-archive"
+      onclick={() => onnavigate('archive')}
+    >
+      アーカイブ
+    </button>
   </div>
   <button
     class="theme-toggle"

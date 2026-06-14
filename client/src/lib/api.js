@@ -43,6 +43,9 @@ export const api = {
     request('POST', `/api/favorites/${s}/${b}/${t}/progress`, { read_res: readRes }),
   setRating: (s, b, t, rating) =>
     request('PATCH', `/api/favorites/${s}/${b}/${t}/rating`, { rating }),
+  setArchived: (s, b, t, archived) =>
+    request('PATCH', `/api/favorites/${s}/${b}/${t}/archived`, { archived }),
+  listArchives: () => request('GET', '/api/archives'),
   search: (q) => request('GET', `/api/search?q=${encodeURIComponent(q)}`),
   listNgIds: () => request('GET', '/api/ng-ids'),
   addNgId: (ngId) => request('POST', '/api/ng-ids', { ng_id: ngId }),

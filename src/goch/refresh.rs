@@ -162,7 +162,9 @@ pub fn persist_fetch(
     }
 }
 
-/// Reads every non-dead favorite of a board with its stored blob res_count.
+/// Reads every non-dead, non-archived favorite of a board with its stored blob res_count.
+/// Archived threads are excluded: archiving means "stop tracking", so no 5ch dat fetches
+/// should be triggered for them (aligned with the project's 5ch-access-reduction policy).
 fn collect_board_threads(
     state: &AppState,
     server: &str,
@@ -171,7 +173,7 @@ fn collect_board_threads(
     let conn = state.db.lock().unwrap();
     let mut stmt = conn.prepare(
         "SELECT thread_id FROM favorites
-         WHERE server=?1 AND board=?2 AND status != 'dead'",
+         WHERE server=?1 AND board=?2 AND status != 'dead' AND archived = 0",
     )?;
     let ids: Vec<String> = stmt
         .query_map(params![server, board], |r| r.get(0))?
@@ -261,5 +263,92 @@ pub fn compute_status(res_count: i64) -> &'static str {
         "warned"
     } else {
         "active"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::db::SCHEMA;
+    use crate::state::AppState;
+    use rusqlite::Connection;
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+
+    fn make_state(conn: Connection) -> AppState {
+        AppState {
+            db: Arc::new(Mutex::new(conn)),
+            http: reqwest::Client::new(),
+            config: Config {
+                port: 3000,
+                base_path: String::new(),
+                db_path: ":memory:".to_string(),
+                goch_base_url: String::new(),
+            },
+            inflight: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    fn setup() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn
+    }
+
+    fn insert_fav(conn: &Connection, thread_id: &str, status: &str, archived: i64) {
+        conn.execute(
+            "INSERT INTO favorites (thread_id, server, board, board_name, title, status, archived)
+             VALUES (?1, 'egg', 'applism', '板', 'タイトル', ?2, ?3)",
+            rusqlite::params![thread_id, status, archived],
+        )
+        .unwrap();
+    }
+
+    /// When a board has both active and archived threads, collect_board_threads must
+    /// return only the active (non-archived) ones.  Archived threads must never trigger
+    /// a 5ch dat fetch (5ch-access-reduction policy).
+    #[test]
+    fn collect_board_threads_excludes_archived() {
+        let conn = setup();
+        // active + non-archived: should appear
+        insert_fav(&conn, "1001", "active", 0);
+        // warned + non-archived: should appear
+        insert_fav(&conn, "1002", "warned", 0);
+        // active + archived: must NOT appear
+        insert_fav(&conn, "1003", "active", 1);
+        // dead + non-archived: excluded by status != 'dead'
+        insert_fav(&conn, "1004", "dead", 0);
+        // dead + archived: excluded by both conditions
+        insert_fav(&conn, "1005", "dead", 1);
+
+        let state = make_state(conn);
+        let threads = collect_board_threads(&state, "egg", "applism").unwrap();
+        let mut ids: Vec<&str> = threads.iter().map(|t| t.thread_id.as_str()).collect();
+        ids.sort();
+
+        // Only the two non-dead, non-archived threads pass.
+        assert_eq!(
+            ids,
+            vec!["1001", "1002"],
+            "only non-dead AND non-archived threads should be collected for prefetch"
+        );
+    }
+
+    /// When an archived thread is the only thread on a board, collect_board_threads
+    /// returns an empty list so no subject.txt fetch is triggered at all.
+    #[test]
+    fn collect_board_threads_all_archived_returns_empty() {
+        let conn = setup();
+        insert_fav(&conn, "2001", "active", 1);
+        insert_fav(&conn, "2002", "warned", 1);
+
+        let state = make_state(conn);
+        let threads = collect_board_threads(&state, "egg", "applism").unwrap();
+        assert!(
+            threads.is_empty(),
+            "all-archived board must yield empty list so no 5ch request is made"
+        );
     }
 }

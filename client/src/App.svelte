@@ -7,11 +7,12 @@
   import FavoritesList from './lib/FavoritesList.svelte'
   import RegisterThread from './lib/RegisterThread.svelte'
   import ThreadView from './lib/ThreadView.svelte'
+  import ArchiveList from './lib/ArchiveList.svelte'
 
   let favorites = $state([])
   let current = $state(null)
   let error = $state(null)
-  let page = $state('favorites') // 'favorites' | 'register'
+  let page = $state('favorites') // 'favorites' | 'register' | 'archive'
   // Global NG ID set: loaded once on mount, updated on change via onngchange callback.
   let ngIds = $state(new Set())
 
@@ -134,6 +135,8 @@
   <section class="pane list-pane">
     {#if page === 'register'}
       <RegisterThread onchange={load} />
+    {:else if page === 'archive'}
+      <ArchiveList onopen={open} />
     {:else}
       <FavoritesList {favorites} onopen={open} onchange={load} />
     {/if}

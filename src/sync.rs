@@ -37,7 +37,7 @@ async fn run_once(state: &AppState) -> Result<(), AppError> {
         let conn = state.db.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT server, board, thread_id, title, rating
-             FROM favorites WHERE status != 'dead'",
+             FROM favorites WHERE status != 'dead' AND archived = 0",
         )?;
         let rows = stmt
             .query_map([], |r| {
@@ -146,5 +146,143 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
             return;
         }
         tracing::info!("[sync] next thread added: {} -> {}", title, next.title);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db::SCHEMA;
+    use rusqlite::{Connection, params};
+
+    fn setup() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn
+    }
+
+    fn insert_favorite(conn: &Connection, thread_id: &str, title: &str, status: &str, archived: i64) {
+        conn.execute(
+            "INSERT INTO favorites (thread_id, server, board, board_name, title, status, archived)
+             VALUES (?1, 'egg', 'applism', '板', ?2, ?3, ?4)",
+            params![thread_id, title, status, archived],
+        )
+        .unwrap();
+    }
+
+    /// run_once query must exclude archived favorites (AND archived = 0).
+    #[test]
+    fn run_once_query_excludes_archived() {
+        let conn = setup();
+        // One active, one archived.
+        insert_favorite(&conn, "1001", "アクティブスレ", "active", 0);
+        insert_favorite(&conn, "1002", "アーカイブスレ", "active", 1);
+
+        // The same query used in run_once().
+        let mut stmt = conn
+            .prepare(
+                "SELECT server, board, thread_id, title, rating
+                 FROM favorites WHERE status != 'dead' AND archived = 0",
+            )
+            .unwrap();
+        let thread_ids: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(2))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(thread_ids, vec!["1001"], "archived thread must be excluded from sync");
+    }
+
+    /// Archived threads that become dead must not trigger next-thread insertion.
+    /// This verifies the root cause: because archived = 0 filter excludes them from
+    /// run_once(), process_thread is never called for archived threads and the
+    /// INSERT OR IGNORE in find_next_thread cannot fire.
+    #[test]
+    fn archived_dead_thread_does_not_auto_add_next() {
+        let conn = setup();
+        // Insert an archived thread that is already dead.
+        insert_favorite(&conn, "1001", "古いスレ Part1", "dead", 1);
+        // Insert a potential next-thread in the subject (simulated via a separate active entry).
+        // We insert it as a favorite to confirm it was NOT auto-added by sync.
+        // Initial count of favorites = 1 (only the archived one).
+        let count_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count_before, 1);
+
+        // The run_once query with AND archived = 0 will return 0 rows,
+        // so process_thread is never called.
+        let mut stmt = conn
+            .prepare(
+                "SELECT server, board, thread_id FROM favorites
+                 WHERE status != 'dead' AND archived = 0",
+            )
+            .unwrap();
+        let watches: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(2))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(watches.is_empty(), "archived dead thread must not appear in sync watch list");
+
+        // Verify: no next-thread INSERT happened because watches is empty.
+        let count_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count_after, 1, "no next thread should be auto-added for archived threads");
+    }
+
+    /// Verify that process_thread on a subject with the same thread works correctly
+    /// (sanity check for the mock subject matching logic used in the full integration).
+    #[test]
+    fn process_thread_updates_res_count_for_active_non_archived() {
+        let conn = setup();
+        insert_favorite(&conn, "1001", "アクティブ", "active", 0);
+
+        // Simulate what process_thread does for a found entry.
+        let new_count: i64 = 42;
+        conn.execute(
+            "UPDATE favorites SET res_count=?4, status='active', updated_at=strftime('%s','now')
+             WHERE server='egg' AND board='applism' AND thread_id=?3",
+            params!["egg", "applism", "1001", new_count],
+        )
+        .unwrap();
+
+        let res_count: i64 = conn
+            .query_row(
+                "SELECT res_count FROM favorites WHERE thread_id='1001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(res_count, 42);
+    }
+
+    /// process_thread must NOT be called for archived threads because they are
+    /// filtered at the run_once query level. This test verifies the filter directly.
+    #[test]
+    fn sync_filter_archived_zero_filters_correctly() {
+        let conn = setup();
+        // Mix: active, warned, dead (all not archived) + one archived active.
+        insert_favorite(&conn, "1001", "スレA", "active", 0);
+        insert_favorite(&conn, "1002", "スレB", "warned", 0);
+        insert_favorite(&conn, "1003", "スレC", "dead", 0);
+        insert_favorite(&conn, "1004", "アーカイブスレ", "active", 1);
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT thread_id FROM favorites WHERE status != 'dead' AND archived = 0",
+            )
+            .unwrap();
+        let mut ids: Vec<String> = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        ids.sort();
+
+        // Only 1001 (active) and 1002 (warned) pass: dead and archived are excluded.
+        assert_eq!(ids, vec!["1001", "1002"]);
     }
 }

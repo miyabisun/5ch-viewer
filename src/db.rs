@@ -1,5 +1,20 @@
 use rusqlite::Connection;
 
+/// Returns whether `table` has a column named `column` (via PRAGMA table_info).
+fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .expect("Failed to prepare PRAGMA table_info");
+    let mut rows = stmt.query([]).expect("Failed to query PRAGMA table_info");
+    while let Some(row) = rows.next().expect("Failed to iterate PRAGMA rows") {
+        let name: String = row.get(1).expect("column name");
+        if name == column {
+            return true;
+        }
+    }
+    false
+}
+
 pub const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS favorites (
         thread_id   TEXT    NOT NULL,
@@ -10,6 +25,7 @@ pub const SCHEMA: &str = "
         res_count   INTEGER NOT NULL DEFAULT 0,
         read_res    INTEGER NOT NULL DEFAULT 0,
         rating      INTEGER NOT NULL DEFAULT 0,
+        archived    INTEGER NOT NULL DEFAULT 0,
         status      TEXT    NOT NULL DEFAULT 'active',
         created_at  INTEGER DEFAULT (strftime('%s','now')),
         updated_at  INTEGER DEFAULT (strftime('%s','now')),
@@ -56,6 +72,14 @@ pub fn open(path: &str) -> Connection {
     .expect("Failed to set PRAGMA");
 
     conn.execute_batch(SCHEMA).expect("Failed to create tables");
+
+    // Migration: add `archived` column to favorites if it does not exist yet (existing DBs).
+    if !has_column(&conn, "favorites", "archived") {
+        conn.execute_batch(
+            "ALTER TABLE favorites ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+        )
+        .expect("Failed to add archived column to favorites");
+    }
 
     // One-time migration: if any dat_blobs row still holds a Shift-JIS BLOB (typeof='blob'),
     // the old schema is in effect and read_blob_posts would fail with "Invalid column type Blob".
@@ -186,6 +210,80 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM dat_blobs", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn archived_column_exists_with_default_zero() {
+        let conn = open_memory();
+        // Insert a row without specifying archived; it must default to 0.
+        insert_favorite(&conn, "1771127145", "テスト");
+        let archived: i64 = conn
+            .query_row(
+                "SELECT archived FROM favorites
+                 WHERE server = 'egg' AND board = 'applism' AND thread_id = '1771127145'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(archived, 0);
+        assert!(
+            has_column(&conn, "favorites", "archived"),
+            "archived column must exist in favorites schema"
+        );
+    }
+
+    /// Migration: old DB without the archived column gets it added idempotently.
+    #[test]
+    fn migration_adds_archived_column_to_old_schema() {
+        // Build a table that mimics the pre-archived schema (no archived column).
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        conn.execute_batch(
+            "CREATE TABLE favorites (
+                thread_id  TEXT NOT NULL,
+                server     TEXT NOT NULL,
+                board      TEXT NOT NULL,
+                board_name TEXT NOT NULL,
+                title      TEXT NOT NULL,
+                res_count  INTEGER NOT NULL DEFAULT 0,
+                read_res   INTEGER NOT NULL DEFAULT 0,
+                rating     INTEGER NOT NULL DEFAULT 0,
+                status     TEXT NOT NULL DEFAULT 'active',
+                created_at INTEGER DEFAULT (strftime('%s','now')),
+                updated_at INTEGER DEFAULT (strftime('%s','now')),
+                PRIMARY KEY (server, board, thread_id)
+            );",
+        )
+        .unwrap();
+
+        // Insert a row before migration.
+        conn.execute(
+            "INSERT INTO favorites (thread_id, server, board, board_name, title)
+             VALUES ('1', 'egg', 'applism', '板', 'タイトル')",
+            [],
+        )
+        .unwrap();
+
+        // Simulate the migration (same logic as in open()).
+        assert!(
+            !has_column(&conn, "favorites", "archived"),
+            "pre-condition: archived column must not exist yet"
+        );
+
+        conn.execute_batch(
+            "ALTER TABLE favorites ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+        )
+        .unwrap();
+
+        // Column must now exist and the pre-existing row must have archived=0.
+        let archived: i64 = conn
+            .query_row(
+                "SELECT archived FROM favorites WHERE thread_id='1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(archived, 0);
     }
 
     #[test]

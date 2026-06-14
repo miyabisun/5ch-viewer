@@ -36,6 +36,11 @@ pub struct RatingRequest {
     pub rating: i64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ArchivedRequest {
+    pub archived: bool,
+}
+
 /// Thread body (stored dat) response.
 #[derive(Debug, Serialize)]
 pub struct DatResponse {

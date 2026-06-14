@@ -3,7 +3,8 @@ use crate::goch::http;
 use crate::goch::refresh::{self, count_blob_posts, read_blob_posts};
 use crate::goch::url::{parse_thread_url, validate_ref};
 use crate::models::{
-    AddRequest, DatResponse, Favorite, ProgressRequest, RatingRequest, ReloadResponse,
+    AddRequest, ArchivedRequest, DatResponse, Favorite, ProgressRequest, RatingRequest,
+    ReloadResponse,
 };
 use crate::state::AppState;
 use axum::extract::{Path, State};
@@ -17,6 +18,7 @@ type ThreadPath = Path<(String, String, String)>;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/favorites", get(list).post(add))
+        .route("/api/archives", get(list_archives))
         .route("/api/favorites/refresh", post(refresh_all))
         .route("/api/favorites/{server}/{board}/{thread_id}", delete(remove))
         .route("/api/favorites/{server}/{board}/{thread_id}/dat", get(get_dat))
@@ -30,31 +32,51 @@ pub fn routes() -> Router<AppState> {
             "/api/favorites/{server}/{board}/{thread_id}/rating",
             patch(patch_rating),
         )
+        .route(
+            "/api/favorites/{server}/{board}/{thread_id}/archived",
+            patch(patch_archived),
+        )
 }
 
-/// List (unordered; sorting is done by the frontend).
+/// Shared SELECT columns for Favorite rows.
+const SELECT_FAVORITE: &str =
+    "SELECT server, board, board_name, thread_id, title, res_count, read_res, rating, status
+     FROM favorites";
+
+fn row_to_favorite(row: &rusqlite::Row<'_>) -> rusqlite::Result<Favorite> {
+    Ok(Favorite {
+        server: row.get(0)?,
+        board: row.get(1)?,
+        board_name: row.get(2)?,
+        thread_id: row.get(3)?,
+        title: row.get(4)?,
+        res_count: row.get(5)?,
+        read_res: row.get(6)?,
+        rating: row.get(7)?,
+        status: row.get(8)?,
+    })
+}
+
+/// Lists favorites filtered by `archived` (unordered; sorting is done by the frontend).
+fn list_favorites(conn: &rusqlite::Connection, archived: i64) -> Result<Vec<Favorite>, AppError> {
+    let sql = format!("{SELECT_FAVORITE} WHERE archived = ?1");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(params![archived], row_to_favorite)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// List active favorites.
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Favorite>>, AppError> {
     let conn = state.db.lock().unwrap();
-    let mut stmt = conn.prepare(
-        "SELECT server, board, board_name, thread_id, title, res_count, read_res, rating, status
-         FROM favorites",
-    )?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(Favorite {
-                server: row.get(0)?,
-                board: row.get(1)?,
-                board_name: row.get(2)?,
-                thread_id: row.get(3)?,
-                title: row.get(4)?,
-                res_count: row.get(5)?,
-                read_res: row.get(6)?,
-                rating: row.get(7)?,
-                status: row.get(8)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Json(rows))
+    Ok(Json(list_favorites(&conn, 0)?))
+}
+
+/// List archived favorites.
+async fn list_archives(State(state): State<AppState>) -> Result<Json<Vec<Favorite>>, AppError> {
+    let conn = state.db.lock().unwrap();
+    Ok(Json(list_favorites(&conn, 1)?))
 }
 
 /// Add. Accepts a direct url or server/board/thread_id, and fetches board_name from SETTING.TXT.
@@ -84,11 +106,13 @@ async fn add(
 /// heavy work (subject + bulk dat) runs in a spawned task. Failures are logged inside
 /// `refresh_board` (never silently swallowed).
 async fn refresh_all(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
-    // Distinct (server, board) pairs that have at least one non-dead favorite.
+    // Distinct (server, board) pairs that have at least one non-dead, non-archived favorite.
     let boards: Vec<(String, String)> = {
         let conn = state.db.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT DISTINCT server, board FROM favorites WHERE status != 'dead'")?;
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT server, board FROM favorites
+             WHERE status != 'dead' AND archived = 0",
+        )?;
         let boards = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -189,6 +213,25 @@ async fn patch_rating(
         "UPDATE favorites SET rating=?4, updated_at=strftime('%s','now')
          WHERE server=?1 AND board=?2 AND thread_id=?3",
         params![server, board, thread_id, req.rating],
+    )?;
+    if n == 0 {
+        return Err(AppError::NotFound("favorite not found".into()));
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn patch_archived(
+    State(state): State<AppState>,
+    Path((server, board, thread_id)): ThreadPath,
+    Json(req): Json<ArchivedRequest>,
+) -> Result<Json<Value>, AppError> {
+    validate_ref(&server, &board, &thread_id)?;
+    let archived: i64 = if req.archived { 1 } else { 0 };
+    let conn = state.db.lock().unwrap();
+    let n = conn.execute(
+        "UPDATE favorites SET archived=?4, updated_at=strftime('%s','now')
+         WHERE server=?1 AND board=?2 AND thread_id=?3",
+        params![server, board, thread_id, archived],
     )?;
     if n == 0 {
         return Err(AppError::NotFound("favorite not found".into()));
@@ -523,6 +566,97 @@ mod tests {
             )
             .unwrap();
         assert!(!(subject_count > metadata_res_count));
+    }
+
+    /// Archived favorites must not appear in the list (archived=0 filter).
+    #[test]
+    fn list_excludes_archived() {
+        let conn = setup();
+        // Insert a second favorite and mark it archived.
+        conn.execute(
+            "INSERT INTO favorites (thread_id, server, board, board_name, title, archived)
+             VALUES ('9999999999', ?1, ?2, 'name', 'archived', 1)",
+            params![SERVER, BOARD],
+        )
+        .unwrap();
+
+        let sql = format!("{SELECT_FAVORITE} WHERE archived = 0");
+        let mut stmt = conn.prepare(&sql).unwrap();
+        let rows: Vec<Favorite> = stmt
+            .query_map([], row_to_favorite)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        // Only the fixture favorite (not archived) should appear.
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].thread_id, THREAD);
+    }
+
+    /// list_archives equivalent: only archived=1 favorites are returned.
+    #[test]
+    fn list_archives_returns_only_archived() {
+        let conn = setup();
+        // Archive the fixture favorite.
+        conn.execute(
+            "UPDATE favorites SET archived=1 WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![SERVER, BOARD, THREAD],
+        )
+        .unwrap();
+        // Insert a non-archived one.
+        conn.execute(
+            "INSERT INTO favorites (thread_id, server, board, board_name, title)
+             VALUES ('8888888888', ?1, ?2, 'name', 'active')",
+            params![SERVER, BOARD],
+        )
+        .unwrap();
+
+        let sql = format!("{SELECT_FAVORITE} WHERE archived = 1");
+        let mut stmt = conn.prepare(&sql).unwrap();
+        let rows: Vec<Favorite> = stmt
+            .query_map([], row_to_favorite)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].thread_id, THREAD);
+    }
+
+    /// patch_archived: archived toggles true→false→true without error.
+    #[test]
+    fn patch_archived_toggles_bidirectionally() {
+        let conn = setup();
+
+        // Set archived=1.
+        let n = conn.execute(
+            "UPDATE favorites SET archived=?4, updated_at=strftime('%s','now')
+             WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![SERVER, BOARD, THREAD, 1_i64],
+        ).unwrap();
+        assert_eq!(n, 1);
+        let archived: i64 = conn
+            .query_row(
+                "SELECT archived FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
+                params![SERVER, BOARD, THREAD],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(archived, 1);
+
+        // Set archived=0 (unarchive).
+        let n = conn.execute(
+            "UPDATE favorites SET archived=?4, updated_at=strftime('%s','now')
+             WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![SERVER, BOARD, THREAD, 0_i64],
+        ).unwrap();
+        assert_eq!(n, 1);
+        let archived: i64 = conn
+            .query_row(
+                "SELECT archived FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
+                params![SERVER, BOARD, THREAD],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(archived, 0);
     }
 
     /// A second replace fully overwrites the previous body (no leftover text from the first).

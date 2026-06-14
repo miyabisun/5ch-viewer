@@ -20,6 +20,7 @@ function appPath(pathname) {
 export function parseLocation() {
   const p = appPath(window.location.pathname)
   if (p === '/register') return { page: 'register', thread: null }
+  if (p === '/archive') return { page: 'archive', thread: null }
   const m = p.match(/^\/([^/]+)\/([^/]+)\/([^/]+)\/?$/)
   if (m) {
     const [, server, board, thread_id] = m
@@ -34,6 +35,7 @@ export function toPath({ page, thread }) {
   let p
   if (thread) p = `/${thread.server}/${thread.board}/${thread.thread_id}`
   else if (page === 'register') p = '/register'
+  else if (page === 'archive') p = '/archive'
   else p = '/'
   return BASE + p
 }
