@@ -442,43 +442,45 @@
   {@const wStats = wacchoiStats.get(r.num)}
   <span class="num">{r.num}</span>
   <span class="name">{formatName(r.name)}</span>
-  <span class="date">
-    {stripId(r.date)}{#if resolvedId}
-      <!-- ID span: always shown when an ID exists (total>=2 only controls colour).
-           Right-click (PC) or long-press (touch) opens the ID context menu.
-           For total>=2 the span is coloured and shows order/total counts. -->
-      {@const colorCls = stats && stats.total >= 2 ? `id-${stats.colorLevel}` : 'id-l1'}
-      {@const label = stats && stats.total >= 2
-        ? `ID:${resolvedId} (${stats.order}/${stats.total})`
-        : `ID:${resolvedId}`}
-      <span
-        class="id-badge {colorCls} resid"
-        role="button"
-        tabindex="0"
-        data-id={resolvedId}
-        oncontextmenu={(e) => { e.preventDefault(); openIdMenu(resolvedId) }}
-        onpointerdown={(e) => onIdPointerDown(e, resolvedId)}
-        onpointerup={cancelIdPress}
-        onpointerleave={cancelIdPress}
-        onpointercancel={cancelIdPress}
-        onclick={(e) => onIdClick(e, resolvedId)}
-        onkeydown={(e) => e.key === 'Enter' && openIdList(resolvedId)}
-      >{label}</span>
-    {/if}{#if wStats && wStats.total >= 2}
-      <!-- Wacchoi badge: wacchoiStats is empty unless the thread has wacchoi, so a
-           present wStats already implies enabled. Shown only when this res has 2+
-           posts from the same wacchoi (total=1 is intentionally hidden per spec). -->
-      {@const wLabel = `ﾜｯﾁｮｲ:${wStats.wacchoi} (${wStats.order}/${wStats.total})`}
-      <span
-        class="id-badge id-{wStats.colorLevel} resid"
-        role="button"
-        tabindex="0"
-        data-wacchoi={wStats.wacchoi}
-        onclick={() => openWacchoiList(wStats.wacchoi)}
-        onkeydown={(e) => e.key === 'Enter' && openWacchoiList(wStats.wacchoi)}
-      >{wLabel}</span>
-    {/if}
-  </span>
+  <span class="date">{stripId(r.date)}</span><!--
+       ID badge: always shown when an ID exists (total>=2 only controls colour).
+         Right-click (PC) or long-press (touch) opens the ID context menu.
+         For total>=2 the span is coloured and shows order/total counts.
+         The &nbsp; inside the {#if} separates the badge from .date only when an ID exists. -->
+  {#if resolvedId}
+    {@const colorCls = stats && stats.total >= 2 ? `id-${stats.colorLevel}` : 'id-l1'}
+    {@const label = stats && stats.total >= 2
+      ? `ID:${resolvedId} (${stats.order}/${stats.total})`
+      : `ID:${resolvedId}`}
+    &nbsp;<span
+      class="id-badge {colorCls} resid"
+      role="button"
+      tabindex="0"
+      data-id={resolvedId}
+      oncontextmenu={(e) => { e.preventDefault(); openIdMenu(resolvedId) }}
+      onpointerdown={(e) => onIdPointerDown(e, resolvedId)}
+      onpointerup={cancelIdPress}
+      onpointerleave={cancelIdPress}
+      onpointercancel={cancelIdPress}
+      onclick={(e) => onIdClick(e, resolvedId)}
+      onkeydown={(e) => e.key === 'Enter' && openIdList(resolvedId)}
+    >{label}</span>
+  {/if}<!--
+       Wacchoi badge: wacchoiStats is empty unless the thread has wacchoi, so a
+         present wStats already implies enabled. Shown only when this res has 2+
+         posts from the same wacchoi (total=1 is intentionally hidden per spec).
+         The &nbsp; inside the {#if} separates this badge from its predecessor only when shown. -->
+  {#if wStats && wStats.total >= 2}
+    {@const wLabel = `ﾜｯﾁｮｲ:${wStats.wacchoi} (${wStats.order}/${wStats.total})`}
+    &nbsp;<span
+      class="id-badge id-{wStats.colorLevel} resid"
+      role="button"
+      tabindex="0"
+      data-wacchoi={wStats.wacchoi}
+      onclick={() => openWacchoiList(wStats.wacchoi)}
+      onkeydown={(e) => e.key === 'Enter' && openWacchoiList(wStats.wacchoi)}
+    >{wLabel}</span>
+  {/if}
 {/snippet}
 
 <!-- resHead + body snippet combined (used in main list). -->
@@ -718,7 +720,9 @@
     background: var(--error-bg);
     border-radius: 4px;
   }
-  /* ID badge: same size as the surrounding .date text. */
+  /* ID/wacchoi badge: same font-size as surrounding .date text.
+     Gap from the preceding element comes from an &nbsp; placed inside
+     each {#if} block (just before the span), so it only renders when the badge is shown. */
   .id-badge {
     font-size: 0.75rem;
   }
