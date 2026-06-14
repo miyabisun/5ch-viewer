@@ -3,6 +3,7 @@
   import { api, beaconProgress } from './api.js'
   import { formatName } from './name.js'
   import { stripId, buildIdStats } from './id.js'
+  import { buildWacchoiStats, wacchoiEnabled } from './wacchoi.js'
   import Modal from './Modal.svelte'
 
   let { fav, onback, ngIds = new Set(), onngchange = () => {} } = $props()
@@ -162,10 +163,24 @@
   // Built from all reses in one pass; used by resHead to colour-code same-ID posts.
   const idStats = $derived.by(() => buildIdStats(data?.res ?? []))
 
+  // Wacchoi support: enabled only for threads whose first res contains a wacchoi token.
+  const wacchoiEnabledFlag = $derived(wacchoiEnabled(data?.res ?? []))
+  // Per-res wacchoi stats: Map<resNum, { wacchoi, total, order, colorLevel }>.
+  // Empty Map when the thread has no wacchoi (wacchoiEnabledFlag=false).
+  const wacchoiStats = $derived.by(() =>
+    buildWacchoiStats(data?.res ?? [], wacchoiEnabledFlag),
+  )
+
   // Resolve a res's ID: server-extracted r.id is authoritative; fall back to
   // client extraction (idStats) for edge cases such as id-search result reses.
   function resolveId(r) {
     return r.id ?? idStats.get(r.num)?.id ?? null
+  }
+
+  // Resolve a res's wacchoi from the client-side wacchoiStats map.
+  // No server-side field exists for wacchoi, so we always use the extracted value.
+  function resolveWacchoi(r) {
+    return wacchoiStats.get(r.num)?.wacchoi ?? null
   }
 
   // Look up a res by number (missing if not found).
@@ -261,7 +276,7 @@
     function onEnd(e) {
       if (ignore || !locked || !horizontal) return
       // Any modal open: the gesture belongs to the modal, not the thread.
-      if (anchorRoot != null || idListId != null || idMenu != null) return
+      if (anchorRoot != null || idListId != null || idMenu != null || wacchoiListKey != null) return
       const dx = e.changedTouches[0].clientX - startX
       const dy = e.changedTouches[0].clientY - startY
       if (dx >= 60 && Math.abs(dx) > Math.abs(dy) * 1.5) onback()
@@ -293,6 +308,23 @@
   const idListRes = $derived.by(() => {
     if (idListId == null || !data?.res) return []
     return data.res.filter((r) => resolveId(r) === idListId)
+  })
+
+  // --- Wacchoi left-click list modal ---
+  // Shows all reses in the current thread posted under the same wacchoi.
+  let wacchoiListKey = $state(null)
+
+  function openWacchoiList(wacchoi) {
+    wacchoiListKey = wacchoi
+  }
+  function closeWacchoiList() {
+    wacchoiListKey = null
+  }
+
+  // Reses for the wacchoi-list modal, derived from in-memory data (no extra fetch).
+  const wacchoiListRes = $derived.by(() => {
+    if (wacchoiListKey == null || !data?.res) return []
+    return data.res.filter((r) => resolveWacchoi(r) === wacchoiListKey)
   })
 
   // --- ID right-click / long-press menu ---
@@ -407,6 +439,7 @@
 {#snippet resHead(r)}
   {@const stats = idStats.get(r.num)}
   {@const resolvedId = resolveId(r)}
+  {@const wStats = wacchoiStats.get(r.num)}
   <span class="num">{r.num}</span>
   <span class="name">{formatName(r.name)}</span>
   <span class="date">
@@ -431,6 +464,19 @@
         onclick={(e) => onIdClick(e, resolvedId)}
         onkeydown={(e) => e.key === 'Enter' && openIdList(resolvedId)}
       >{label}</span>
+    {/if}{#if wStats && wStats.total >= 2}
+      <!-- Wacchoi badge: wacchoiStats is empty unless the thread has wacchoi, so a
+           present wStats already implies enabled. Shown only when this res has 2+
+           posts from the same wacchoi (total=1 is intentionally hidden per spec). -->
+      {@const wLabel = `ﾜｯﾁｮｲ:${wStats.wacchoi} (${wStats.order}/${wStats.total})`}
+      <span
+        class="id-badge id-{wStats.colorLevel} resid"
+        role="button"
+        tabindex="0"
+        data-wacchoi={wStats.wacchoi}
+        onclick={() => openWacchoiList(wStats.wacchoi)}
+        onkeydown={(e) => e.key === 'Enter' && openWacchoiList(wStats.wacchoi)}
+      >{wLabel}</span>
     {/if}
   </span>
 {/snippet}
@@ -514,6 +560,22 @@
     {/snippet}
     <div class="id-list" data-testid="id-list" role="presentation" onclick={onBodyClick}>
       {#each idListRes as r (r.num)}
+        <div class="res id-list-res">
+          {@render resHeadAndBody(r)}
+        </div>
+      {/each}
+    </div>
+  </Modal>
+{/if}
+
+<!-- Wacchoi list modal: all reses in this thread posted under the same wacchoi. -->
+{#if wacchoiListKey != null}
+  <Modal onclose={closeWacchoiList}>
+    {#snippet header()}
+      <div class="menu-title">ﾜｯﾁｮｲ:{wacchoiListKey}（{wacchoiListRes.length}件）</div>
+    {/snippet}
+    <div class="id-list" data-testid="wacchoi-list" role="presentation" onclick={onBodyClick}>
+      {#each wacchoiListRes as r (r.num)}
         <div class="res id-list-res">
           {@render resHeadAndBody(r)}
         </div>
