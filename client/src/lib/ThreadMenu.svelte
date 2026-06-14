@@ -1,12 +1,13 @@
 <script>
   // Shared action menu for a thread (right-click PC / long-press mobile).
-  // Renders the modal shell, the thread URL, the copy section and the danger
-  // "削除" button; callers inject type-specific actions (rating/archive/unarchive)
-  // via the `actions` snippet, which receives the active thread.
+  // Renders the modal shell, the thread URL, the copy section, an optional
+  // "アーカイブ" button (when `onarchive` is given) and the danger "削除" button.
+  // Callers inject type-specific actions (e.g. rating) via the `actions`
+  // snippet, which receives the active thread.
   import { api } from './api.js'
   import Modal from './Modal.svelte'
 
-  let { menu, onclose, onremoved, actions } = $props()
+  let { menu, onclose, onremoved, actions, onarchive } = $props()
 
   // 5ch thread URL (docs/5ch-spec.md): https://{server}.5ch.io/test/read.cgi/{board}/{thread_id}/
   function threadUrl(f) {
@@ -48,6 +49,9 @@
       タイトル+URL をコピー
     </button>
 
+    {#if onarchive}
+      <button class="action" onclick={() => onarchive(menu)}>アーカイブ</button>
+    {/if}
     <button class="action danger" onclick={() => remove(menu)}>削除</button>
   </div>
 </Modal>
@@ -57,8 +61,7 @@
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
-    width: 18rem;
-    max-width: 100%;
+    width: 100%;
   }
   .menu-url {
     font-size: 0.75rem;

@@ -61,7 +61,7 @@
 {/each}
 
 {#if menu}
-  <ThreadMenu {menu} onclose={closeMenu} onremoved={onchange}>
+  <ThreadMenu {menu} onclose={closeMenu} onremoved={onchange} onarchive={archive}>
     {#snippet actions(f)}
       <div class="section-label">お気に入りレベル</div>
       <!--
@@ -97,8 +97,6 @@
           >{lit ? '★' : '☆'}</a>
         {/each}
       </div>
-
-      <button class="action" onclick={() => archive(f)}>アーカイブ</button>
     {/snippet}
   </ThreadMenu>
 {/if}
