@@ -59,6 +59,24 @@ describe('stripId', () => {
     expect(stripId(null)).toBe('')
     expect(stripId(undefined)).toBe('')
   })
+
+  it('keeps a single space when a trailing token follows the ID', () => {
+    // 5ch date field: "date ID:xxx BE:123-2BP(1000)" -> "date BE:123-2BP(1000)"
+    expect(
+      stripId('2025/01/01(水) 12:34:56.78 ID:abc BE:123-2BP(1000)'),
+    ).toBe('2025/01/01(水) 12:34:56.78 BE:123-2BP(1000)')
+  })
+
+  it('removes ID at the end without leaving a trailing space', () => {
+    // Already covered by the first test; kept explicit for regression clarity.
+    expect(stripId('2025/01/01(水) 12:34:56.78 ID:klSUPSuq0')).toBe(
+      '2025/01/01(水) 12:34:56.78',
+    )
+  })
+
+  it('handles no leading space before ID (edge case)', () => {
+    expect(stripId('ID:abc')).toBe('')
+  })
 })
 
 // ---------------------------------------------------------------------------

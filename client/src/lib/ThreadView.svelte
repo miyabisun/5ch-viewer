@@ -162,6 +162,12 @@
   // Built from all reses in one pass; used by resHead to colour-code same-ID posts.
   const idStats = $derived.by(() => buildIdStats(data?.res ?? []))
 
+  // Resolve a res's ID: server-extracted r.id is authoritative; fall back to
+  // client extraction (idStats) for edge cases such as id-search result reses.
+  function resolveId(r) {
+    return r.id ?? idStats.get(r.num)?.id ?? null
+  }
+
   // Look up a res by number (missing if not found).
   function resOf(num) {
     return data?.res.find((r) => r.num === num) ?? { num, missing: true }
@@ -254,8 +260,8 @@
     }
     function onEnd(e) {
       if (ignore || !locked || !horizontal) return
-      // A modal owns the interaction while open; don't leave the thread.
-      if (anchorRoot != null) return
+      // Any modal open: the gesture belongs to the modal, not the thread.
+      if (anchorRoot != null || idListId != null || idMenu != null) return
       const dx = e.changedTouches[0].clientX - startX
       const dy = e.changedTouches[0].clientY - startY
       if (dx >= 60 && Math.abs(dx) > Math.abs(dy) * 1.5) onback()
@@ -271,6 +277,23 @@
       },
     }
   }
+
+  // --- ID left-click list modal ---
+  // Shows all reses in the current thread posted by the same ID.
+  let idListId = $state(null)
+
+  function openIdList(id) {
+    idListId = id
+  }
+  function closeIdList() {
+    idListId = null
+  }
+
+  // Reses for the ID-list modal, derived from in-memory data (no extra fetch).
+  const idListRes = $derived.by(() => {
+    if (idListId == null || !data?.res) return []
+    return data.res.filter((r) => resolveId(r) === idListId)
+  })
 
   // --- ID right-click / long-press menu ---
   // Menu state: the ID string the menu acts on, or null (closed).
@@ -297,12 +320,16 @@
   function cancelIdPress() {
     clearTimeout(idPressTimer)
   }
-  // Swallow the click that ends a long-press so it does not also open an anchor.
-  function onIdClick(e) {
+  // Handle left-click on the ID badge:
+  //   - After a long-press (which already opened the menu), swallow the click.
+  //   - Otherwise open the ID-list modal.
+  function onIdClick(e, id) {
     if (idLongPressed) {
       idLongPressed = false
       e.stopPropagation()
+      return
     }
+    openIdList(id)
   }
 
   // Copy the ID string (with the "ID:" prefix) to the clipboard.
@@ -379,9 +406,7 @@
 <!-- Res header + body, shared by every render site. -->
 {#snippet resHead(r)}
   {@const stats = idStats.get(r.num)}
-  <!-- Resolve the ID: server-extracted r.id is authoritative; fall back to client
-       extraction for edge cases (e.g. reses from the id-search result set). -->
-  {@const resolvedId = r.id ?? stats?.id ?? null}
+  {@const resolvedId = resolveId(r)}
   <span class="num">{r.num}</span>
   <span class="name">{formatName(r.name)}</span>
   <span class="date">
@@ -403,8 +428,8 @@
         onpointerup={cancelIdPress}
         onpointerleave={cancelIdPress}
         onpointercancel={cancelIdPress}
-        onclick={onIdClick}
-        onkeydown={(e) => e.key === 'Enter' && openIdMenu(resolvedId)}
+        onclick={(e) => onIdClick(e, resolvedId)}
+        onkeydown={(e) => e.key === 'Enter' && openIdList(resolvedId)}
       >{label}</span>
     {/if}
   </span>
@@ -477,6 +502,22 @@
     <!-- Clicking >>N inside the tree replaces the root (no stacking). -->
     <div role="presentation" onclick={onBodyClick}>
       {@render anchorNode(anchorRoot)}
+    </div>
+  </Modal>
+{/if}
+
+<!-- ID list modal: all reses in this thread posted by the tapped ID. -->
+{#if idListId != null}
+  <Modal onclose={closeIdList}>
+    {#snippet header()}
+      <div class="menu-title">ID:{idListId}（{idListRes.length}件）</div>
+    {/snippet}
+    <div class="id-list" data-testid="id-list" role="presentation" onclick={onBodyClick}>
+      {#each idListRes as r (r.num)}
+        <div class="res id-list-res">
+          {@render resHeadAndBody(r)}
+        </div>
+      {/each}
     </div>
   </Modal>
 {/if}
@@ -661,6 +702,15 @@
     cursor: pointer;
     text-align: center;
     font-size: 0.95rem;
+  }
+
+  /* ID list modal content (same-ID reses in the current thread). */
+  .id-list {
+    min-width: min(32rem, 90vw);
+    max-width: 90vw;
+  }
+  .id-list-res {
+    font-size: 0.9rem;
   }
 
   /* ID search result modal content. */

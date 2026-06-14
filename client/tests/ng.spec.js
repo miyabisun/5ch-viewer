@@ -56,6 +56,59 @@ async function setupRoutes(page, { ngIds = [], searchResult = [] } = {}) {
   )
 }
 
+test('left-click on ID badge opens id-list modal with all reses of that ID', async ({ page }) => {
+  await setupRoutes(page)
+  await page.goto(THREAD_PATH)
+
+  // Wait for thread to render.
+  await expect(page.getByText('本文1')).toBeVisible()
+
+  // Left-click the first .resid badge (ID:target, which has 2 posts).
+  await page.locator('.resid').first().click()
+
+  // The id-list modal must appear.
+  const modal = page.locator('[data-testid="id-list"]')
+  await expect(modal).toBeVisible()
+
+  // Both reses posted by ID:target must appear in the modal.
+  await expect(modal.getByText('本文1')).toBeVisible()
+  await expect(modal.getByText('本文3')).toBeVisible()
+  // The other ID's post must not appear.
+  await expect(modal.getByText('本文2')).toHaveCount(0)
+})
+
+test('id-list modal header shows ID and count', async ({ page }) => {
+  await setupRoutes(page)
+  await page.goto(THREAD_PATH)
+
+  await expect(page.getByText('本文1')).toBeVisible()
+  await page.locator('.resid').first().click()
+
+  // Header should read "ID:target（2件）".
+  await expect(page.locator('.modal')).toContainText('ID:target（2件）')
+})
+
+test('left-click opens id-list; right-click opens id-menu (both routes distinct)', async ({ page }) => {
+  await setupRoutes(page)
+  await page.goto(THREAD_PATH)
+
+  await expect(page.getByText('本文1')).toBeVisible()
+
+  // Left-click -> id-list modal.
+  await page.locator('.resid').first().click()
+  await expect(page.locator('[data-testid="id-list"]')).toBeVisible()
+  await expect(page.locator('[data-testid="id-menu"]')).toHaveCount(0)
+
+  // Close the modal.
+  await page.getByRole('button', { name: '閉じる' }).click()
+  await expect(page.locator('[data-testid="id-list"]')).toHaveCount(0)
+
+  // Right-click -> id-menu modal.
+  await page.locator('.resid').first().click({ button: 'right' })
+  await expect(page.locator('[data-testid="id-menu"]')).toBeVisible()
+  await expect(page.locator('[data-testid="id-list"]')).toHaveCount(0)
+})
+
 test('right-click on ID badge opens the ID menu', async ({ page }) => {
   await setupRoutes(page)
   await page.goto(THREAD_PATH)

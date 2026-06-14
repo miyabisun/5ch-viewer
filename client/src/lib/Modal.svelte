@@ -21,11 +21,16 @@
 <div class="modal-bg" role="presentation" onclick={onScrimClick}>
   <!-- Dialog: clicks inside stay inside (no onclick handler -> no bubbling close). -->
   <div class="modal" role="dialog" aria-modal="true" tabindex="-1">
-    <div class="modal-head">
-      <div class="modal-head-slot">{@render header?.()}</div>
-      <button class="modal-close" aria-label="閉じる" onclick={onclose}>×</button>
-    </div>
+    <!-- × button: absolutely positioned in the top-right corner so it never
+         shifts content and stays in place while the inner content scrolls. -->
+    <button class="modal-close" aria-label="閉じる" onclick={onclose}>×</button>
+    <!-- Scrollable content area. padding-top reserves space so text never
+         slides under the × button. header slot is rendered inside the scroll
+         region so long titles are part of the scrollable flow. -->
     <div class="modal-content">
+      {#if header}
+        <div class="modal-header">{@render header()}</div>
+      {/if}
       {@render children()}
     </div>
   </div>
@@ -47,34 +52,46 @@
     border-radius: 8px;
     padding: 1rem;
     max-width: 100%;
-    max-height: 80%;
-    overflow: auto;
+    max-height: 80dvh;
+    overflow: hidden;
     position: relative;
-  }
-  .modal-head {
     display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
+    flex-direction: column;
   }
-  .modal-head-slot {
-    flex: 1;
-    min-width: 0;
-  }
+  /* × button: pinned to top-right of .modal (position:relative).
+     Kept visually subtle (muted color, transparent bg) so it does not
+     compete with content. Hover gives a slight affordance. */
   .modal-close {
-    flex: none;
-    margin-left: auto;
-    width: 2rem;
-    height: 2rem;
+    position: absolute;
+    top: 0.4rem;
+    right: 0.4rem;
+    z-index: 1;
+    width: 1.8rem;
+    height: 1.8rem;
     line-height: 1;
-    font-size: 1.3rem;
+    font-size: 1.2rem;
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: var(--fg);
+    color: var(--muted);
     cursor: pointer;
+    padding: 0;
   }
   .modal-close:hover {
+    color: var(--fg);
     background: var(--border);
+  }
+  /* Scrollable inner area. padding-top prevents content from sliding under
+     the absolutely-positioned × button (approx button height + gap). */
+  .modal-content {
+    overflow-y: auto;
+    padding-top: 1.75rem;
+    flex: 1;
+    min-height: 0;
+  }
+  .modal-header {
+    margin-bottom: 0.5rem;
+    /* Leave room on the right so long header text doesn't overlap the × button. */
+    padding-right: 1.5rem;
   }
 </style>

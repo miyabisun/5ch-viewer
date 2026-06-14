@@ -17,12 +17,16 @@ export function extractId(date) {
   return m ? m[1] : null
 }
 
-// Return the date string with the "ID:xxxx" token (and its preceding
-// whitespace) removed, trimmed.  Used when the ID is either absent or shown
-// separately as a coloured badge.
+// Return the date string with the "ID:xxxx" token removed, trimmed.
+// Used when the ID is either absent or shown separately as a coloured badge.
+//
+// Replacement strategy: absorb surrounding whitespace into a single space so
+// that tokens on both sides of the ID stay separated (e.g. when a BE: token
+// follows the ID). A trailing trim() removes any residual space if the ID was
+// at the end of the string.
 export function stripId(date) {
   if (!date) return ''
-  return date.replace(ID_RE, '').trim()
+  return date.replace(/\s*ID:[^\s]+\s*/g, ' ').trim()
 }
 
 // colorLevel derived from total post count for the same ID.
