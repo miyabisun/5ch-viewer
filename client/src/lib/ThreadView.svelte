@@ -199,38 +199,51 @@
     anchorRoot = null
   }
 
-  // Pre-computed child list for the current anchor tree.
-  // Built once from (anchorRoot, data) with no rendering side-effects.
-  // BFS over the forward-anchor graph: each res number enters the visited set
-  // when it is *enqueued* (not when dequeued), so DAG nodes reachable via
-  // multiple paths are only expanded once and appear exactly once in the tree.
-  // Maps res number -> array of child res numbers to display under it.
-  const anchorChildren = $derived.by(() => {
-    const map = new Map()
-    if (anchorRoot == null || !data?.res) return map
-    const visited = new Set([anchorRoot])
-    const queue = [anchorRoot]
-    while (queue.length > 0) {
-      const num = queue.shift()
-      const r = resOf(num)
-      if (r.missing) {
-        map.set(num, [])
-        continue
+  // Build the anchor tree for the current anchorRoot (N).
+  // Structure: { parents: AnchorNode[], self: number, children: AnchorNode[] }
+  // AnchorNode: { num: number, children: AnchorNode[] }
+  //
+  // "Parents" = forward-anchor chain (reses that N references, going upward).
+  // "Self"    = N itself (the pivot / clicked res).
+  // "Children"= backref chain (reses that reference N, going downward).
+  //
+  // Both directions share one recursive walker; they differ only in how a node's
+  // neighbours are found (forward anchors vs backrefs). A visited set per walk
+  // prevents cycles and DAG duplication. anchorRoot is pre-visited so it never
+  // reappears as an ancestor or descendant; the downward walk also inherits the
+  // upward walk's visited set so parents are not duplicated as children.
+  const anchorTree = $derived.by(() => {
+    if (anchorRoot == null || !data?.res) return null
+
+    // Recursively build a subtree from `num`, following `neighbours(n)` outward.
+    function build(num, neighbours, visited) {
+      const nodes = []
+      for (const next of neighbours(num)) {
+        if (visited.has(next)) continue
+        visited.add(next)
+        nodes.push({ num: next, children: build(next, neighbours, visited) })
       }
-      const children = []
-      // matchAll clones the regex internally, so sharing ANCHOR_RE here does not
-      // corrupt the lastIndex used by the exec-based backrefs loop.
-      for (const m of r.body.matchAll(ANCHOR_RE)) {
-        const n = Number(m[1])
-        // Skip: self-reference or already enqueued/visited (prevents cycles and DAG duplication).
-        if (n === r.num || visited.has(n)) continue
-        visited.add(n)
-        children.push(n)
-        queue.push(n)
-      }
-      map.set(num, children)
+      return nodes
     }
-    return map
+
+    // Forward anchors of `num`: the reses it references via >>M.
+    // matchAll clones the regex internally, so ANCHOR_RE.lastIndex is not corrupted.
+    const forwardAnchors = (num) => {
+      const r = resOf(num)
+      if (r.missing) return []
+      return [...r.body.matchAll(ANCHOR_RE)]
+        .map((m) => Number(m[1]))
+        .filter((target) => target !== num)
+    }
+    // Backrefs of `num`: the reses that reference it.
+    const backAnchors = (num) => backrefs.get(num) ?? []
+
+    const visitedUp = new Set([anchorRoot])
+    const parents = build(anchorRoot, forwardAnchors, visitedUp)
+    // Inherit visitedUp so ancestors are not re-shown as descendants.
+    const children = build(anchorRoot, backAnchors, new Set(visitedUp))
+
+    return { parents, self: anchorRoot, children }
   })
 
   // Body click (shared by list and modal). Follow the anchor or open wacchoi list when tapped.
@@ -564,26 +577,39 @@
   {@render refs(r.num)}
 {/snippet}
 
-<!-- Recursive anchor tree node.
-     Reads pre-computed anchorChildren (a derived Map) — no rendering side-effects.
-     Each res appears at most once in the tree (DAG/cycle-safe by construction). -->
-{#snippet anchorNode(num)}
+<!-- Render a single res node inside the anchor tree.
+     No back-reference badges (refs) are shown here to reduce noise —
+     descendants are already expanded as child nodes below. -->
+{#snippet anchorResNode(num, highlight = false)}
   {@const r = resOf(num)}
-  {@const children = anchorChildren.get(num) ?? []}
   <div class="anchor-node">
     {#if r.missing}
       <div class="res missing">レス {num} は未取得です</div>
     {:else}
-      <!-- No back-references inside the tree, to reduce noise.
-           Uses resHeadAndBody so NG posts are hidden even inside the anchor tree. -->
-      <div class="res">
+      <!-- Uses resHeadAndBody so NG posts are hidden even inside the anchor tree. -->
+      <div class="res" class:anchor-self={highlight}>
         {@render resHeadAndBody(r)}
       </div>
-      {#each children as child (child)}
-        {@render anchorNode(child)}
-      {/each}
     {/if}
   </div>
+{/snippet}
+
+<!-- Recursive anchor subtree, shared by both directions.
+     `parentChain` controls ordering: for the upward (forward-anchor) chain the
+     deeper ancestors are rendered ABOVE the node (oldest ancestor at top); for the
+     downward (backref) chain the node is rendered above its descendants. -->
+{#snippet anchorTreeNodes(nodes, parentChain)}
+  {#each nodes as node (node.num)}
+    <div class="anchor-node">
+      {#if parentChain && node.children.length > 0}
+        {@render anchorTreeNodes(node.children, true)}
+      {/if}
+      {@render anchorResNode(node.num)}
+      {#if !parentChain && node.children.length > 0}
+        {@render anchorTreeNodes(node.children, false)}
+      {/if}
+    </div>
+  {/each}
 {/snippet}
 
 <!-- Sticky title header: stays visible while scrolling (replaces the removed
@@ -610,7 +636,22 @@
   <Modal onclose={closeAnchor}>
     <!-- Clicking >>N inside the tree replaces the root (no stacking). -->
     <div role="presentation" onclick={onBodyClick}>
-      {@render anchorNode(anchorRoot)}
+      {#if anchorTree != null}
+        <!-- Parents (forward-anchor chain): rendered above N, oldest ancestor at top. -->
+        {#if anchorTree.parents.length > 0}
+          <div class="anchor-node">
+            {@render anchorTreeNodes(anchorTree.parents, true)}
+          </div>
+        {/if}
+        <!-- N itself: highlighted as the pivot. -->
+        {@render anchorResNode(anchorTree.self, true)}
+        <!-- Children (backref chain): rendered below N. -->
+        {#if anchorTree.children.length > 0}
+          <div class="anchor-node">
+            {@render anchorTreeNodes(anchorTree.children, false)}
+          </div>
+        {/if}
+      {/if}
     </div>
   </Modal>
 {/if}
@@ -790,6 +831,11 @@
   .anchor-node .res.missing {
     color: var(--muted);
     font-size: 0.85rem;
+  }
+  /* Highlight the pivot res (the clicked N) in the anchor tree. */
+  .anchor-node .res.anchor-self {
+    border-left: 3px solid var(--accent, var(--link));
+    background: var(--highlight-bg, var(--card-bg));
   }
   .refresh-error {
     margin: 0.4rem 0;

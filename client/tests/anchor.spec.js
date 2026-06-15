@@ -106,8 +106,59 @@ test('clicking a >>N anchor opens the modal without navigating', async ({ page }
   await expect(page.getByTestId('thread-title')).toBeVisible()
 })
 
+// New tree structure: parents (forward-anchor targets) above, N in the middle,
+// backrefs (reses that reference N) below.
+// Clicking >>1 (N=1): res1 references >>2 so res2 is the parent; res2 references >>1
+// so res2 would be a child too, but it is already used as a parent and appears only once.
+test('anchor tree: parent (forward target) above, self in middle, backrefs below', async ({
+  page,
+}) => {
+  // res1 anchors >>2, res2 anchors >>1 (mutual cycle), res3 anchors >>1 (backref only).
+  const dat = {
+    title: FAV.title,
+    res_count: 3,
+    read_res: 0,
+    status: 'active',
+    res: [
+      { num: 1, name: '名無し', mail: '', date: '2025 ID:a', body: '最初のレス &gt;&gt;2' },
+      { num: 2, name: '名無し', mail: '', date: '2025 ID:b', body: '&gt;&gt;1 これはアンカー' },
+      { num: 3, name: '名無し', mail: '', date: '2025 ID:c', body: '&gt;&gt;1 別の返信' },
+    ],
+  }
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+    route.fulfill({ json: dat }),
+  )
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 3, read_res: 0, status: 'active' } }),
+  )
+
+  await page.goto(THREAD_PATH)
+  // Click >>1 in res2 or res3 (both reference >>1).
+  await page.locator('.anchor[data-anchor="1"]').first().click()
+  await expect(page.locator('.modal')).toBeVisible()
+
+  const modal = page.locator('.modal')
+  // res1 (N=1, self) must be visible — highlighted as the pivot.
+  await expect(modal.getByText('最初のレス')).toBeVisible()
+  // res2 is res1's forward-anchor target (res1 references >>2) — shown as parent.
+  await expect(modal.getByText('これはアンカー')).toBeVisible()
+  // res3 is a backref of res1 (res3 references >>1) — shown as child.
+  await expect(modal.getByText('別の返信')).toBeVisible()
+
+  // Each res must appear exactly once.
+  await expect(modal.locator('.res .num').filter({ hasText: '1' })).toHaveCount(1)
+  await expect(modal.locator('.res .num').filter({ hasText: '2' })).toHaveCount(1)
+  await expect(modal.locator('.res .num').filter({ hasText: '3' })).toHaveCount(1)
+})
+
 // Clicking >>1 (res1 anchors to res2, res2 anchors back to res1) must show both
 // res1 and res2 in the tree and must not loop infinitely.
+// New behaviour: res2 appears as a parent (res1 references >>2) and is NOT duplicated
+// as a child (because it is already used as an ancestor).
 test('anchor tree expands recursively and stops at cycles', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
   await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
@@ -121,21 +172,26 @@ test('anchor tree expands recursively and stops at cycles', async ({ page }) => 
   await page.goto(THREAD_PATH)
   await expect(page.getByText('これはアンカー')).toBeVisible()
 
-  // Click the >>1 anchor in res2's body.
+  // Click the >>1 anchor in res2's body (N=1).
   await page.locator('.anchor[data-anchor="1"]').first().click()
   await expect(page.locator('.modal')).toBeVisible()
 
-  // Root res1 and its child res2 must both appear.
+  // Both res1 (N) and res2 (parent: res1 references >>2) must appear.
   const modal = page.locator('.modal')
   await expect(modal.getByText('最初のレス')).toBeVisible()
   await expect(modal.getByText('これはアンカー')).toBeVisible()
 
-  // res1 must appear exactly once (no infinite expansion due to cycle).
+  // Each res must appear exactly once (cycle-safe: res2 shown as parent only).
   await expect(modal.locator('.res .num').filter({ hasText: '1' })).toHaveCount(1)
+  await expect(modal.locator('.res .num').filter({ hasText: '2' })).toHaveCount(1)
 })
 
 // DAG test: res1 -> res2 and res1 -> res3; both res2 and res3 -> res4.
-// res4 is reachable via two paths (1->2->4 and 1->3->4).
+// Clicking >>2 or >>3 (from res4's perspective as backrefs to res1):
+// This test clicks >>4 from res2 (N=4):
+//   - parent chain: res4 has no forward anchors -> no parents
+//   - self: res4
+//   - children (backrefs to res4): res2 and res3 both anchor >>4
 // Each res must appear exactly once — no duplicate expansion.
 test('anchor tree expands DAG without duplicating shared nodes', async ({ page }) => {
   const dagDat = {
@@ -163,17 +219,19 @@ test('anchor tree expands DAG without duplicating shared nodes', async ({ page }
   )
 
   await page.goto(THREAD_PATH)
-  await page.locator('.anchor[data-anchor="1"]').first().click()
+  // Click >>4 in res2's body (N=4): res2 and res3 are backrefs (children).
+  await page.locator('.anchor[data-anchor="4"]').first().click()
   await expect(page.locator('.modal')).toBeVisible()
 
   const modal = page.locator('.modal')
-  // All four reses must appear.
-  await expect(modal.getByText('root')).toBeVisible()
+  // res4 (self), res2 and res3 (backrefs / children) must appear.
+  await expect(modal.getByText('共有ノード')).toBeVisible()
   await expect(modal.getByText('経路A')).toBeVisible()
   await expect(modal.getByText('経路B')).toBeVisible()
-  await expect(modal.getByText('共有ノード')).toBeVisible()
 
-  // res4 is reachable via two paths but must appear exactly once.
+  // res2 and res3 both reference >>4 so they appear as children; each exactly once.
+  await expect(modal.locator('.res .num').filter({ hasText: '2' })).toHaveCount(1)
+  await expect(modal.locator('.res .num').filter({ hasText: '3' })).toHaveCount(1)
   await expect(modal.locator('.res .num').filter({ hasText: '4' })).toHaveCount(1)
 })
 
