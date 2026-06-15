@@ -106,11 +106,13 @@ test('clicking a >>N anchor opens the modal without navigating', async ({ page }
   await expect(page.getByTestId('thread-title')).toBeVisible()
 })
 
-// New tree structure: parents (forward-anchor targets) above, N in the middle,
-// backrefs (reses that reference N) below.
-// Clicking >>1 (N=1): res1 references >>2 so res2 is the parent; res2 references >>1
-// so res2 would be a child too, but it is already used as a parent and appears only once.
-test('anchor tree: parent (forward target) above, self in middle, backrefs below', async ({
+// Single unified tree: ancestors (shallowest first) -> self -> descendants.
+// Clicking >>1 (N=1): res1 references >>2 so res2 is an ancestor; res2 references >>1
+// (cycle) so res2 is NOT duplicated as a child — it appears only once as an ancestor.
+// res3 references >>1 (backref) so res3 is a descendant (child of self).
+//
+// Expected single-tree order: res2 (depth 0, ancestor) -> res1 (depth 1, self) -> res3 (depth 2, child)
+test('anchor tree: unified single tree with ancestors above self and children below', async ({
   page,
 }) => {
   // res1 anchors >>2, res2 anchors >>1 (mutual cycle), res3 anchors >>1 (backref only).
@@ -142,17 +144,20 @@ test('anchor tree: parent (forward target) above, self in middle, backrefs below
   await expect(page.locator('.modal')).toBeVisible()
 
   const modal = page.locator('.modal')
-  // res1 (N=1, self) must be visible — highlighted as the pivot.
+  // All three reses must be visible.
   await expect(modal.getByText('最初のレス')).toBeVisible()
-  // res2 is res1's forward-anchor target (res1 references >>2) — shown as parent.
   await expect(modal.getByText('これはアンカー')).toBeVisible()
-  // res3 is a backref of res1 (res3 references >>1) — shown as child.
   await expect(modal.getByText('別の返信')).toBeVisible()
 
-  // Each res must appear exactly once.
+  // Each res must appear exactly once (res2 cycle-deduplicated as ancestor only).
   await expect(modal.locator('.res .num').filter({ hasText: '1' })).toHaveCount(1)
   await expect(modal.locator('.res .num').filter({ hasText: '2' })).toHaveCount(1)
   await expect(modal.locator('.res .num').filter({ hasText: '3' })).toHaveCount(1)
+
+  // self (res1) must be highlighted; ancestor (res2) and child (res3) must not.
+  await expect(modal.locator('.res.anchor-self .num').filter({ hasText: '1' })).toHaveCount(1)
+  await expect(modal.locator('.res.anchor-self .num').filter({ hasText: '2' })).toHaveCount(0)
+  await expect(modal.locator('.res.anchor-self .num').filter({ hasText: '3' })).toHaveCount(0)
 })
 
 // Clicking >>1 (res1 anchors to res2, res2 anchors back to res1) must show both
@@ -342,4 +347,78 @@ test.describe('touch: anchor tap vs swipe-back', () => {
     await swipe(page, '.thread-body', { dx: 150 })
     await expect(page).toHaveURL('/')
   })
+})
+
+// Regression: 3-res linear chain (859 -> 863 -> 886 equivalent).
+// Clicking the middle res (863) must produce a single tree where:
+//   ancestor (859) is shallowest (leftmost), self (863) is middle, child (886) is deepest.
+// The left positions must be strictly monotonically increasing: left(859) < left(863) < left(886).
+test('anchor tree depth indentation: ancestor shallower than self, self shallower than child', async ({
+  page,
+}) => {
+  // Three-res linear chain: res859 <- res863(self) <- res886
+  const dat = {
+    title: FAV.title,
+    res_count: 3,
+    read_res: 0,
+    status: 'active',
+    res: [
+      { num: 859, name: '名無し', mail: '', date: '2025 ID:a', body: '859のレス' },
+      { num: 863, name: '名無し', mail: '', date: '2025 ID:b', body: '&gt;&gt;859 863のレス' },
+      { num: 886, name: '名無し', mail: '', date: '2025 ID:c', body: '&gt;&gt;863 886のレス' },
+    ],
+  }
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+    route.fulfill({ json: dat }),
+  )
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 3, read_res: 0, status: 'active' } }),
+  )
+
+  await page.goto(THREAD_PATH)
+  // Click >>863 anchor in res886's body (opens tree with 863 as self).
+  await page.locator('.anchor[data-anchor="863"]').first().click()
+  await expect(page.locator('.modal')).toBeVisible()
+
+  const modal = page.locator('.modal')
+  await expect(modal.getByText('859のレス')).toBeVisible()
+  await expect(modal.getByText('863のレス')).toBeVisible()
+  await expect(modal.getByText('886のレス')).toBeVisible()
+
+  // Each res appears exactly once.
+  await expect(modal.locator('.res .num').filter({ hasText: '859' })).toHaveCount(1)
+  await expect(modal.locator('.res .num').filter({ hasText: '863' })).toHaveCount(1)
+  await expect(modal.locator('.res .num').filter({ hasText: '886' })).toHaveCount(1)
+
+  // self (863) must be highlighted; ancestor and child must not.
+  await expect(modal.locator('.res.anchor-self .num').filter({ hasText: '863' })).toHaveCount(1)
+  await expect(modal.locator('.res.anchor-self .num').filter({ hasText: '859' })).toHaveCount(0)
+  await expect(modal.locator('.res.anchor-self .num').filter({ hasText: '886' })).toHaveCount(0)
+
+  // Key correctness check: left positions must be strictly monotonically increasing.
+  // ancestor(859).left < self(863).left < child(886).left
+  const [left859, left863, left886] = await modal.evaluate(() => {
+    function resLeft(numText) {
+      for (const el of document.querySelectorAll('.modal .res')) {
+        const numEl = el.querySelector('.num')
+        if (numEl && numEl.textContent.trim() === numText) {
+          return el.getBoundingClientRect().left
+        }
+      }
+      return null
+    }
+    return [resLeft('859'), resLeft('863'), resLeft('886')]
+  })
+
+  expect(left859).not.toBeNull()
+  expect(left863).not.toBeNull()
+  expect(left886).not.toBeNull()
+  // Ancestor must be strictly to the left of self.
+  expect(left859).toBeLessThan(left863)
+  // Self must be strictly to the left of child.
+  expect(left863).toBeLessThan(left886)
 })

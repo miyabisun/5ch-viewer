@@ -199,32 +199,19 @@
     anchorRoot = null
   }
 
-  // Build the anchor tree for the current anchorRoot (N).
-  // Structure: { parents: AnchorNode[], self: number, children: AnchorNode[] }
-  // AnchorNode: { num: number, children: AnchorNode[] }
+  // Build the anchor tree for the current anchorRoot (N) as a flat display list.
+  // Each element: { num, depth, highlight }
+  //   - depth:     logical generation depth (root ancestor = 0, each reply = +1)
+  //   - highlight: true only for anchorRoot (the clicked res)
   //
-  // "Parents" = forward-anchor chain (reses that N references, going upward).
-  // "Self"    = N itself (the pivot / clicked res).
-  // "Children"= backref chain (reses that reference N, going downward).
+  // Forward-anchor chain (parents) is walked upward from anchorRoot; the deepest
+  // ancestor gets depth 0.  Backref chain (children) is walked downward from
+  // anchorRoot; each level adds 1 to anchorRoot's depth.
   //
-  // Both directions share one recursive walker; they differ only in how a node's
-  // neighbours are found (forward anchors vs backrefs). A visited set per walk
-  // prevents cycles and DAG duplication. anchorRoot is pre-visited so it never
-  // reappears as an ancestor or descendant; the downward walk also inherits the
-  // upward walk's visited set so parents are not duplicated as children.
+  // A single shared `visited` set (seeded with anchorRoot) spans both walks, so it
+  // prevents cycles, DAG duplication, and ancestors reappearing as descendants.
   const anchorTree = $derived.by(() => {
     if (anchorRoot == null || !data?.res) return null
-
-    // Recursively build a subtree from `num`, following `neighbours(n)` outward.
-    function build(num, neighbours, visited) {
-      const nodes = []
-      for (const next of neighbours(num)) {
-        if (visited.has(next)) continue
-        visited.add(next)
-        nodes.push({ num: next, children: build(next, neighbours, visited) })
-      }
-      return nodes
-    }
 
     // Forward anchors of `num`: the reses it references via >>M.
     // matchAll clones the regex internally, so ANCHOR_RE.lastIndex is not corrupted.
@@ -238,12 +225,46 @@
     // Backrefs of `num`: the reses that reference it.
     const backAnchors = (num) => backrefs.get(num) ?? []
 
-    const visitedUp = new Set([anchorRoot])
-    const parents = build(anchorRoot, forwardAnchors, visitedUp)
-    // Inherit visitedUp so ancestors are not re-shown as descendants.
-    const children = build(anchorRoot, backAnchors, new Set(visitedUp))
+    // Shared DFS for both directions. Follows `neighbours(num)`, marks each node in
+    // the shared `visited` set (cycle-safe + DAG-dedupe), and invokes `visit(num, dist)`
+    // for every newly-reached node (dist = edges from start). The visited set is shared
+    // across both walks so ancestors never reappear as descendants.
+    function walk(start, neighbours, visited, visit, dist = 1) {
+      for (const next of neighbours(start)) {
+        if (visited.has(next)) continue
+        visited.add(next)
+        visit(next, dist)
+        walk(next, neighbours, visited, visit, dist + 1)
+      }
+    }
 
-    return { parents, self: anchorRoot, children }
+    // Walk upward, keeping the longest distance per ancestor (reached via multiple
+    // paths) so it renders as shallow as possible.
+    const visited = new Set([anchorRoot])
+    const distMap = new Map() // num -> max distance from anchorRoot
+    walk(anchorRoot, forwardAnchors, visited, (num, dist) =>
+      distMap.set(num, Math.max(distMap.get(num) ?? 0, dist)),
+    )
+
+    // self.depth = length of the longest ancestor chain.
+    const selfDepth = distMap.size > 0 ? Math.max(...distMap.values()) : 0
+
+    // Ancestors: depth = selfDepth - distance; sorted shallowest-first (oldest at top).
+    const ancestors = [...distMap.entries()]
+      .map(([num, dist]) => ({ num, depth: selfDepth - dist }))
+      .sort((a, b) => a.depth - b.depth)
+
+    // Descendants: each backref level adds 1 to selfDepth; pushed in DFS order.
+    const descendants = []
+    walk(anchorRoot, backAnchors, visited, (num, dist) =>
+      descendants.push({ num, depth: selfDepth + dist }),
+    )
+
+    return [
+      ...ancestors,
+      { num: anchorRoot, depth: selfDepth, highlight: true },
+      ...descendants,
+    ]
   })
 
   // Body click (shared by list and modal). Follow the anchor or open wacchoi list when tapped.
@@ -577,12 +598,13 @@
   {@render refs(r.num)}
 {/snippet}
 
-<!-- Render a single res node inside the anchor tree.
-     No back-reference badges (refs) are shown here to reduce noise —
-     descendants are already expanded as child nodes below. -->
-{#snippet anchorResNode(num, highlight = false)}
+<!-- Render a single res node inside the anchor tree at the given depth.
+     depth is reflected as inline margin-left so getBoundingClientRect().left
+     grows monotonically with depth (verifiable in E2E tests).
+     highlight adds a visual border/background accent without affecting indentation. -->
+{#snippet anchorResNode(num, depth = 0, highlight = false)}
   {@const r = resOf(num)}
-  <div class="anchor-node">
+  <div class="anchor-node" style="margin-left: {depth * 0.6}rem">
     {#if r.missing}
       <div class="res missing">レス {num} は未取得です</div>
     {:else}
@@ -592,24 +614,6 @@
       </div>
     {/if}
   </div>
-{/snippet}
-
-<!-- Recursive anchor subtree, shared by both directions.
-     `parentChain` controls ordering: for the upward (forward-anchor) chain the
-     deeper ancestors are rendered ABOVE the node (oldest ancestor at top); for the
-     downward (backref) chain the node is rendered above its descendants. -->
-{#snippet anchorTreeNodes(nodes, parentChain)}
-  {#each nodes as node (node.num)}
-    <div class="anchor-node">
-      {#if parentChain && node.children.length > 0}
-        {@render anchorTreeNodes(node.children, true)}
-      {/if}
-      {@render anchorResNode(node.num)}
-      {#if !parentChain && node.children.length > 0}
-        {@render anchorTreeNodes(node.children, false)}
-      {/if}
-    </div>
-  {/each}
 {/snippet}
 
 <!-- Sticky title header: stays visible while scrolling (replaces the removed
@@ -637,20 +641,11 @@
     <!-- Clicking >>N inside the tree replaces the root (no stacking). -->
     <div role="presentation" onclick={onBodyClick}>
       {#if anchorTree != null}
-        <!-- Parents (forward-anchor chain): rendered above N, oldest ancestor at top. -->
-        {#if anchorTree.parents.length > 0}
-          <div class="anchor-node">
-            {@render anchorTreeNodes(anchorTree.parents, true)}
-          </div>
-        {/if}
-        <!-- N itself: highlighted as the pivot. -->
-        {@render anchorResNode(anchorTree.self, true)}
-        <!-- Children (backref chain): rendered below N. -->
-        {#if anchorTree.children.length > 0}
-          <div class="anchor-node">
-            {@render anchorTreeNodes(anchorTree.children, false)}
-          </div>
-        {/if}
+        <!-- Single unified tree: ancestors (shallowest first) -> self -> descendants.
+             depth drives indentation via inline margin-left; highlight is visual-only. -->
+        {#each anchorTree as item (item.num)}
+          {@render anchorResNode(item.num, item.depth, item.highlight ?? false)}
+        {/each}
       {/if}
     </div>
   </Modal>
@@ -818,9 +813,10 @@
     gap: 0.4rem;
     font-size: 0.8rem;
   }
-  /* Indent each level of the anchor tree with a visible left border. */
-  .anchor-node > .anchor-node {
-    margin-left: 0.6rem;
+  /* Anchor tree: depth-driven indentation via inline margin-left (set per node).
+     A left border on each indented node gives the visual tree guide. */
+  .anchor-node {
+    /* padding-left leaves room for the border without shifting text too much */
     padding-left: 0.5rem;
     border-left: 2px solid var(--border);
   }
@@ -832,7 +828,9 @@
     color: var(--muted);
     font-size: 0.85rem;
   }
-  /* Highlight the pivot res (the clicked N) in the anchor tree. */
+  /* Highlight the pivot res (the clicked N) in the anchor tree.
+     border-left here overrides the node-level border and gives a coloured accent;
+     indentation is unaffected (it comes from margin-left on .anchor-node). */
   .anchor-node .res.anchor-self {
     border-left: 3px solid var(--accent, var(--link));
     background: var(--highlight-bg, var(--card-bg));
