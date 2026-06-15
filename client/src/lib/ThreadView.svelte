@@ -4,6 +4,7 @@
   import { formatName } from './name.js'
   import { stripId, buildIdStats } from './id.js'
   import { buildWacchoiStats, wacchoiEnabled, linkifyWacchoi } from './wacchoi.js'
+  import { copyText } from './clipboard.js'
   import Modal from './Modal.svelte'
 
   let { fav, onback, ngIds = new Set(), onngchange = () => {} } = $props()
@@ -236,6 +237,13 @@
   function onBodyClick(e) {
     const w = e.target.closest('.wacchoi-badge')
     if (w) {
+      // If a long-press already opened the wacchoi menu, swallow this click to avoid
+      // opening the list modal on top of the menu.
+      if (wacchoiLongPressed) {
+        wacchoiLongPressed = false
+        e.stopPropagation()
+        return
+      }
       openWacchoiList(w.dataset.wacchoi)
       return
     }
@@ -284,7 +292,7 @@
     function onEnd(e) {
       if (ignore || !locked || !horizontal) return
       // Any modal open: the gesture belongs to the modal, not the thread.
-      if (anchorRoot != null || idListId != null || idMenu != null || wacchoiListKey != null) return
+      if (anchorRoot != null || idListId != null || idMenu != null || wacchoiListKey != null || wacchoiMenu != null) return
       const dx = e.changedTouches[0].clientX - startX
       const dy = e.changedTouches[0].clientY - startY
       if (dx >= 60 && Math.abs(dx) > Math.abs(dy) * 1.5) onback()
@@ -335,6 +343,50 @@
     return data.res.filter((r) => resolveWacchoi(r) === wacchoiListKey)
   })
 
+  // --- Wacchoi right-click / long-press menu ---
+  // Menu state: the wacchoi string the menu acts on, or null (closed).
+  let wacchoiMenu = $state(null)
+
+  function openWacchoiMenu(wacchoi) {
+    wacchoiMenu = wacchoi
+  }
+  function closeWacchoiMenu() {
+    wacchoiMenu = null
+  }
+
+  // Right-click on the .name span: open the menu if the target is a wacchoi badge.
+  // Delegated here (rather than on the badge) because the badge is rendered via
+  // {@html} inside .name and has no own Svelte event bindings.
+  function onWacchoiContextMenu(e) {
+    const badge = e.target.closest('.wacchoi-badge')
+    if (!badge) return
+    e.preventDefault()
+    openWacchoiMenu(badge.dataset.wacchoi)
+  }
+
+  // Long-press detection for the wacchoi badge (touch devices, 500ms, same pattern as ID).
+  let wacchoiPressTimer
+  let wacchoiLongPressed = false
+  function onWacchoiPointerDown(e) {
+    if (e.pointerType !== 'touch') return
+    const badge = e.target.closest('.wacchoi-badge')
+    if (!badge) return
+    wacchoiLongPressed = false
+    wacchoiPressTimer = setTimeout(() => {
+      wacchoiLongPressed = true
+      openWacchoiMenu(badge.dataset.wacchoi)
+    }, 500)
+  }
+  function cancelWacchoiPress() {
+    clearTimeout(wacchoiPressTimer)
+  }
+
+  // Copy the wacchoi string (with the "ワッチョイ " prefix) to the clipboard.
+  async function copyWacchoi(w) {
+    await copyText('ワッチョイ ' + w)
+    closeWacchoiMenu()
+  }
+
   // --- ID right-click / long-press menu ---
   // Menu state: the ID string the menu acts on, or null (closed).
   let idMenu = $state(null)
@@ -374,11 +426,7 @@
 
   // Copy the ID string (with the "ID:" prefix) to the clipboard.
   async function copyId(id) {
-    try {
-      await navigator.clipboard.writeText('ID:' + id)
-    } catch {
-      /* clipboard may be unavailable; fail silently */
-    }
+    await copyText('ID:' + id)
     closeIdMenu()
   }
 
@@ -453,10 +501,20 @@
        Name: when the thread has wacchoi enabled, linkifyWacchoi() wraps the
          wacchoi token inside a clickable .wacchoi-badge span.  The .name element
          inherits the colour class set by wNameColorCls so the badge takes the
-         same colour without an extra wrapper.  Click delegation is handled by
-         onBodyClick via event bubbling from .wacchoi-badge up to the body div. -->
+         same colour without an extra wrapper.  Click/contextmenu/pointer events
+         are delegated to .name span handlers (onBodyClick / onWacchoiContextMenu /
+         onWacchoiPointerDown) which inspect e.target.closest('.wacchoi-badge'). -->
   {#if wacchoiEnabledFlag}
-    <span class="name {wNameColorCls}" role="presentation" onclick={onBodyClick}>{@html linkifyWacchoi(r.name)}</span>
+    <span
+      class="name {wNameColorCls}"
+      role="presentation"
+      onclick={onBodyClick}
+      oncontextmenu={onWacchoiContextMenu}
+      onpointerdown={onWacchoiPointerDown}
+      onpointerup={cancelWacchoiPress}
+      onpointerleave={cancelWacchoiPress}
+      onpointercancel={cancelWacchoiPress}
+    >{@html linkifyWacchoi(r.name)}</span>
   {:else}
     <span class="name">{formatName(r.name)}</span>
   {/if}
@@ -589,6 +647,18 @@
   </Modal>
 {/if}
 
+<!-- Wacchoi right-click / long-press menu modal. -->
+{#if wacchoiMenu != null}
+  <Modal onclose={closeWacchoiMenu}>
+    {#snippet header()}
+      <div class="menu-title">ﾜｯﾁｮｲ:{wacchoiMenu}</div>
+    {/snippet}
+    <div class="menu" data-testid="wacchoi-menu">
+      <button class="action" onclick={() => copyWacchoi(wacchoiMenu)}>コピー</button>
+    </div>
+  </Modal>
+{/if}
+
 <!-- ID right-click / long-press menu modal. -->
 {#if idMenu != null}
   <Modal onclose={closeIdMenu}>
@@ -695,13 +765,10 @@
     text-decoration: underline;
   }
   /* Inline wacchoi badge: inherits colour from .name so that per-res colour
-     classes (id-l2..l5) applied to .name propagate without extra wrappers. */
+     classes (id-l2..l5) applied to .name propagate without extra wrappers.
+     Clickable-badge affordance (cursor/non-selectable) is shared with .resid below. */
   :global(.wacchoi-badge) {
-    cursor: pointer;
-    text-decoration: underline;
     color: inherit;
-    -webkit-touch-callout: none;
-    user-select: none;
   }
   .backrefs {
     margin-top: 0.3rem;
@@ -745,8 +812,9 @@
   .id-l4 { color: var(--id-l4); }
   .id-l5 { color: var(--id-l5); font-weight: bold; }
 
-  /* Clickable ID badge affordance. */
-  .resid {
+  /* Clickable badge affordance, shared by the ID badge and the wacchoi badge. */
+  .resid,
+  :global(.wacchoi-badge) {
     cursor: pointer;
     -webkit-touch-callout: none;
     user-select: none;
