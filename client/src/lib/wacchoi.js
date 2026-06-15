@@ -47,15 +47,6 @@ function colorLevel(total) {
   return 'none'
 }
 
-// Remove the parenthesised wacchoi group from a formatted name, leaving the
-// rest of the name intact. Returns the cleaned, trimmed name.
-// When no wacchoi is present, returns formatName(name) unchanged (= legacy behaviour).
-export function stripWacchoi(name) {
-  const text = formatName(name)
-  if (!extractWacchoi(name)) return text
-  return text.replace(WACCHOI_RE, '').replace(/\s{2,}/g, ' ').trim()
-}
-
 // Build a Map<resNum, { wacchoi, total, order, colorLevel }> from the res array.
 // When enabled is false the function returns an empty Map immediately (no
 // processing) — this is the primary guard for non-wacchoi threads.
