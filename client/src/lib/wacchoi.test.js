@@ -1,5 +1,51 @@
 import { describe, it, expect } from 'vitest'
-import { extractWacchoi, wacchoiEnabled, buildWacchoiStats } from './wacchoi.js'
+import { extractWacchoi, wacchoiEnabled, buildWacchoiStats, stripWacchoi } from './wacchoi.js'
+
+// ---------------------------------------------------------------------------
+// stripWacchoi
+// ---------------------------------------------------------------------------
+describe('stripWacchoi', () => {
+  it('removes the entire parenthesised wacchoi group from a raw tagged name', () => {
+    const raw = 'iPhone774G </b>(ﾜｯﾁｮｲ 7bb6-83IP [2400:4050:c4e1:e900:*])<b>'
+    expect(stripWacchoi(raw)).toBe('iPhone774G')
+  })
+
+  it('leaves no residual shell (ﾜｯﾁｮｲ text or IP bracket) after stripping', () => {
+    // If only the token were removed the result would contain "(ﾜｯﾁｮｲ  [2400:...])"
+    const raw = 'テスト </b>(ﾜｯﾁｮｲ 1234-abcd [::1])<b>'
+    const result = stripWacchoi(raw)
+    expect(result).not.toMatch(/ﾜｯﾁｮｲ/)
+    expect(result).not.toMatch(/\[/)
+    expect(result).not.toMatch(/\s{2,}/)
+    expect(result).toBe('テスト')
+  })
+
+  it('does not double-encode spaces — no leading/trailing whitespace', () => {
+    const raw = 'foo </b>(ﾜｯﾁｮｲ aaaa-1111 [::1])<b>'
+    expect(stripWacchoi(raw)).toBe('foo')
+  })
+
+  it('returns formatName(name) unchanged when there is no wacchoi (名無しさん)', () => {
+    expect(stripWacchoi('名無しさん')).toBe('名無しさん')
+  })
+
+  it('returns empty string for null input', () => {
+    expect(stripWacchoi(null)).toBe('')
+  })
+
+  it('returns empty string for empty string input', () => {
+    expect(stripWacchoi('')).toBe('')
+  })
+
+  it('strips only the first wacchoi group and preserves other parenthesised groups', () => {
+    // e.g. a name with both ﾜｯﾁｮｲ and another bracket group (ﾜﾝｸﾛ etc.)
+    const name = 'foo (ﾜｯﾁｮｲ aabb-1234 [::]) (ﾜﾝｸﾛ ccdd-5678 [::])'
+    const result = stripWacchoi(name)
+    // The first group is gone but the second remains
+    expect(result).not.toMatch(/aabb-1234/)
+    expect(result).toContain('ccdd-5678')
+  })
+})
 
 // ---------------------------------------------------------------------------
 // extractWacchoi

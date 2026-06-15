@@ -3,7 +3,7 @@
   import { api, beaconProgress } from './api.js'
   import { formatName } from './name.js'
   import { stripId, buildIdStats } from './id.js'
-  import { buildWacchoiStats, wacchoiEnabled } from './wacchoi.js'
+  import { buildWacchoiStats, wacchoiEnabled, stripWacchoi } from './wacchoi.js'
   import Modal from './Modal.svelte'
 
   let { fav, onback, ngIds = new Set(), onngchange = () => {} } = $props()
@@ -181,6 +181,12 @@
   // No server-side field exists for wacchoi, so we always use the extracted value.
   function resolveWacchoi(r) {
     return wacchoiStats.get(r.num)?.wacchoi ?? null
+  }
+
+  // Colour class for an ID/wacchoi badge: total>=2 uses the colour level,
+  // single occurrences (total<2 or no stats) fall back to muted id-l1.
+  function badgeClass(stats) {
+    return stats && stats.total >= 2 ? `id-${stats.colorLevel}` : 'id-l1'
   }
 
   // Look up a res by number (missing if not found).
@@ -441,19 +447,18 @@
   {@const resolvedId = resolveId(r)}
   {@const wStats = wacchoiStats.get(r.num)}
   <span class="num">{r.num}</span>
-  <span class="name">{formatName(r.name)}</span>
+  <span class="name">{stripWacchoi(r.name)}</span>
   <span class="date">{stripId(r.date)}</span><!--
        ID badge: always shown when an ID exists (total>=2 only controls colour).
          Right-click (PC) or long-press (touch) opens the ID context menu.
          For total>=2 the span is coloured and shows order/total counts.
          The &nbsp; inside the {#if} separates the badge from .date only when an ID exists. -->
   {#if resolvedId}
-    {@const colorCls = stats && stats.total >= 2 ? `id-${stats.colorLevel}` : 'id-l1'}
     {@const label = stats && stats.total >= 2
       ? `ID:${resolvedId} (${stats.order}/${stats.total})`
       : `ID:${resolvedId}`}
     &nbsp;<span
-      class="id-badge {colorCls} resid"
+      class="id-badge {badgeClass(stats)} resid"
       role="button"
       tabindex="0"
       data-id={resolvedId}
@@ -466,14 +471,17 @@
       onkeydown={(e) => e.key === 'Enter' && openIdList(resolvedId)}
     >{label}</span>
   {/if}<!--
-       Wacchoi badge: wacchoiStats is empty unless the thread has wacchoi, so a
-         present wStats already implies enabled. Shown only when this res has 2+
-         posts from the same wacchoi (total=1 is intentionally hidden per spec).
+       Wacchoi badge: always shown when a wStats entry exists (wacchoiStats is
+         empty unless the thread has wacchoi, so a present wStats already implies
+         enabled). total=1 uses id-l1 (muted) so info is never lost after stripping
+         the token from the name text. total>=2 uses the colour level like the ID badge.
          The &nbsp; inside the {#if} separates this badge from its predecessor only when shown. -->
-  {#if wStats && wStats.total >= 2}
-    {@const wLabel = `ﾜｯﾁｮｲ:${wStats.wacchoi} (${wStats.order}/${wStats.total})`}
+  {#if wStats}
+    {@const wLabel = wStats.total >= 2
+      ? `ﾜｯﾁｮｲ:${wStats.wacchoi} (${wStats.order}/${wStats.total})`
+      : `ﾜｯﾁｮｲ:${wStats.wacchoi}`}
     &nbsp;<span
-      class="id-badge id-{wStats.colorLevel} resid"
+      class="id-badge {badgeClass(wStats)} resid"
       role="button"
       tabindex="0"
       data-wacchoi={wStats.wacchoi}
