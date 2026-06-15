@@ -1,5 +1,91 @@
 import { describe, it, expect } from 'vitest'
-import { extractWacchoi, wacchoiEnabled, buildWacchoiStats } from './wacchoi.js'
+import { extractWacchoi, wacchoiEnabled, buildWacchoiStats, linkifyWacchoi } from './wacchoi.js'
+
+// ---------------------------------------------------------------------------
+// linkifyWacchoi
+// ---------------------------------------------------------------------------
+describe('linkifyWacchoi', () => {
+  it('wraps the wacchoi token in a .wacchoi-badge span', () => {
+    const raw = 'iPhone774G </b>(ﾜｯﾁｮｲ 7bb6-83IP [2400:4050:c4e1:e900:*])<b>'
+    const result = linkifyWacchoi(raw)
+    expect(result).toContain(
+      '<span class="wacchoi-badge" data-wacchoi="7bb6-83IP">7bb6-83IP</span>',
+    )
+  })
+
+  it('preserves surrounding text (ﾜｯﾁｮｲ prefix and IP address)', () => {
+    const raw = 'iPhone774G </b>(ﾜｯﾁｮｲ 7bb6-83IP [2400:4050:c4e1:e900:*])<b>'
+    const result = linkifyWacchoi(raw)
+    expect(result).toContain('ﾜｯﾁｮｲ')
+    expect(result).toContain('2400:4050')
+    expect(result).toContain('iPhone774G')
+  })
+
+  it('strips HTML tags from name (XSS prevention via formatName)', () => {
+    // formatName() strips ALL tags before escapeHtml runs, so <script> disappears
+    // entirely rather than being escaped — the result is safe for {@html}.
+    const raw = '<script>alert(1)</script> </b>(ﾜｯﾁｮｲ 7bb6-83IP [::1])<b>'
+    const result = linkifyWacchoi(raw)
+    expect(result).not.toContain('<script>')
+    // The text content between tags ("alert(1)") survives, but the tag itself is gone.
+    expect(result).toContain('alert(1)')
+    // The wacchoi span is still present.
+    expect(result).toContain('<span class="wacchoi-badge" data-wacchoi="7bb6-83IP">7bb6-83IP</span>')
+  })
+
+  it('HTML-escapes double quotes in the name (XSS prevention)', () => {
+    const raw = 'foo"bar </b>(ﾜｯﾁｮｲ 7bb6-83IP [::1])<b>'
+    const result = linkifyWacchoi(raw)
+    expect(result).toContain('foo&quot;bar')
+  })
+
+  it('data-wacchoi attribute is intact and not broken by escaping', () => {
+    const raw = 'name </b>(ﾜｯﾁｮｲ Ab12-Cd34 [::1])<b>'
+    const result = linkifyWacchoi(raw)
+    expect(result).toContain('data-wacchoi="Ab12-Cd34"')
+  })
+
+  it('returns escaped plain text when there is no wacchoi token', () => {
+    const result = linkifyWacchoi('名無しさん')
+    expect(result).toBe('名無しさん')
+    expect(result).not.toContain('<span')
+  })
+
+  it('returns escaped plain text for a name with parentheses but no wacchoi', () => {
+    const result = linkifyWacchoi('名無しさん (IP有り)')
+    expect(result).toBe('名無しさん (IP有り)')
+    expect(result).not.toContain('<span')
+  })
+
+  it('returns empty string for empty string', () => {
+    expect(linkifyWacchoi('')).toBe('')
+  })
+
+  it('returns empty string for null', () => {
+    expect(linkifyWacchoi(null)).toBe('')
+  })
+
+  it('returns empty string for undefined', () => {
+    expect(linkifyWacchoi(undefined)).toBe('')
+  })
+
+  it('replaces only the first wacchoi token when the name has multiple \\w{4}-\\w{4} patterns', () => {
+    // extractWacchoi picks the first parenthesised token; linkifyWacchoi must do the same.
+    const raw = 'foo (ﾜｯﾁｮｲ aabb-1234 [::]) (ﾜﾝｸﾛ ccdd-5678 [::])'
+    const result = linkifyWacchoi(raw)
+    // First token is span-ified.
+    expect(result).toContain('<span class="wacchoi-badge" data-wacchoi="aabb-1234">aabb-1234</span>')
+    // Second token must remain plain text (not wrapped).
+    expect(result).not.toContain('data-wacchoi="ccdd-5678"')
+    expect(result).toContain('ccdd-5678')
+  })
+
+  it('handles ampersand in name without double-escaping', () => {
+    const result = linkifyWacchoi('A&B (ﾜｯﾁｮｲ 1234-abcd [::1])')
+    expect(result).toContain('A&amp;B')
+    expect(result).not.toContain('&amp;amp;')
+  })
+})
 
 // ---------------------------------------------------------------------------
 // extractWacchoi

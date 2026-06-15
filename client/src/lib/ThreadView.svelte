@@ -3,7 +3,7 @@
   import { api, beaconProgress } from './api.js'
   import { formatName } from './name.js'
   import { stripId, buildIdStats } from './id.js'
-  import { buildWacchoiStats, wacchoiEnabled } from './wacchoi.js'
+  import { buildWacchoiStats, wacchoiEnabled, linkifyWacchoi } from './wacchoi.js'
   import Modal from './Modal.svelte'
 
   let { fav, onback, ngIds = new Set(), onngchange = () => {} } = $props()
@@ -232,8 +232,13 @@
     return map
   })
 
-  // Body click (shared by list and modal). Follow the anchor when tapped.
+  // Body click (shared by list and modal). Follow the anchor or open wacchoi list when tapped.
   function onBodyClick(e) {
+    const w = e.target.closest('.wacchoi-badge')
+    if (w) {
+      openWacchoiList(w.dataset.wacchoi)
+      return
+    }
     const a = e.target.closest('.anchor')
     if (!a) return
     openAnchor(Number(a.dataset.anchor))
@@ -254,8 +259,11 @@
   function backSwipe(node) {
     let startX, startY, locked, horizontal, ignore
     function onStart(e) {
-      // Ignore multi-touch and touches that begin on an interactive anchor.
-      ignore = e.touches.length > 1 || !!e.target.closest('.anchor')
+      // Ignore multi-touch and touches that begin on an interactive anchor or wacchoi badge.
+      ignore =
+        e.touches.length > 1 ||
+        !!e.target.closest('.anchor') ||
+        !!e.target.closest('.wacchoi-badge')
       const t = e.touches[0]
       startX = t.clientX
       startY = t.clientY
@@ -440,8 +448,18 @@
   {@const stats = idStats.get(r.num)}
   {@const resolvedId = resolveId(r)}
   {@const wStats = wacchoiStats.get(r.num)}
-  <span class="num">{r.num}</span>
-  <span class="name">{formatName(r.name)}</span>
+  {@const wNameColorCls = wStats && wStats.total >= 2 ? `id-${wStats.colorLevel}` : ''}
+  <span class="num">{r.num}</span><!--
+       Name: when the thread has wacchoi enabled, linkifyWacchoi() wraps the
+         wacchoi token inside a clickable .wacchoi-badge span.  The .name element
+         inherits the colour class set by wNameColorCls so the badge takes the
+         same colour without an extra wrapper.  Click delegation is handled by
+         onBodyClick via event bubbling from .wacchoi-badge up to the body div. -->
+  {#if wacchoiEnabledFlag}
+    <span class="name {wNameColorCls}" role="presentation" onclick={onBodyClick}>{@html linkifyWacchoi(r.name)}</span>
+  {:else}
+    <span class="name">{formatName(r.name)}</span>
+  {/if}
   <span class="date">{stripId(r.date)}</span><!--
        ID badge: always shown when an ID exists (total>=2 only controls colour).
          Right-click (PC) or long-press (touch) opens the ID context menu.
@@ -465,21 +483,6 @@
       onclick={(e) => onIdClick(e, resolvedId)}
       onkeydown={(e) => e.key === 'Enter' && openIdList(resolvedId)}
     >{label}</span>
-  {/if}<!--
-       Wacchoi badge: wacchoiStats is empty unless the thread has wacchoi, so a
-         present wStats already implies enabled. Shown only when this res has 2+
-         posts from the same wacchoi (total=1 is intentionally hidden per spec).
-         The &nbsp; inside the {#if} separates this badge from its predecessor only when shown. -->
-  {#if wStats && wStats.total >= 2}
-    {@const wLabel = `ﾜｯﾁｮｲ:${wStats.wacchoi} (${wStats.order}/${wStats.total})`}
-    &nbsp;<span
-      class="id-badge id-{wStats.colorLevel} resid"
-      role="button"
-      tabindex="0"
-      data-wacchoi={wStats.wacchoi}
-      onclick={() => openWacchoiList(wStats.wacchoi)}
-      onkeydown={(e) => e.key === 'Enter' && openWacchoiList(wStats.wacchoi)}
-    >{wLabel}</span>
   {/if}
 {/snippet}
 
@@ -690,6 +693,15 @@
     color: var(--link);
     cursor: pointer;
     text-decoration: underline;
+  }
+  /* Inline wacchoi badge: inherits colour from .name so that per-res colour
+     classes (id-l2..l5) applied to .name propagate without extra wrappers. */
+  :global(.wacchoi-badge) {
+    cursor: pointer;
+    text-decoration: underline;
+    color: inherit;
+    -webkit-touch-callout: none;
+    user-select: none;
   }
   .backrefs {
     margin-top: 0.3rem;

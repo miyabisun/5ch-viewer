@@ -9,6 +9,16 @@
 
 import { formatName } from './name.js'
 
+// Escape HTML special characters to prevent XSS when inserting into {@html}.
+// '&' must be replaced first to avoid double-escaping.
+function escapeHtml(s) {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
 // Match the first \w{4}-\w{4} token found inside parentheses.
 // Word-boundary anchors (\b) prevent partial matches against longer hex strings.
 const WACCHOI_RE = /\(.*?\b(\w{4}-\w{4})\b.*?\)/
@@ -45,6 +55,31 @@ function colorLevel(total) {
   if (total >= 4) return 'l3'
   if (total >= 2) return 'l2'
   return 'none'
+}
+
+// Convert the first wacchoi token in a name string into a clickable
+// <span class="wacchoi-badge"> element, suitable for {@html} rendering.
+//
+// Processing order (XSS-safe):
+//   1. formatName() strips HTML tags and decodes entities → clean plain text.
+//   2. escapeHtml() re-escapes special chars so the result is safe for {@html}.
+//   3. The first wacchoi token (same token extractWacchoi() finds) is wrapped in
+//      a span.  Only \w{4}-\w{4} appears in data-wacchoi, so no new XSS vector.
+//
+// When no wacchoi token is present the escaped plain text is returned as-is.
+// Empty/null/undefined input returns ''.
+export function linkifyWacchoi(name) {
+  if (!name) return ''
+  // Match against the formatted text once (not via extractWacchoi, which would
+  // re-run formatName) so the token and the rendered text stay in lockstep.
+  const escaped = escapeHtml(formatName(name))
+  const token = escaped.match(WACCHOI_RE)?.[1]
+  if (!token) return escaped
+  // Replace only the first occurrence of the token (String first-arg replace).
+  return escaped.replace(
+    token,
+    `<span class="wacchoi-badge" data-wacchoi="${token}">${token}</span>`,
+  )
 }
 
 // Build a Map<resNum, { wacchoi, total, order, colorLevel }> from the res array.
