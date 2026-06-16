@@ -20,8 +20,9 @@ use std::collections::HashMap;
 
 // End-of-thread thresholds (spec ch.7). Status is derived from res_count only;
 // dat byte size is no longer used for status (removed: dat_bytes, DAT_WARN, DAT_DEAD).
+// RES_DEAD=1002 matches sentinel's resDeadThreshold (1000/1001 are warned, not dead).
 const RES_WARN: i64 = 980;
-const RES_DEAD: i64 = 1000;
+const RES_DEAD: i64 = 1002;
 
 /// The reload/prefetch gate: fetch the dat only when subject.txt proves the thread grew past
 /// the count we already hold in the blob. When subject is unavailable or the thread is absent
@@ -253,8 +254,8 @@ pub fn count_blob_posts(
 }
 
 /// Derives thread status from res_count alone (dat byte size is not used).
-/// dead  = 1000 or more posts (thread is full).
-/// warned = 980..999 (approaching the limit).
+/// dead   = 1002 or more posts (thread is full; matches sentinel resDeadThreshold=1002).
+/// warned = 980..=1001 (danger zone: approaching or nominally over the 1000-res mark).
 /// active = below 980.
 pub fn compute_status(res_count: i64) -> &'static str {
     if res_count >= RES_DEAD {
@@ -350,5 +351,29 @@ mod tests {
             threads.is_empty(),
             "all-archived board must yield empty list so no 5ch request is made"
         );
+    }
+
+    // --- compute_status threshold tests (sentinel parity) ---
+
+    /// Below RES_WARN: active.
+    #[test]
+    fn compute_status_active_below_warn() {
+        assert_eq!(compute_status(0), "active");
+        assert_eq!(compute_status(979), "active");
+    }
+
+    /// At and above RES_WARN but below RES_DEAD: warned.
+    #[test]
+    fn compute_status_warned_range() {
+        assert_eq!(compute_status(980), "warned");
+        assert_eq!(compute_status(1000), "warned"); // was wrongly "dead" before the fix
+        assert_eq!(compute_status(1001), "warned"); // sentinel resDeadThreshold-1
+    }
+
+    /// At and above RES_DEAD (1002): dead (matches sentinel resDeadThreshold=1002).
+    #[test]
+    fn compute_status_dead_at_1002() {
+        assert_eq!(compute_status(1002), "dead");
+        assert_eq!(compute_status(1024), "dead");
     }
 }

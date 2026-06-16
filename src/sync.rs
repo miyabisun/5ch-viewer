@@ -81,8 +81,11 @@ async fn run_once(state: &AppState) -> Result<(), AppError> {
 fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entries: &[SubjectEntry]) {
     let found = entries.iter().find(|e| e.thread_id == w.thread_id);
 
-    // Reflect the state from subject. If absent from subject, treat as dropped.
-    let is_dead = match found {
+    // Reflect the state from subject. If absent from subject, treat as dropped (dead).
+    // in_danger = true when status is warned or dead (res>=980) OR the thread has vanished
+    // from subject.txt. At this point we start looking for the next thread in subject.
+    // (Matches sentinel's behaviour: warned branch at res>=980 triggers findNextThread.)
+    let in_danger = match found {
         Some(e) => {
             let status = compute_status(e.res_count);
             let conn = state.db.lock().unwrap();
@@ -95,7 +98,8 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
             ) {
                 tracing::error!("[sync] update {server}/{board}/{}: {err}", w.thread_id);
             }
-            status == "dead"
+            // Enter danger zone at warned (res>=980), not only at dead.
+            status == "warned" || status == "dead"
         }
         None => {
             let conn = state.db.lock().unwrap();
@@ -110,11 +114,12 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
         }
     };
 
-    if !is_dead {
+    if !in_danger {
         return;
     }
 
-    // The thread ended, so look for the next one. Prefer the known title, otherwise take it from subject.
+    // In the danger zone: look for the next thread in subject.
+    // Prefer the known title from the DB; fall back to what subject reports.
     let title = if !w.title.is_empty() {
         w.title.clone()
     } else {
@@ -124,6 +129,8 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
         return;
     }
 
+    // find_next_thread does a pure string match against the already-fetched subject entries —
+    // no additional 5ch HTTP requests. None = next thread not yet posted; skip silently.
     if let Some(next) = find_next_thread(&title, entries) {
         let conn = state.db.lock().unwrap();
         let board_name: String = conn
@@ -133,8 +140,10 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
                 |r| r.get(0),
             )
             .unwrap_or_else(|_| board.to_string());
-        // Auto-add inheriting the rating (ignore if it already exists).
-        if let Err(err) = conn.execute(
+        // INSERT OR IGNORE prevents duplicates structurally; the affected-row count tells us
+        // whether this was a new registration (rating inherited from the current thread,
+        // viewer-specific) or an already-registered next thread (skipped, no log noise).
+        match conn.execute(
             "INSERT OR IGNORE INTO favorites
              (server, board, thread_id, board_name, title, res_count, rating)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -142,23 +151,52 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
                 server, board, next.thread_id, board_name, next.title, next.res_count, w.rating
             ],
         ) {
-            tracing::error!("[sync] auto-add next {server}/{board}/{}: {err}", next.thread_id);
-            return;
+            Err(err) => {
+                tracing::error!("[sync] auto-add next {server}/{board}/{}: {err}", next.thread_id);
+            }
+            Ok(0) => tracing::debug!("[sync] next thread already registered: {}", next.title),
+            Ok(_) => tracing::info!("[sync] next thread added: {} -> {}", title, next.title),
         }
-        tracing::info!("[sync] next thread added: {} -> {}", title, next.title);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::config::Config;
     use crate::db::SCHEMA;
+    use crate::goch::subject::SubjectEntry;
+    use crate::state::AppState;
     use rusqlite::{Connection, params};
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
 
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         conn.execute_batch(SCHEMA).unwrap();
         conn
+    }
+
+    fn make_state(conn: Connection) -> AppState {
+        AppState {
+            db: Arc::new(Mutex::new(conn)),
+            http: reqwest::Client::new(),
+            config: Config {
+                port: 3000,
+                base_path: String::new(),
+                db_path: ":memory:".to_string(),
+                goch_base_url: String::new(),
+            },
+            inflight: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    fn subject_entry(thread_id: &str, title: &str, res_count: i64) -> SubjectEntry {
+        SubjectEntry {
+            thread_id: thread_id.to_string(),
+            title: title.to_string(),
+            res_count,
+        }
     }
 
     fn insert_favorite(conn: &Connection, thread_id: &str, title: &str, status: &str, archived: i64) {
@@ -284,5 +322,206 @@ mod tests {
 
         // Only 1001 (active) and 1002 (warned) pass: dead and archived are excluded.
         assert_eq!(ids, vec!["1001", "1002"]);
+    }
+
+    // --- process_thread warned-trigger tests ---
+
+    fn insert_fav_with_rating(
+        conn: &Connection,
+        thread_id: &str,
+        title: &str,
+        status: &str,
+        rating: i64,
+    ) {
+        conn.execute(
+            "INSERT INTO favorites
+             (thread_id, server, board, board_name, title, status, archived, rating)
+             VALUES (?1, 'egg', 'applism', '板', ?2, ?3, 0, ?4)",
+            params![thread_id, title, status, rating],
+        )
+        .unwrap();
+    }
+
+    /// Regression: a thread at warned (res=980..1001) must trigger next-thread auto-add.
+    /// Previously only dead threads triggered this; warned threads were silently skipped.
+    #[test]
+    fn process_thread_warned_triggers_next_thread_registration() {
+        let conn = setup();
+        // Current thread at res=980 (warned zone).
+        insert_fav_with_rating(&conn, "1000000001", "ブルアカ Part5862", "active", 3);
+
+        let state = make_state(conn);
+        let w = super::Watch {
+            server: "egg".to_string(),
+            board: "applism".to_string(),
+            thread_id: "1000000001".to_string(),
+            title: "ブルアカ Part5862".to_string(),
+            rating: 3,
+        };
+        let entries = vec![
+            subject_entry("1000000001", "ブルアカ Part5862", 980),
+            subject_entry("1000000002", "ブルアカ Part5863", 5),
+        ];
+
+        super::process_thread(&state, "egg", "applism", &w, &entries);
+
+        let conn = state.db.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "next thread must be auto-added when current thread is warned");
+
+        let next_title: String = conn
+            .query_row(
+                "SELECT title FROM favorites WHERE thread_id='1000000002'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(next_title, "ブルアカ Part5863");
+    }
+
+    /// Rating must be inherited from the current thread when the next thread is auto-added.
+    #[test]
+    fn process_thread_next_thread_inherits_rating() {
+        let conn = setup();
+        insert_fav_with_rating(&conn, "1000000001", "ブルアカ Part5862", "active", 5);
+
+        let state = make_state(conn);
+        let w = super::Watch {
+            server: "egg".to_string(),
+            board: "applism".to_string(),
+            thread_id: "1000000001".to_string(),
+            title: "ブルアカ Part5862".to_string(),
+            rating: 5,
+        };
+        let entries = vec![
+            subject_entry("1000000001", "ブルアカ Part5862", 995),
+            subject_entry("1000000002", "ブルアカ Part5863", 1),
+        ];
+
+        super::process_thread(&state, "egg", "applism", &w, &entries);
+
+        let conn = state.db.lock().unwrap();
+        let rating: i64 = conn
+            .query_row(
+                "SELECT rating FROM favorites WHERE thread_id='1000000002'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rating, 5, "next thread must inherit rating from the current thread");
+    }
+
+    /// If the next thread is already in favorites, INSERT OR IGNORE must not create a duplicate.
+    #[test]
+    fn process_thread_does_not_duplicate_already_registered_next() {
+        let conn = setup();
+        insert_fav_with_rating(&conn, "1000000001", "ブルアカ Part5862", "active", 3);
+        // Next thread already registered.
+        insert_fav_with_rating(&conn, "1000000002", "ブルアカ Part5863", "active", 0);
+
+        let count_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count_before, 2);
+
+        let state = make_state(conn);
+        let w = super::Watch {
+            server: "egg".to_string(),
+            board: "applism".to_string(),
+            thread_id: "1000000001".to_string(),
+            title: "ブルアカ Part5862".to_string(),
+            rating: 3,
+        };
+        let entries = vec![
+            subject_entry("1000000001", "ブルアカ Part5862", 990),
+            subject_entry("1000000002", "ブルアカ Part5863", 10),
+        ];
+
+        super::process_thread(&state, "egg", "applism", &w, &entries);
+
+        let conn = state.db.lock().unwrap();
+        let count_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count_after, 2, "already-registered next thread must not be duplicated");
+    }
+
+    /// When next thread is not yet posted in subject, nothing is registered.
+    #[test]
+    fn process_thread_does_not_register_when_next_absent_from_subject() {
+        let conn = setup();
+        insert_fav_with_rating(&conn, "1000000001", "ブルアカ Part5862", "active", 2);
+
+        let state = make_state(conn);
+        let w = super::Watch {
+            server: "egg".to_string(),
+            board: "applism".to_string(),
+            thread_id: "1000000001".to_string(),
+            title: "ブルアカ Part5862".to_string(),
+            rating: 2,
+        };
+        // Subject only contains the current thread; no Part5863 yet.
+        let entries = vec![subject_entry("1000000001", "ブルアカ Part5862", 985)];
+
+        super::process_thread(&state, "egg", "applism", &w, &entries);
+
+        let conn = state.db.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "next thread must not be registered when absent from subject");
+    }
+
+    /// Threads below res=980 (active) must not trigger next-thread search.
+    #[test]
+    fn process_thread_active_does_not_trigger_next_thread_search() {
+        let conn = setup();
+        insert_fav_with_rating(&conn, "1000000001", "ブルアカ Part5862", "active", 0);
+
+        let state = make_state(conn);
+        let w = super::Watch {
+            server: "egg".to_string(),
+            board: "applism".to_string(),
+            thread_id: "1000000001".to_string(),
+            title: "ブルアカ Part5862".to_string(),
+            rating: 0,
+        };
+        let entries = vec![
+            subject_entry("1000000001", "ブルアカ Part5862", 500), // active: below 980
+            subject_entry("1000000002", "ブルアカ Part5863", 1),
+        ];
+
+        super::process_thread(&state, "egg", "applism", &w, &entries);
+
+        let conn = state.db.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "next thread must NOT be registered when current thread is active");
+    }
+
+    /// process_thread must not make any 5ch HTTP calls: it only uses the subject entries
+    /// passed in as a slice (already fetched once per board in run_once). Verified
+    /// structurally: the function signature takes &[SubjectEntry], no http client arg.
+    /// This test runs without any network access and completes without panicking.
+    #[test]
+    fn process_thread_uses_no_additional_http_requests() {
+        let conn = setup();
+        insert_fav_with_rating(&conn, "1000000001", "ブルアカ Part5862", "active", 0);
+
+        let state = make_state(conn);
+        let w = super::Watch {
+            server: "egg".to_string(),
+            board: "applism".to_string(),
+            thread_id: "1000000001".to_string(),
+            title: "ブルアカ Part5862".to_string(),
+            rating: 0,
+        };
+        // Offline entries — no real 5ch access. Must not panic or block.
+        let entries = vec![subject_entry("1000000001", "ブルアカ Part5862", 980)];
+        super::process_thread(&state, "egg", "applism", &w, &entries);
+        // If we reach here, no network call was attempted (no timeout, no panic).
     }
 }

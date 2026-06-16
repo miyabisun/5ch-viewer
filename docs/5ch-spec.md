@@ -115,7 +115,15 @@
 ## スレッドの終了
 
 - 1 スレッド最大 **1000 レス**で書き込み終了。dat サイズ上限の目安は **約 1024KB**。
-- 本アプリの閾値: 警告 = res ≥ 980 または 900KB、終了 = res ≥ 1000 または 1024KB。
+- 本アプリの閾値（sentinel `resWarningThreshold`/`resDeadThreshold` 準拠）:
+  - **警告（warned）** = res ≥ 980（sentinel resWarningThreshold=980 と一致）
+  - **終了（dead）** = res ≥ 1002（sentinel resDeadThreshold=1002 準拠。1000/1001 は warned 扱い）
+  - 次スレ探索・登録は **warned 時点（res≥980）から**行う（sentinel 同様の早期追尾）。
+- **size 次元について（将来メモ）**: sentinel は危険域判定に dat サイズ次元
+  （warned = 900KB、dead = 1024KB）と dat 落ち（404 HEAD）も使うが、
+  本アプリは **5ch アクセス削減を優先**し当面 res_count のみで判定する。
+  荒らし対策（連レスによる 1000 到達加速・dat 1024KB 化）が必要になれば
+  size 次元（HEAD で Content-Length 取得）を追加する。
 - ※ したらば等は 1000 超（〜10000）を扱う掲示板もあるが、本アプリは **5ch 専用**。
 
 ## 次スレの慣習
