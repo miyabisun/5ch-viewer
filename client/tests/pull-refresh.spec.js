@@ -320,6 +320,119 @@ test.describe('pull-to-refresh (touch)', () => {
     }
   })
 
+  test('after pull-to-refresh: old reses have no .unread bar, new reses do', async ({ page }) => {
+    // Initial dat: 40 reses, all unread (read_res=0). Must be long enough to scroll.
+    const INITIAL_COUNT = 40
+    const ADDED_COUNT = 2 // 2 new reses added after refresh
+
+    let reloadCallCount = 0
+    const initialDat = {
+      title: FAV.title,
+      res_count: INITIAL_COUNT,
+      read_res: 0,
+      status: 'active',
+      res: Array.from({ length: INITIAL_COUNT }, (_, i) => ({
+        num: i + 1,
+        name: '名無し',
+        mail: '',
+        date: `2025 ID:x${i}`,
+        body: `本文${i + 1}`,
+      })),
+    }
+    const refreshedDat = {
+      title: FAV.title,
+      res_count: INITIAL_COUNT + ADDED_COUNT,
+      read_res: 0,
+      status: 'active',
+      res: Array.from({ length: INITIAL_COUNT + ADDED_COUNT }, (_, i) => ({
+        num: i + 1,
+        name: '名無し',
+        mail: '',
+        date: `2025 ID:x${i}`,
+        body: `本文${i + 1}`,
+      })),
+    }
+
+    page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+    page.route('**/api/favorites/refresh', (route) =>
+      route.fulfill({ json: { ok: true, boards: 0 } }),
+    )
+    // First dat call returns initial dat; after reload it returns refreshed dat.
+    let datCallCount = 0
+    page.route(/\/api\/favorites\/.+\/dat$/, (route) => {
+      datCallCount++
+      route.fulfill({ json: datCallCount === 1 ? initialDat : refreshedDat })
+    })
+    page.route(/\/api\/favorites\/.+\/reload$/, (route) => {
+      reloadCallCount++
+      route.fulfill({ json: { res_count: INITIAL_COUNT + ADDED_COUNT, read_res: 0, status: 'active' } })
+    })
+    page.route(/\/api\/favorites\/.+\/progress$/, (route) => {
+      if (route.request().method() === 'GET') {
+        route.fulfill({ json: { read_res: 0 } })
+      } else {
+        route.fulfill({ json: { ok: true } })
+      }
+    })
+
+    await page.goto(THREAD_PATH)
+    // Wait for initial reses to render.
+    await expect(page.getByText(`本文${INITIAL_COUNT}`, { exact: true })).toBeVisible()
+
+    // Scroll to the bottom to arm the pull-to-refresh gesture.
+    await scrollToBottom(page)
+    // Wait for the 0.5 s unlock.
+    await page.waitForTimeout(600)
+
+    const reloadsBefore = reloadCallCount
+
+    // Trigger pull-to-refresh.
+    await swipe(page, '.thread-body', { dy: -120 })
+
+    // Wait for the refresh to complete (new reses appear).
+    await expect(page.getByText(`本文${INITIAL_COUNT + ADDED_COUNT}`, { exact: true })).toBeVisible()
+    expect(reloadCallCount).toBeGreaterThan(reloadsBefore)
+
+    // Old reses (num 1..INITIAL_COUNT) must NOT have the .unread class.
+    for (let i = 1; i <= INITIAL_COUNT; i++) {
+      await expect(page.locator(`.res[data-res="${i}"]`)).not.toHaveClass(/unread/)
+    }
+    // New reses (num INITIAL_COUNT+1..INITIAL_COUNT+ADDED_COUNT) MUST have .unread.
+    for (let i = INITIAL_COUNT + 1; i <= INITIAL_COUNT + ADDED_COUNT; i++) {
+      await expect(page.locator(`.res[data-res="${i}"]`)).toHaveClass(/unread/)
+    }
+  })
+
+  test('opening a thread without scrolling shows unread bar on unread reses (regression)', async ({ page }) => {
+    // FAV has read_res=0, so all reses start as unread.
+    const COUNT = 5
+    page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+    page.route('**/api/favorites/refresh', (route) =>
+      route.fulfill({ json: { ok: true, boards: 0 } }),
+    )
+    page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+      route.fulfill({ json: datResponse(COUNT) }),
+    )
+    page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+      route.fulfill({ json: { res_count: COUNT, read_res: 0, status: 'active' } }),
+    )
+    page.route(/\/api\/favorites\/.+\/progress$/, (route) => {
+      if (route.request().method() === 'GET') {
+        route.fulfill({ json: { read_res: 0 } })
+      } else {
+        route.fulfill({ json: { ok: true } })
+      }
+    })
+
+    await page.goto(THREAD_PATH)
+    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
+
+    // All reses must have .unread since read_res=0.
+    for (let i = 1; i <= COUNT; i++) {
+      await expect(page.locator(`.res[data-res="${i}"]`)).toHaveClass(/unread/)
+    }
+  })
+
   test('modal open: pull-to-refresh gesture is suppressed', async ({ page }) => {
     let reloadCount = 0
     const dat = {

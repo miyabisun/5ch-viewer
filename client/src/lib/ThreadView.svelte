@@ -8,7 +8,7 @@
   import Modal from './Modal.svelte'
   import { pullRefresh, PULL_THRESHOLD_PX } from './pullRefresh.js'
 
-  let { fav, onback, ngIds = new Set(), onngchange = () => {}, ngWacchoi = [], onngwacchoichange = () => {} } = $props()
+  let { fav, onback, onprogress = () => {}, ngIds = new Set(), onngchange = () => {}, ngWacchoi = [], onngwacchoichange = () => {} } = $props()
 
   let data = $state(null)
   // Surfaced when the auto-refresh (reload) fails. The stored dat is still shown
@@ -23,6 +23,10 @@
   let pullPhase = $state('idle') // 'idle' | 'dragging'
   // Read position (max res number that has passed through the viewport). Initialized from the saved read_res (only on first mount).
   let maxRead = $state(untrack(() => fav.read_res))
+  // Unread-bar baseline: reses with num > readBaseline show the unread left-border.
+  // Initialized to fav.read_res like maxRead. Raised on pull-to-refresh so that
+  // pre-refresh reses lose their bar and only newly-added reses stay unread.
+  let readBaseline = $state(untrack(() => fav.read_res))
   // Restore-on-open guard: scroll to the saved read position only after the first
   // successful load, never after a manual reload.
   let restored = $state(false)
@@ -49,9 +53,17 @@
 
   // Manual refresh triggered by the pull-to-refresh gesture.
   // Guards against double-fire via the `refreshing` flag.
+  // Before loading, advance readBaseline (and maxRead) to the last visible res
+  // number so that all currently-shown reses lose their unread bar and only
+  // newly-added reses (num > old last) will show it after the fetch.
   async function triggerRefresh() {
     if (refreshing) return
     refreshing = true
+    // Advance baseline to the last res currently in data (user reached the bottom
+    // to trigger this gesture, so those reses are considered read).
+    const lastNum = data?.res?.length ? data.res[data.res.length - 1].num : maxRead
+    readBaseline = Math.max(readBaseline, lastNum)
+    maxRead = Math.max(maxRead, lastNum)
     try {
       await load()
     } finally {
@@ -139,9 +151,12 @@
   }
 
   // Debounced send (2s after scrolling stops).
+  // onprogress fires immediately (no debounce) so the list pane updates in real time.
   let timer
   $effect(() => {
     const n = maxRead
+    // Notify the parent immediately so the list unread badge reflects the new position.
+    onprogress(n)
     clearTimeout(timer)
     timer = setTimeout(() => {
       api.setProgress(fav.server, fav.board, fav.thread_id, n).catch(() => {})
@@ -758,7 +773,7 @@
     onDrag: (px, phase) => { pullPx = px; pullPhase = phase },
   })}>
     {#each data.res as r (r.num)}
-      <div class="res" use:track={r.num} class:unread={r.num > fav.read_res}>
+      <div class="res" use:track={r.num} class:unread={r.num > readBaseline}>
         {@render resBody(r)}
       </div>
     {/each}

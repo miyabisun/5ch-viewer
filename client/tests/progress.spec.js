@@ -88,6 +88,50 @@ test.describe('phone: scroll fallback when target res is not rendered', () => {
   })
 })
 
+test.describe('PC: unread badge decreases as user scrolls (onprogress)', () => {
+  test.use({ viewport: { width: 1024, height: 800 } })
+
+  test('scrolling to lower reses immediately reduces the unread badge in the list pane', async ({
+    page,
+  }) => {
+    // FAV has res_count=30, read_res=28 → unread badge = 2 initially.
+    await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
+    await page.route('**/api/favorites/refresh', (route) =>
+      route.fulfill({ json: { ok: true, boards: 0 } }),
+    )
+    await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+      route.fulfill({ json: datResponse() }),
+    )
+    await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+      route.fulfill({ json: { res_count: COUNT, read_res: FAV.read_res, status: 'active' } }),
+    )
+    await page.route(/\/api\/favorites\/.+\/progress$/, (route) => {
+      if (route.request().method() === 'GET') {
+        route.fulfill({ json: { read_res: FAV.read_res } })
+      } else {
+        route.fulfill({ json: { ok: true } })
+      }
+    })
+
+    await page.goto('/')
+    // Wait for the list to render and click the thread to open it.
+    await expect(page.getByText(FAV.title)).toBeVisible()
+    // Initially unread badge = 30 - 28 = 2 (ThreadRow badge in list pane).
+    await expect(page.locator('.list-pane .unread')).toHaveText('2')
+
+    // Open the thread in the right pane.
+    await page.getByText(FAV.title).click()
+    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
+
+    // Scroll the last res (30) into view inside the detail-pane to trigger IntersectionObserver.
+    await page.locator('.res[data-res="30"]').scrollIntoViewIfNeeded()
+
+    // The unread badge (ThreadRow .unread span, inside .list-pane) should drop to 0.
+    // Use .list-pane .unread to avoid matching .res.unread elements in the detail pane.
+    await expect(page.locator('.list-pane .unread')).toHaveCount(0)
+  })
+})
+
 test('opening a thread restores the saved read position (auto-scroll)', async ({
   page,
 }) => {

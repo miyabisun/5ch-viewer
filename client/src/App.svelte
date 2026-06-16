@@ -129,6 +129,23 @@
   const threadKey = $derived(
     current ? `${current.server}/${current.board}/${current.thread_id}` : null,
   )
+
+  // Immediately reflect the read progress into the favorites list so the unread
+  // badge in ThreadRow updates without waiting for a full re-fetch.
+  // Called by ThreadView via the onprogress prop every time maxRead advances.
+  function onProgress(readRes) {
+    if (!current) return
+    const i = favorites.findIndex(
+      (f) => f.server === current.server && f.board === current.board && f.thread_id === current.thread_id,
+    )
+    if (i < 0) return // thread not in favorites list (minimal fav fallback)
+    const cur = favorites[i].read_res ?? 0
+    const next = Math.max(cur, readRes)
+    if (next === cur) return
+    // Replace the element (not mutate) so Svelte's reactivity picks up the change
+    // and ThreadRow's derived `unread = res_count - read_res` recomputes.
+    favorites[i] = { ...favorites[i], read_res: next }
+  }
 </script>
 
 <NavBar {page} onnavigate={navigate} />
@@ -157,7 +174,7 @@
   <section class="pane detail-pane">
     {#if current}
       {#key threadKey}
-        <ThreadView fav={current} onback={back} {ngIds} onngchange={loadNgIds} {ngWacchoi} onngwacchoichange={loadNgWacchoi} />
+        <ThreadView fav={current} onback={back} onprogress={onProgress} {ngIds} onngchange={loadNgIds} {ngWacchoi} onngwacchoichange={loadNgWacchoi} />
       {/key}
     {:else}
       <p class="placeholder">スレッドを選択してください</p>
