@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { extractWacchoi, wacchoiEnabled, buildWacchoiStats, linkifyWacchoi } from './wacchoi.js'
+import { extractWacchoi, wacchoiEnabled, buildWacchoiStats, linkifyWacchoi, extractWacchoiSuffix, wacchoiWeekKey } from './wacchoi.js'
 
 // ---------------------------------------------------------------------------
 // linkifyWacchoi
@@ -295,5 +295,108 @@ describe('buildWacchoiStats', () => {
   it('total=15 -> colorLevel l5', () => {
     const stats = buildWacchoiStats(manyRes(15), true)
     expect(stats.get(1)?.colorLevel).toBe('l5')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// extractWacchoiSuffix
+// ---------------------------------------------------------------------------
+describe('extractWacchoiSuffix', () => {
+  it('extracts suffix from a full name string (with HTML tags)', () => {
+    const raw = 'iPhone774G </b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>'
+    expect(extractWacchoiSuffix(raw)).toBe('83IP')
+  })
+
+  it('extracts suffix from a bare token (no parens)', () => {
+    // Already-extracted token like '7bb6-83IP' — common when coming from data-wacchoi.
+    expect(extractWacchoiSuffix('7bb6-83IP')).toBe('83IP')
+  })
+
+  it('extracts suffix from a formatted name (no HTML tags)', () => {
+    const formatted = 'iPhone774G (ﾜｯﾁｮｲ Ab12-Cd34 [::1])'
+    expect(extractWacchoiSuffix(formatted)).toBe('Cd34')
+  })
+
+  it('returns null for a bare token where the suffix is not 4 chars', () => {
+    // 'abc-12' -> suffix '12' (only 2 chars) -> null
+    expect(extractWacchoiSuffix('abc-12')).toBeNull()
+    // 'abcd-12345' -> suffix '12345' (5 chars) -> null
+    expect(extractWacchoiSuffix('abcd-12345')).toBeNull()
+  })
+
+  it('returns null for a bare token with no hyphen', () => {
+    expect(extractWacchoiSuffix('nohyphen')).toBeNull()
+  })
+
+  it('returns null when there is no wacchoi token in a full name', () => {
+    expect(extractWacchoiSuffix('名無しさん')).toBeNull()
+  })
+
+  it('returns null for null input', () => {
+    expect(extractWacchoiSuffix(null)).toBeNull()
+  })
+
+  it('returns null for empty string', () => {
+    expect(extractWacchoiSuffix('')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// wacchoiWeekKey
+// ---------------------------------------------------------------------------
+describe('wacchoiWeekKey', () => {
+  // Thursday itself -> same day is the week start.
+  it('Thursday date returns itself as the week key', () => {
+    // 2025/01/09 is a Thursday.
+    expect(wacchoiWeekKey('2025/01/09(木) 00:00:00.00')).toBe('2025/01/09')
+  })
+
+  // Wednesday just before next Thursday -> falls back to the previous Thursday.
+  it('Wednesday date returns the preceding Thursday', () => {
+    // 2025/01/08(水) -> previous Thursday was 2025/01/02.
+    expect(wacchoiWeekKey('2025/01/08(水) 23:59:59.99')).toBe('2025/01/02')
+  })
+
+  // The same Thursday → week key must differ from the preceding Wednesday.
+  it('Thursday 00:00 starts a new week (different from the preceding Wednesday)', () => {
+    const thu = wacchoiWeekKey('2025/01/09(木) 00:00:00.00')
+    const wed = wacchoiWeekKey('2025/01/08(水) 23:59:59.99')
+    expect(thu).not.toBe(wed)
+    expect(thu).toBe('2025/01/09')
+    expect(wed).toBe('2025/01/02')
+  })
+
+  // Month boundary: 2025/01/01 (Wednesday) -> previous Thursday was 2024/12/26.
+  it('month boundary: 2025/01/01(Wed) returns 2024/12/26', () => {
+    expect(wacchoiWeekKey('2025/01/01(水) 00:00:00.00')).toBe('2024/12/26')
+  })
+
+  // Year boundary: 2025/01/02 (Thursday) -> itself.
+  it('year boundary: 2025/01/02(Thu) returns 2025/01/02', () => {
+    expect(wacchoiWeekKey('2025/01/02(木) 00:00:00.00')).toBe('2025/01/02')
+  })
+
+  // Parse failure cases -> null (safe side).
+  it('returns null for null input', () => {
+    expect(wacchoiWeekKey(null)).toBeNull()
+  })
+
+  it('returns null for empty string', () => {
+    expect(wacchoiWeekKey('')).toBeNull()
+  })
+
+  it('returns null for a completely invalid date string', () => {
+    expect(wacchoiWeekKey('not-a-date')).toBeNull()
+  })
+
+  it('returns null for a date with wrong format (missing leading slash)', () => {
+    // Partial match would not trigger because leading digits are missing.
+    expect(wacchoiWeekKey('2025-01-09')).toBeNull()
+  })
+
+  // Handles the format without day-of-week parentheses.
+  it('handles format without day-of-week parentheses (2025/01/09 12:34:56)', () => {
+    // 2025/01/09 is Thursday.
+    expect(wacchoiWeekKey('2025/01/09 12:34:56')).toBe('2025/01/09')
   })
 })

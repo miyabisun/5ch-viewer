@@ -48,6 +48,15 @@ pub const SCHEMA: &str = "
         ng_id      TEXT PRIMARY KEY,
         created_at INTEGER DEFAULT (strftime('%s','now'))
     );
+
+    CREATE TABLE IF NOT EXISTS ng_wacchoi (
+        suffix     TEXT NOT NULL,   -- 4-char UA-derived suffix (zzzz after the hyphen)
+        board      TEXT NOT NULL,
+        week_key   TEXT NOT NULL,   -- Thursday-anchored week key (opaque string from client)
+        wacchoi    TEXT,            -- full display token xxyy-zzzz (optional)
+        created_at INTEGER DEFAULT (strftime('%s','now')),
+        PRIMARY KEY (suffix, board, week_key)
+    );
 ";
 
 pub fn open(path: &str) -> Connection {
@@ -130,6 +139,45 @@ mod tests {
         let conn = open_memory();
         // Running SCHEMA twice must not fail (all CREATE IF NOT EXISTS).
         conn.execute_batch(SCHEMA).unwrap();
+    }
+
+    #[test]
+    fn ng_wacchoi_table_exists_and_accepts_rows() {
+        let conn = open_memory();
+        conn.execute(
+            "INSERT INTO ng_wacchoi (suffix, board, week_key, wacchoi)
+             VALUES ('83IP', 'applism', '2025/12/25', '7bb6-83IP')",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ng_wacchoi", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // INSERT OR IGNORE must be idempotent (PRIMARY KEY conflict).
+        conn.execute(
+            "INSERT OR IGNORE INTO ng_wacchoi (suffix, board, week_key, wacchoi)
+             VALUES ('83IP', 'applism', '2025/12/25', '7bb6-83IP')",
+            [],
+        )
+        .unwrap();
+        let count2: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ng_wacchoi", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count2, 1);
+
+        // Different suffix in the same board+week is a separate row.
+        conn.execute(
+            "INSERT INTO ng_wacchoi (suffix, board, week_key)
+             VALUES ('ZZZZ', 'applism', '2025/12/25')",
+            [],
+        )
+        .unwrap();
+        let count3: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ng_wacchoi", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count3, 2);
     }
 
     #[test]

@@ -52,6 +52,16 @@ export const api = {
   removeNgId: (ngId) => request('DELETE', `/api/ng-ids/${encodeURIComponent(ngId)}`),
   idSearch: (s, b, ngId) =>
     request('GET', `/api/boards/${s}/${b}/id-search?id=${encodeURIComponent(ngId)}`),
+  listNgWacchoi: () => request('GET', '/api/ng-wacchoi'),
+  addNgWacchoi: ({ suffix, board, week_key, wacchoi }) =>
+    request('POST', '/api/ng-wacchoi', { suffix, board, week_key, wacchoi }),
+  removeNgWacchoi: ({ suffix, board, week_key }) =>
+    request(
+      'DELETE',
+      `/api/ng-wacchoi?suffix=${encodeURIComponent(suffix)}&board=${encodeURIComponent(board)}&week_key=${encodeURIComponent(week_key)}`,
+    ),
+  wacchoiSearch: (s, b, suffix) =>
+    request('GET', `/api/boards/${s}/${b}/wacchoi-search?suffix=${encodeURIComponent(suffix)}`),
 }
 
 // Reliably send read progress on page unload (via sendBeacon).

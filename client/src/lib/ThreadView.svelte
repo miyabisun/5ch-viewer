@@ -3,11 +3,11 @@
   import { api, beaconProgress } from './api.js'
   import { formatName } from './name.js'
   import { stripId, buildIdStats } from './id.js'
-  import { buildWacchoiStats, wacchoiEnabled, linkifyWacchoi } from './wacchoi.js'
+  import { buildWacchoiStats, wacchoiEnabled, linkifyWacchoi, extractWacchoiSuffix, wacchoiWeekKey } from './wacchoi.js'
   import { copyText } from './clipboard.js'
   import Modal from './Modal.svelte'
 
-  let { fav, onback, ngIds = new Set(), onngchange = () => {} } = $props()
+  let { fav, onback, ngIds = new Set(), onngchange = () => {}, ngWacchoi = [], onngwacchoichange = () => {} } = $props()
 
   let data = $state(null)
   // Surfaced when the auto-refresh (reload) fails. The stored dat is still shown
@@ -326,7 +326,7 @@
     function onEnd(e) {
       if (ignore || !locked || !horizontal) return
       // Any modal open: the gesture belongs to the modal, not the thread.
-      if (anchorRoot != null || idListId != null || idMenu != null || wacchoiListKey != null || wacchoiMenu != null) return
+      if (anchorRoot != null || idListId != null || idMenu != null || wacchoiListKey != null || wacchoiMenu != null || idSearchLoading || idSearchResult != null || wacchoiSearchLoading || wacchoiSearchResult != null) return
       const dx = e.changedTouches[0].clientX - startX
       const dy = e.changedTouches[0].clientY - startY
       if (dx >= 60 && Math.abs(dx) > Math.abs(dy) * 1.5) onback()
@@ -378,14 +378,25 @@
   })
 
   // --- Wacchoi right-click / long-press menu ---
-  // Menu state: the wacchoi string the menu acts on, or null (closed).
+  // Menu state: { wacchoi, date } for the active menu, or null (closed).
+  // Storing the res date at open time lets toggleNgWacchoi compute the week_key
+  // without needing to re-traverse the DOM.
   let wacchoiMenu = $state(null)
 
-  function openWacchoiMenu(wacchoi) {
-    wacchoiMenu = wacchoi
+  function openWacchoiMenu(wacchoi, date) {
+    wacchoiMenu = { wacchoi, date }
   }
   function closeWacchoiMenu() {
     wacchoiMenu = null
+  }
+
+  // Resolve the date string from the event target.
+  // The date is stored in the closest .name[data-date] ancestor span, which is
+  // always present in every render context (main list, anchor tree, id-list modal,
+  // wacchoi-list modal). This avoids depending on .res[data-res] which is only
+  // set on main-list divs via use:track.
+  function resDateFromTarget(target) {
+    return target.closest('.name[data-date]')?.dataset.date ?? null
   }
 
   // Right-click on the .name span: open the menu if the target is a wacchoi badge.
@@ -395,7 +406,8 @@
     const badge = e.target.closest('.wacchoi-badge')
     if (!badge) return
     e.preventDefault()
-    openWacchoiMenu(badge.dataset.wacchoi)
+    const date = resDateFromTarget(badge)
+    openWacchoiMenu(badge.dataset.wacchoi, date)
   }
 
   // Long-press detection for the wacchoi badge (touch devices, 500ms, same pattern as ID).
@@ -408,7 +420,8 @@
     wacchoiLongPressed = false
     wacchoiPressTimer = setTimeout(() => {
       wacchoiLongPressed = true
-      openWacchoiMenu(badge.dataset.wacchoi)
+      const date = resDateFromTarget(badge)
+      openWacchoiMenu(badge.dataset.wacchoi, date)
     }, 500)
   }
   function cancelWacchoiPress() {
@@ -419,6 +432,80 @@
   async function copyWacchoi(w) {
     await copyText('ワッチョイ ' + w)
     closeWacchoiMenu()
+  }
+
+  // True when the given wacchoi token, posted on the given date, is in the NG list
+  // for the current board + Thursday-anchored week. The single source of truth for
+  // the board+week-scoped match, shared by the menu state and the per-res NG filter.
+  // Returns false (safe side) when the suffix/week/wacchoi/date are unresolvable.
+  function isWacchoiNgFor(wacchoi, date) {
+    if (!wacchoi || !date) return false
+    const suffix = extractWacchoiSuffix(wacchoi)
+    const weekKey = wacchoiWeekKey(date)
+    if (!suffix || !weekKey) return false
+    return ngWacchoi.some(
+      (e) => e.suffix === suffix && e.board === fav.board && e.week_key === weekKey,
+    )
+  }
+
+  // Add or remove the wacchoi from the NG list. Calls onngwacchoichange to let the parent reload.
+  async function toggleNgWacchoi(wacchoi, date) {
+    const suffix = extractWacchoiSuffix(wacchoi)
+    const weekKey = wacchoiWeekKey(date)
+    if (!suffix || !weekKey) {
+      console.error('[ng-wacchoi] cannot compute suffix/weekKey', { wacchoi, date })
+      closeWacchoiMenu()
+      return
+    }
+    try {
+      if (isWacchoiNgFor(wacchoi, date)) {
+        await api.removeNgWacchoi({ suffix, board: fav.board, week_key: weekKey })
+      } else {
+        await api.addNgWacchoi({ suffix, board: fav.board, week_key: weekKey, wacchoi })
+      }
+      onngwacchoichange()
+    } catch (e) {
+      console.error('[ng-wacchoi]', e)
+    }
+    closeWacchoiMenu()
+  }
+
+  // Determine whether a res is NG by wacchoi (board + week-scoped suffix match).
+  // isWacchoiNgFor returns false on null suffix/week (date parse failure), so a
+  // non-wacchoi res or an unparseable date safely falls through to "not NG".
+  function isWacchoiNg(r) {
+    if (!wacchoiEnabledFlag) return false
+    return isWacchoiNgFor(resolveWacchoi(r), r.date)
+  }
+
+  // --- Wacchoi search ---
+  let wacchoiSearchLoading = $state(false)
+  let wacchoiSearchResult = $state(null) // null = closed, [] = empty result, [...] = results
+  let wacchoiSearchTarget = $state(null) // the suffix that was searched
+  const wacchoiSearchHits = $derived(
+    wacchoiSearchResult?.reduce((s, t) => s + t.res.length, 0) ?? 0,
+  )
+
+  async function startWacchoiSearch(wacchoi) {
+    closeWacchoiMenu()
+    const suffix = extractWacchoiSuffix(wacchoi)
+    if (!suffix) return
+    wacchoiSearchTarget = suffix
+    wacchoiSearchLoading = true
+    wacchoiSearchResult = null
+    try {
+      wacchoiSearchResult = await api.wacchoiSearch(fav.server, fav.board, suffix)
+    } catch (e) {
+      console.error('[wacchoi-search]', e)
+      wacchoiSearchResult = []
+    } finally {
+      wacchoiSearchLoading = false
+    }
+  }
+
+  function closeWacchoiSearch() {
+    wacchoiSearchResult = null
+    wacchoiSearchTarget = null
   }
 
   // --- ID right-click / long-press menu ---
@@ -542,6 +629,7 @@
     <span
       class="name {wNameColorCls}"
       role="presentation"
+      data-date={r.date}
       onclick={onBodyClick}
       oncontextmenu={onWacchoiContextMenu}
       onpointerdown={onWacchoiPointerDown}
@@ -580,7 +668,7 @@
 
 <!-- resHead + body snippet combined (used in main list). -->
 {#snippet resHeadAndBody(r)}
-  {@const ngd = r.id ? ngIds.has(r.id) : false}
+  {@const ngd = (r.id && ngIds.has(r.id)) || isWacchoiNg(r)}
   {#if ngd}
     <!-- NG post: header shown struck-through + muted, body hidden completely. -->
     <del class="ng">
@@ -687,13 +775,65 @@
 {#if wacchoiMenu != null}
   <Modal onclose={closeWacchoiMenu}>
     {#snippet header()}
-      <div class="menu-title">ﾜｯﾁｮｲ:{wacchoiMenu}</div>
+      <div class="menu-title">ﾜｯﾁｮｲ:{wacchoiMenu.wacchoi}</div>
     {/snippet}
     <div class="menu" data-testid="wacchoi-menu">
-      <button class="action" onclick={() => copyWacchoi(wacchoiMenu)}>コピー</button>
+      <button class="action" onclick={() => toggleNgWacchoi(wacchoiMenu.wacchoi, wacchoiMenu.date)}>
+        {isWacchoiNgFor(wacchoiMenu.wacchoi, wacchoiMenu.date) ? 'NGﾜｯﾁｮｲから削除' : 'NGﾜｯﾁｮｲに追加'}
+      </button>
+      <button class="action" onclick={() => copyWacchoi(wacchoiMenu.wacchoi)}>コピー</button>
+      <button class="action" onclick={() => startWacchoiSearch(wacchoiMenu.wacchoi)}>取得済みスレから検索</button>
     </div>
   </Modal>
 {/if}
+
+<!-- Shared board-search result modal (used by both ID and wacchoi search).
+     `loading`/`result`/`hits` are the per-search state; `label` is the term shown
+     in the title; `testid` keys the result container for E2E. -->
+{#snippet searchResultModal(loading, result, hits, label, testid, onclose)}
+  {#if loading || result != null}
+    <Modal {onclose}>
+      {#snippet header()}
+        <div class="menu-title">
+          {#if loading}
+            {label} を検索中…
+          {:else}
+            {label} の検索結果（{hits}件）
+          {/if}
+        </div>
+      {/snippet}
+      {#if !loading}
+        <div class="search-result" data-testid={testid}>
+          {#if result.length === 0}
+            <p class="search-empty">該当なし</p>
+          {:else}
+            {#each result as thread (thread.thread_id)}
+              <h3 class="search-thread-title">{thread.title}</h3>
+              {#each thread.res as r (r.num)}
+                <div class="res search-res">
+                  <span class="num">{r.num}</span>
+                  <span class="name">{formatName(r.name)}</span>
+                  <span class="date">{r.date}</span>
+                  <div class="body" role="presentation">{@html linkify(r.body)}</div>
+                </div>
+              {/each}
+            {/each}
+          {/if}
+        </div>
+      {/if}
+    </Modal>
+  {/if}
+{/snippet}
+
+<!-- Wacchoi search modal. -->
+{@render searchResultModal(
+  wacchoiSearchLoading,
+  wacchoiSearchResult,
+  wacchoiSearchHits,
+  `ﾜｯﾁｮｲ末尾:${wacchoiSearchTarget}`,
+  'wacchoi-search-result',
+  closeWacchoiSearch,
+)}
 
 <!-- ID right-click / long-press menu modal. -->
 {#if idMenu != null}
@@ -711,39 +851,15 @@
   </Modal>
 {/if}
 
-<!-- ID search modal: shows a loading notice while fetching, then the result list. -->
-{#if idSearchLoading || idSearchResult != null}
-  <Modal onclose={closeIdSearch}>
-    {#snippet header()}
-      <div class="menu-title">
-        {#if idSearchLoading}
-          ID:{idSearchTarget} を検索中…
-        {:else}
-          ID:{idSearchTarget} の検索結果（{idSearchHits}件）
-        {/if}
-      </div>
-    {/snippet}
-    {#if !idSearchLoading}
-      <div class="search-result" data-testid="id-search-result">
-        {#if idSearchResult.length === 0}
-          <p class="search-empty">該当なし</p>
-        {:else}
-          {#each idSearchResult as thread (thread.thread_id)}
-            <h3 class="search-thread-title">{thread.title}</h3>
-            {#each thread.res as r (r.num)}
-              <div class="res search-res">
-                <span class="num">{r.num}</span>
-                <span class="name">{formatName(r.name)}</span>
-                <span class="date">{r.date}</span>
-                <div class="body" role="presentation">{@html linkify(r.body)}</div>
-              </div>
-            {/each}
-          {/each}
-        {/if}
-      </div>
-    {/if}
-  </Modal>
-{/if}
+<!-- ID search modal. -->
+{@render searchResultModal(
+  idSearchLoading,
+  idSearchResult,
+  idSearchHits,
+  `ID:${idSearchTarget}`,
+  'id-search-result',
+  closeIdSearch,
+)}
 
 <style>
   /* Sticky title header. Sits below the global NavBar (sticky at top:0,

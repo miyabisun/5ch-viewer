@@ -81,3 +81,22 @@ pub struct IdSearchThread {
     pub title: String,
     pub res: Vec<Res>,
 }
+
+/// One NG wacchoi entry returned by the list endpoint.
+#[derive(Debug, Serialize)]
+pub struct NgWacchoi {
+    pub suffix: String,
+    pub board: String,
+    pub week_key: String,
+    pub wacchoi: Option<String>,
+    pub created_at: i64,
+}
+
+/// Request body for POST /api/ng-wacchoi.
+#[derive(Debug, Deserialize)]
+pub struct AddNgWacchoiRequest {
+    pub suffix: String,
+    pub board: String,
+    pub week_key: String,
+    pub wacchoi: Option<String>,
+}

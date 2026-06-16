@@ -1,17 +1,24 @@
-//! NGID management routes and board-level ID search.
+//! NGID management routes, NG wacchoi routes, and board-level search.
 //!
 //! NGID storage is global (not per-board or per-thread): a single `ng_ids` table holds
 //! all filtered IDs. NG filtering is applied client-side (ThreadView) — the server always
 //! returns full res arrays and the client hides NG posts in the display layer.
 //!
+//! NG wacchoi storage is scoped by (suffix, board, week_key): `ng_wacchoi` table.
+//! The week_key is a Thursday-anchored week identifier computed client-side and stored
+//! as an opaque string — the server validates but does not interpret it.
+//!
 //! ID search (`GET /api/boards/{server}/{board}/id-search?id=xxx`) scans locally-cached
 //! dat blobs for a given ID and returns matching posts grouped by thread. No 5ch access
 //! is performed — this is a pure in-memory scan of the existing dat_blobs cache.
+//!
+//! Wacchoi search (`GET /api/boards/{server}/{board}/wacchoi-search?suffix=zzzz`) scans
+//! locally-cached dat blobs for posts whose wacchoi suffix matches, grouped by thread.
 
 use crate::error::AppError;
 use crate::goch::refresh::read_blob_posts;
 use crate::goch::url::validate_board;
-use crate::models::{AddNgRequest, IdSearchThread, NgId};
+use crate::models::{AddNgRequest, AddNgWacchoiRequest, IdSearchThread, NgId, NgWacchoi};
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::routing::{delete, get};
@@ -27,14 +34,27 @@ use std::sync::LazyLock;
 static NG_ID_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z0-9+/._=\-]+$").unwrap());
 
-// Maximum posts per thread in id-search results (DoS guard).
+// Wacchoi suffix: exactly 4 word characters (alphanumeric + underscore).
+// Matches the last 4 chars of the xxyy-zzzz token (after the hyphen).
+static SUFFIX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\w{4}$").unwrap());
+
+// Wacchoi token in a name string: \w{4}-\w{4} inside parentheses.
+// Mirrors client/src/lib/wacchoi.js WACCHOI_RE.
+static WACCHOI_NAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\(.*?\b(\w{4}-(\w{4}))\b.*?\)").unwrap());
+
+// Maximum posts per thread in search results (DoS guard).
 const SEARCH_MAX_PER_THREAD: usize = 50;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/ng-ids", get(list_ng).post(add_ng))
         .route("/api/ng-ids/{ng_id}", delete(remove_ng))
+        .route("/api/ng-wacchoi", get(list_ng_wacchoi).post(add_ng_wacchoi))
+        .route("/api/ng-wacchoi", delete(remove_ng_wacchoi))
         .route("/api/boards/{server}/{board}/id-search", get(id_search))
+        .route("/api/boards/{server}/{board}/wacchoi-search", get(wacchoi_search))
 }
 
 /// List all registered NGID entries (unordered; sorting is the frontend's job).
@@ -98,7 +118,22 @@ async fn id_search(
 ) -> Result<Json<Vec<IdSearchThread>>, AppError> {
     validate_board(&server, &board)?;
     validate_ng_id(&q.id)?;
+    let results = board_post_search(&state, &server, &board, |r| {
+        r.id.as_deref() == Some(q.id.as_str())
+    })?;
+    Ok(Json(results))
+}
 
+/// Scans all locally-cached dat blobs for the given `server`/`board` and returns posts
+/// matching `keep`, grouped by thread (only threads with ≥1 match). Per-thread results are
+/// capped at `SEARCH_MAX_PER_THREAD` (DoS guard) and bodies are HTML-sanitized for `{@html}`.
+/// No 5ch access is performed — pure scan of the existing dat_blobs cache.
+fn board_post_search(
+    state: &AppState,
+    server: &str,
+    board: &str,
+    keep: impl Fn(&crate::goch::dat::Res) -> bool,
+) -> Result<Vec<IdSearchThread>, AppError> {
     // Collect favorites for this board (all statuses — dead threads still have cached blobs).
     let thread_rows: Vec<(String, String)> = {
         let conn = state.db.lock().unwrap();
@@ -115,13 +150,12 @@ async fn id_search(
     for (thread_id, title) in thread_rows {
         let posts = {
             let conn = state.db.lock().unwrap();
-            read_blob_posts(&conn, &server, &board, &thread_id)?
+            read_blob_posts(&conn, server, board, &thread_id)?
         };
 
-        // Filter to posts whose extracted ID matches the query.
         let mut matched: Vec<_> = posts
             .into_iter()
-            .filter(|r| r.id.as_deref() == Some(q.id.as_str()))
+            .filter(|r| keep(r))
             .take(SEARCH_MAX_PER_THREAD)
             .collect();
 
@@ -141,13 +175,138 @@ async fn id_search(
         });
     }
 
+    Ok(results)
+}
+
+// --- NG wacchoi handlers ---
+
+/// List all registered NG wacchoi entries.
+async fn list_ng_wacchoi(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<NgWacchoi>>, AppError> {
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT suffix, board, week_key, wacchoi, created_at FROM ng_wacchoi",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(NgWacchoi {
+                suffix: row.get(0)?,
+                board: row.get(1)?,
+                week_key: row.get(2)?,
+                wacchoi: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Json(rows))
+}
+
+/// Add a new NG wacchoi entry (INSERT OR IGNORE — duplicate is a silent no-op).
+async fn add_ng_wacchoi(
+    State(state): State<AppState>,
+    Json(req): Json<AddNgWacchoiRequest>,
+) -> Result<Json<Value>, AppError> {
+    validate_suffix(&req.suffix)?;
+    validate_week_key(&req.week_key)?;
+    // board validation reuses the same SEGMENT_RE as validate_board (no thread_id needed).
+    crate::goch::url::validate_board("dummy", &req.board)
+        .map_err(|_| AppError::BadRequest(format!("invalid board: {}", req.board)))?;
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "INSERT OR IGNORE INTO ng_wacchoi (suffix, board, week_key, wacchoi)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![req.suffix, req.board, req.week_key, req.wacchoi],
+    )?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct RemoveNgWacchoiQuery {
+    suffix: String,
+    board: String,
+    week_key: String,
+}
+
+/// Remove a NG wacchoi entry via query params. Returns 404 when the entry does not exist.
+async fn remove_ng_wacchoi(
+    State(state): State<AppState>,
+    Query(q): Query<RemoveNgWacchoiQuery>,
+) -> Result<Json<Value>, AppError> {
+    validate_suffix(&q.suffix)?;
+    validate_week_key(&q.week_key)?;
+    crate::goch::url::validate_board("dummy", &q.board)
+        .map_err(|_| AppError::BadRequest(format!("invalid board: {}", q.board)))?;
+    let conn = state.db.lock().unwrap();
+    let n = conn.execute(
+        "DELETE FROM ng_wacchoi WHERE suffix=?1 AND board=?2 AND week_key=?3",
+        params![q.suffix, q.board, q.week_key],
+    )?;
+    if n == 0 {
+        return Err(AppError::NotFound("ng_wacchoi entry not found".into()));
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct WacchoiSearchQuery {
+    suffix: String,
+}
+
+/// Board-level wacchoi suffix search: scans all locally-cached dat blobs for the given
+/// `server`/`board` and returns posts whose wacchoi suffix (the 4 chars after the hyphen)
+/// matches the query. No 5ch access is performed.
+///
+/// Response: `[{ thread_id, title, res: [Res, ...] }, ...]` (only threads with ≥1 match).
+async fn wacchoi_search(
+    State(state): State<AppState>,
+    Path((server, board)): Path<(String, String)>,
+    Query(q): Query<WacchoiSearchQuery>,
+) -> Result<Json<Vec<IdSearchThread>>, AppError> {
+    validate_board(&server, &board)?;
+    validate_suffix(&q.suffix)?;
+    let results = board_post_search(&state, &server, &board, |r| {
+        extract_wacchoi_suffix(&r.name).as_deref() == Some(q.suffix.as_str())
+    })?;
     Ok(Json(results))
+}
+
+/// Extracts the wacchoi suffix (the 4 chars after the hyphen in xxyy-zzzz) from a raw
+/// dat name string. The name may still contain HTML tags like </b>…<b> (dat format).
+/// The WACCHOI_NAME_RE regex targets the parenthesised token, so tags outside the
+/// parentheses are harmless — no tag stripping needed before matching.
+/// Returns None when no wacchoi token is present.
+fn extract_wacchoi_suffix(name: &str) -> Option<String> {
+    WACCHOI_NAME_RE
+        .captures(name)
+        .and_then(|c| c.get(2))
+        .map(|m| m.as_str().to_string())
 }
 
 /// Validates an ng_id value: must be non-empty and match the allowlist pattern.
 fn validate_ng_id(id: &str) -> Result<(), AppError> {
     if id.is_empty() || !NG_ID_RE.is_match(id) {
         return Err(AppError::BadRequest(format!("invalid ng_id: {id}")));
+    }
+    Ok(())
+}
+
+/// Validates a wacchoi suffix: must be exactly 4 word characters.
+fn validate_suffix(suffix: &str) -> Result<(), AppError> {
+    if !SUFFIX_RE.is_match(suffix) {
+        return Err(AppError::BadRequest(format!("invalid wacchoi suffix: {suffix}")));
+    }
+    Ok(())
+}
+
+/// Validates a week_key: must be non-empty, not contain control characters, and be
+/// at most 64 characters (the client generates a date-based string like "2026/06/11").
+fn validate_week_key(week_key: &str) -> Result<(), AppError> {
+    if week_key.is_empty() || week_key.len() > 64 {
+        return Err(AppError::BadRequest(format!("invalid week_key: {week_key}")));
+    }
+    if week_key.chars().any(|c| c.is_control()) {
+        return Err(AppError::BadRequest(format!("invalid week_key: {week_key}")));
     }
     Ok(())
 }
@@ -172,6 +331,114 @@ mod tests {
             params![thread_id, server, board, title],
         )
         .unwrap();
+    }
+
+    // --- validate_suffix tests ---
+
+    #[test]
+    fn validate_suffix_accepts_4_word_chars() {
+        assert!(validate_suffix("83IP").is_ok());
+        assert!(validate_suffix("ZZZZ").is_ok());
+        assert!(validate_suffix("a1b2").is_ok());
+        assert!(validate_suffix("____").is_ok());
+    }
+
+    #[test]
+    fn validate_suffix_rejects_wrong_length() {
+        assert!(validate_suffix("").is_err());
+        assert!(validate_suffix("abc").is_err());   // 3 chars
+        assert!(validate_suffix("abcde").is_err()); // 5 chars
+    }
+
+    #[test]
+    fn validate_suffix_rejects_special_chars() {
+        assert!(validate_suffix("ab-c").is_err()); // hyphen
+        assert!(validate_suffix("ab.c").is_err()); // dot
+        assert!(validate_suffix("ab c").is_err()); // space
+    }
+
+    // --- ng_wacchoi table insert/idempotency ---
+
+    #[test]
+    fn ng_wacchoi_insert_or_ignore_is_idempotent() {
+        let conn = setup();
+        conn.execute(
+            "INSERT OR IGNORE INTO ng_wacchoi (suffix, board, week_key, wacchoi)
+             VALUES ('83IP', 'applism', '2025/12/25', '7bb6-83IP')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO ng_wacchoi (suffix, board, week_key, wacchoi)
+             VALUES ('83IP', 'applism', '2025/12/25', '7bb6-83IP')",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ng_wacchoi", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    // --- extract_wacchoi_suffix tests ---
+
+    #[test]
+    fn extract_wacchoi_suffix_from_raw_dat_name() {
+        // Raw dat name with HTML tags (as stored in dat_blobs before formatName stripping).
+        let name = "iPhone774G </b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>";
+        assert_eq!(extract_wacchoi_suffix(name), Some("83IP".to_string()));
+    }
+
+    #[test]
+    fn extract_wacchoi_suffix_matches_only_suffix_not_prefix() {
+        // Different prefixes (xxyy) with same suffix (zzzz) must both match.
+        let name_a = "名無し</b>(ﾜｯﾁｮｲ aaaa-83IP [::1])<b>";
+        let name_b = "名無し</b>(ﾜｯﾁｮｲ bbbb-83IP [::2])<b>";
+        assert_eq!(extract_wacchoi_suffix(name_a), Some("83IP".to_string()));
+        assert_eq!(extract_wacchoi_suffix(name_b), Some("83IP".to_string()));
+    }
+
+    #[test]
+    fn extract_wacchoi_suffix_returns_none_when_absent() {
+        assert_eq!(extract_wacchoi_suffix("名無し"), None);
+        assert_eq!(extract_wacchoi_suffix("名無し</b><b>"), None);
+    }
+
+    // --- wacchoi-search filter logic ---
+
+    #[test]
+    fn wacchoi_search_matches_posts_by_suffix_regardless_of_prefix() {
+        let conn = setup();
+        insert_favorite(&conn, "egg", "test", "1000000001", "スレA");
+        insert_favorite(&conn, "egg", "test", "1000000002", "スレB");
+
+        // スレA: res1 has suffix 83IP with prefix 7bb6, res2 has different suffix ZZZZ.
+        let dat_a = "iPhone774G </b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<><>2025/01/01<>本文1_83IP<>スレA\n\
+                     名無し</b>(ﾜｯﾁｮｲ aaaa-ZZZZ [::1])<><>2025/01/01<>本文2_ZZZZ<>\n";
+        // スレB: res1 has same suffix 83IP but different prefix (IP violation check).
+        let dat_b = "名無し</b>(ﾜｯﾁｮｲ cccc-83IP [::3])<><>2025/01/01<>本文3_83IP<>スレB\n";
+
+        replace_blob(&conn, "egg", "test", "1000000001", dat_a).unwrap();
+        replace_blob(&conn, "egg", "test", "1000000002", dat_b).unwrap();
+
+        // Simulate wacchoi search for suffix "83IP".
+        let posts_a = crate::goch::dat::parse_dat(dat_a);
+        let matched_a: Vec<_> = posts_a
+            .into_iter()
+            .filter(|r| extract_wacchoi_suffix(&r.name).as_deref() == Some("83IP"))
+            .collect();
+        // Only res1 matches (res2 has ZZZZ suffix).
+        assert_eq!(matched_a.len(), 1);
+        assert_eq!(matched_a[0].body, "本文1_83IP");
+
+        let posts_b = crate::goch::dat::parse_dat(dat_b);
+        let matched_b: Vec<_> = posts_b
+            .into_iter()
+            .filter(|r| extract_wacchoi_suffix(&r.name).as_deref() == Some("83IP"))
+            .collect();
+        // スレB's res1 also has suffix 83IP (different prefix is fine — suffix match wins).
+        assert_eq!(matched_b.len(), 1);
+        assert_eq!(matched_b[0].body, "本文3_83IP");
     }
 
     #[test]

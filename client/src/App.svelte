@@ -15,6 +15,9 @@
   let page = $state('favorites') // 'favorites' | 'register' | 'archive'
   // Global NG ID set: loaded once on mount, updated on change via onngchange callback.
   let ngIds = $state(new Set())
+  // Global NG wacchoi list: array of { suffix, board, week_key, wacchoi, created_at }.
+  // Matching is done client-side with (suffix + board + week_key) triple.
+  let ngWacchoi = $state([])
 
   async function load() {
     try {
@@ -31,6 +34,14 @@
       ngIds = new Set(list.map((x) => x.ng_id))
     } catch {
       /* non-critical; NG filtering just won't apply */
+    }
+  }
+
+  async function loadNgWacchoi() {
+    try {
+      ngWacchoi = await api.listNgWacchoi()
+    } catch {
+      /* non-critical; NG wacchoi filtering just won't apply */
     }
   }
 
@@ -84,6 +95,7 @@
       refreshAndReload()
     })
     loadNgIds()
+    loadNgWacchoi()
 
     const onpop = () => applyRoute(parseLocation())
     window.addEventListener('popstate', onpop)
@@ -145,7 +157,7 @@
   <section class="pane detail-pane">
     {#if current}
       {#key threadKey}
-        <ThreadView fav={current} onback={back} {ngIds} onngchange={loadNgIds} />
+        <ThreadView fav={current} onback={back} {ngIds} onngchange={loadNgIds} {ngWacchoi} onngwacchoichange={loadNgWacchoi} />
       {/key}
     {:else}
       <p class="placeholder">スレッドを選択してください</p>
