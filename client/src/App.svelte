@@ -224,6 +224,12 @@
     --rate-4: #ff9e1f;
     --rate-5: #ff5a5a;
   }
+  :global(html),
+  :global(body) {
+    /* Wall for mobile (window scroll): prevent native overscroll bounce at the
+       bottom so the pull-to-refresh gesture can take over cleanly. */
+    overscroll-behavior-y: contain;
+  }
   :global(body) {
     margin: 0;
     font-family: system-ui, sans-serif;
@@ -291,6 +297,12 @@
       overflow-y: auto;
       height: 100%;
       min-height: 0;
+    }
+    /* Wall (stage 1 of pull-to-refresh): prevent native rubber-band/bounce on the
+       detail pane so the bottom overscroll is fully managed by the gesture code.
+       Applied only to detail-pane (not list-pane) to leave list scrolling unaffected. */
+    .detail-pane {
+      overscroll-behavior: contain;
     }
     .detail-pane,
     .layout.has-thread .list-pane,

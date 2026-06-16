@@ -6,6 +6,7 @@
   import { buildWacchoiStats, wacchoiEnabled, linkifyWacchoi, extractWacchoiSuffix, wacchoiWeekKey } from './wacchoi.js'
   import { copyText } from './clipboard.js'
   import Modal from './Modal.svelte'
+  import { pullRefresh, PULL_THRESHOLD_PX } from './pullRefresh.js'
 
   let { fav, onback, ngIds = new Set(), onngchange = () => {}, ngWacchoi = [], onngwacchoichange = () => {} } = $props()
 
@@ -13,6 +14,13 @@
   // Surfaced when the auto-refresh (reload) fails. The stored dat is still shown
   // below, so this is a non-blocking notice rather than a hard error.
   let refreshError = $state(null)
+  // Pull-to-refresh: true while a manual refresh triggered by the gesture is in flight.
+  // Used to prevent double-firing and to show the loading panel.
+  let refreshing = $state(false)
+  // Current pull-panel offset in px (0 = hidden). Updated by the pullRefresh action callback.
+  let pullPx = $state(0)
+  // Whether the panel shows 'dragging' hint (above threshold = 'release to refresh').
+  let pullPhase = $state('idle') // 'idle' | 'dragging'
   // Read position (max res number that has passed through the viewport). Initialized from the saved read_res (only on first mount).
   let maxRead = $state(untrack(() => fav.read_res))
   // Restore-on-open guard: scroll to the saved read position only after the first
@@ -37,6 +45,34 @@
     }
     data = await api.getDat(fav.server, fav.board, fav.thread_id)
     if (data.read_res > maxRead) maxRead = data.read_res
+  }
+
+  // Manual refresh triggered by the pull-to-refresh gesture.
+  // Guards against double-fire via the `refreshing` flag.
+  async function triggerRefresh() {
+    if (refreshing) return
+    refreshing = true
+    try {
+      await load()
+    } finally {
+      refreshing = false
+    }
+  }
+
+  // Returns true when any modal/overlay is open. Used by both backSwipe and pullRefresh
+  // to suppress gestures while overlays are in front.
+  function isAnyModalOpen() {
+    return (
+      anchorRoot != null ||
+      idListId != null ||
+      idMenu != null ||
+      wacchoiListKey != null ||
+      wacchoiMenu != null ||
+      idSearchLoading ||
+      idSearchResult != null ||
+      wacchoiSearchLoading ||
+      wacchoiSearchResult != null
+    )
   }
 
   // Initial load (auto-refresh on open).
@@ -326,7 +362,7 @@
     function onEnd(e) {
       if (ignore || !locked || !horizontal) return
       // Any modal open: the gesture belongs to the modal, not the thread.
-      if (anchorRoot != null || idListId != null || idMenu != null || wacchoiListKey != null || wacchoiMenu != null || idSearchLoading || idSearchResult != null || wacchoiSearchLoading || wacchoiSearchResult != null) return
+      if (isAnyModalOpen()) return
       const dx = e.changedTouches[0].clientX - startX
       const dy = e.changedTouches[0].clientY - startY
       if (dx >= 60 && Math.abs(dx) > Math.abs(dy) * 1.5) onback()
@@ -715,12 +751,37 @@
 {/if}
 
 {#if data}
-  <div class="thread-body" use:backSwipe>
+  <div class="thread-body" use:backSwipe use:pullRefresh={() => ({
+    enabled: !refreshing,
+    isBlocked: isAnyModalOpen,
+    onRefresh: triggerRefresh,
+    onDrag: (px, phase) => { pullPx = px; pullPhase = phase },
+  })}>
     {#each data.res as r (r.num)}
       <div class="res" use:track={r.num} class:unread={r.num > fav.read_res}>
         {@render resBody(r)}
       </div>
     {/each}
+  </div>
+
+  <!-- Pull-to-refresh panel: slides up from the bottom as the user over-pulls.
+       position:fixed keeps it out of the document flow (no layout shift).
+       translateY(100%) hides it below the viewport; reduced by pullPx to reveal it. -->
+  <div
+    class="pull-refresh-panel"
+    class:above-threshold={pullPx >= PULL_THRESHOLD_PX}
+    data-testid="pull-refresh"
+    style="transform: translateY({refreshing ? 0 : Math.max(0, 100 - pullPx)}%)"
+    aria-hidden={pullPx === 0 && !refreshing}
+  >
+    {#if refreshing}
+      <span class="pull-refresh-spinner" aria-label="更新中"></span>
+      <span>更新中…</span>
+    {:else if pullPhase === 'dragging' && pullPx >= PULL_THRESHOLD_PX}
+      <span>離して更新</span>
+    {:else}
+      <span>更新する</span>
+    {/if}
   </div>
 {/if}
 
@@ -1036,5 +1097,47 @@
   }
   .search-empty {
     color: var(--muted);
+  }
+
+  /* Pull-to-refresh panel: fixed to the bottom of the viewport, slides up on over-pull.
+     transform is driven inline by pullPx. z-index sits above thread content but
+     below modals (z-index:50). */
+  .pull-refresh-panel {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 4rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-size: 0.95rem;
+    background: var(--card-bg);
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    z-index: 20;
+    /* Start hidden below viewport; translateY is driven inline. */
+    will-change: transform;
+    user-select: none;
+    pointer-events: none;
+  }
+  /* Highlight text when past the release threshold. */
+  .pull-refresh-panel.above-threshold {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  /* Simple CSS spinner (no extra dependencies). */
+  .pull-refresh-spinner {
+    display: inline-block;
+    width: 1.1rem;
+    height: 1.1rem;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: pr-spin 0.7s linear infinite;
+  }
+  @keyframes pr-spin {
+    to { transform: rotate(360deg); }
   }
 </style>
