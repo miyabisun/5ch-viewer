@@ -34,7 +34,7 @@
   let postModalOpen = $state(false)
   let postMessage = $state('')
   let postName = $state('')
-  let postMail = $state('')
+  let postMail = $state('sage')
   let postError = $state(null)
   let postSubmitting = $state(false)
 
@@ -88,6 +88,7 @@
       idMenu != null ||
       wacchoiListKey != null ||
       wacchoiMenu != null ||
+      replyMenuResNum != null ||
       idSearchLoading ||
       idSearchResult != null ||
       wacchoiSearchLoading ||
@@ -108,7 +109,7 @@
       })
       postMessage = ''
       postName = ''
-      postMail = ''
+      postMail = 'sage'
       postModalOpen = false
       await load()
     } catch (e) {
@@ -640,6 +641,36 @@
     closeIdMenu()
   }
 
+  // --- Reply context menu ---
+  // The res number the reply menu is open for, or null (closed).
+  let replyMenuResNum = $state(null)
+
+  // Right-click on the .body div: open the reply menu for the clicked res.
+  // Skip if the target is an anchor or wacchoi badge (those have their own menus).
+  function onBodyContextMenu(e, resNum) {
+    if (e.target.closest('.anchor') || e.target.closest('.wacchoi-badge')) return
+    if (resNum == null) return
+    e.preventDefault()
+    replyMenuResNum = resNum
+  }
+
+  // Open the post modal pre-filled with >>num on line 1, cursor on line 2.
+  function startReply(num) {
+    replyMenuResNum = null
+    postMessage = `>>${num}\n`
+    postMail = postMail || 'sage'
+    postError = null
+    postModalOpen = true
+    requestAnimationFrame(() => {
+      const ta = document.querySelector('.post-textarea')
+      if (ta) {
+        ta.focus()
+        const pos = postMessage.length
+        ta.setSelectionRange(pos, pos)
+      }
+    })
+  }
+
   // --- ID search ---
   let idSearchLoading = $state(false)
   let idSearchResult = $state(null) // null = closed, [] = empty result, [...] = results
@@ -670,8 +701,12 @@
 </script>
 
 <!-- body is already sanitized on the server. linkify makes anchors clickable. -->
-{#snippet body(html)}
-  <div class="body" role="presentation" onclick={onBodyClick}>{@html linkify(html)}</div>
+<!-- resNum is passed so right-click can open the reply menu for the correct res. -->
+{#snippet body(html, resNum)}
+  <div class="body" role="presentation"
+    onclick={onBodyClick}
+    oncontextmenu={(e) => onBodyContextMenu(e, resNum)}
+  >{@html linkify(html)}</div>
 {/snippet}
 
 <!-- Back-references (reses that anchor to this res). Tap to follow. -->
@@ -750,7 +785,7 @@
     </del>
   {:else}
     {@render resHead(r)}
-    {@render body(r.body)}
+    {@render body(r.body, r.num)}
   {/if}
 {/snippet}
 
@@ -843,14 +878,16 @@
       <div class="menu-title">書き込む</div>
     {/snippet}
     <div class="post-form">
-      <label class="post-label">
-        名前
-        <input class="post-input" type="text" placeholder="（省略可）" bind:value={postName} disabled={postSubmitting} />
-      </label>
-      <label class="post-label">
-        メール
-        <input class="post-input" type="text" placeholder="sage など（省略可）" bind:value={postMail} disabled={postSubmitting} />
-      </label>
+      <div class="post-row">
+        <label class="post-label">
+          名前
+          <input class="post-input" type="text" placeholder="（省略可）" bind:value={postName} disabled={postSubmitting} />
+        </label>
+        <label class="post-label">
+          メール
+          <input class="post-input" type="text" placeholder="sage" bind:value={postMail} disabled={postSubmitting} />
+        </label>
+      </div>
       <label class="post-label">
         本文
         <textarea class="post-textarea" rows="6" placeholder="本文を入力" bind:value={postMessage} disabled={postSubmitting}></textarea>
@@ -992,6 +1029,18 @@
       </button>
       <button class="action" onclick={() => copyId(idMenu)}>コピー</button>
       <button class="action" onclick={() => startIdSearch(idMenu)}>取得済みスレから検索</button>
+    </div>
+  </Modal>
+{/if}
+
+<!-- Reply context menu modal: right-click on a res body opens this. -->
+{#if replyMenuResNum != null}
+  <Modal onclose={() => { replyMenuResNum = null }}>
+    {#snippet header()}
+      <div class="menu-title">レス {replyMenuResNum}</div>
+    {/snippet}
+    <div class="menu" data-testid="reply-menu">
+      <button class="action" onclick={() => startReply(replyMenuResNum)}>返信する</button>
     </div>
   </Modal>
 {/if}
@@ -1279,12 +1328,22 @@
     min-width: min(28rem, 90vw);
     max-width: 90vw;
   }
+  /* Name + mail fields side by side to save vertical space. */
+  .post-row {
+    display: flex;
+    gap: 0.6rem;
+  }
   .post-label {
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
     font-size: 0.85rem;
     color: var(--muted);
+  }
+  /* Inside .post-row each label stretches equally. */
+  .post-row .post-label {
+    flex: 1;
+    min-width: 0;
   }
   .post-input,
   .post-textarea {
@@ -1311,7 +1370,7 @@
     padding: 0.6rem;
     border: none;
     border-radius: 6px;
-    background: var(--accent);
+    background: #555;
     color: #fff;
     font-size: 1rem;
     cursor: pointer;

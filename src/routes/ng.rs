@@ -34,15 +34,27 @@ use std::sync::LazyLock;
 static NG_ID_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z0-9+/._=\-]+$").unwrap());
 
-// Wacchoi suffix: exactly 4 word characters (alphanumeric + underscore).
+// Wacchoi suffix: exactly 4 chars from [\w+] (alphanumeric, underscore, or '+').
 // Matches the last 4 chars of the xxyy-zzzz token (after the hyphen).
+// '+' appears in some wacchoi tokens so the character class includes it.
 static SUFFIX_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\w{4}$").unwrap());
+    LazyLock::new(|| Regex::new(r"^[\w+]{4}$").unwrap());
 
-// Wacchoi token in a name string: \w{4}-\w{4} inside parentheses.
-// Mirrors client/src/lib/wacchoi.js WACCHOI_RE.
+// Wacchoi token in a name string: [\w+]{4}-[\w+]{4} inside parentheses.
+// Mirrors client/src/lib/wacchoi.js WACCHOI_RE (which uses JS lookbehind/lookahead;
+// regex_lite does not support look-around, so boundary constraints are expressed
+// differently here).
+//
+// Boundary strategy: require a non-[\w+] character (or nothing = start of parens
+// content) immediately before the token, and a non-[\w+] character (or nothing =
+// end of parens content) immediately after.  This prevents a 5-char token like
+// "12345-67890" from yielding a false sub-match of "2345-6789".
+//
+//   (?:.*?[^\w+])?  -- optional: any prefix ending with a non-[\w+] separator
+//   ([\w+]{4}-[\w+]{4})  -- the token (captured as group 1; group 2 = suffix)
+//   (?:[^\w+].*?)?  -- optional: any suffix starting with a non-[\w+] separator
 static WACCHOI_NAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\(.*?\b(\w{4}-(\w{4}))\b.*?\)").unwrap());
+    LazyLock::new(|| Regex::new(r"\((?:.*?[^\w+])?([\w+]{4}-([\w+]{4}))(?:[^\w+].*?)?\)").unwrap());
 
 // Maximum posts per thread in search results (DoS guard).
 const SEARCH_MAX_PER_THREAD: usize = 50;
@@ -344,6 +356,14 @@ mod tests {
     }
 
     #[test]
+    fn validate_suffix_accepts_plus_sign() {
+        // '+' appears in some wacchoi tokens (e.g. "83+P"); must be accepted.
+        assert!(validate_suffix("83+P").is_ok());
+        assert!(validate_suffix("++++").is_ok());
+        assert!(validate_suffix("a1+Z").is_ok());
+    }
+
+    #[test]
     fn validate_suffix_rejects_wrong_length() {
         assert!(validate_suffix("").is_err());
         assert!(validate_suffix("abc").is_err());   // 3 chars
@@ -402,6 +422,26 @@ mod tests {
     fn extract_wacchoi_suffix_returns_none_when_absent() {
         assert_eq!(extract_wacchoi_suffix("名無し"), None);
         assert_eq!(extract_wacchoi_suffix("名無し</b><b>"), None);
+    }
+
+    #[test]
+    fn extract_wacchoi_suffix_rejects_5char_5char_token() {
+        // A 5-char prefix or 5-char suffix must NOT yield a false 4-4 sub-match.
+        // Previous bug: WACCHOI_NAME_RE without boundary guards matched "2345-6789"
+        // from "(12345-67890)".
+        assert_eq!(extract_wacchoi_suffix("(12345-67890)"), None);
+        // 5-char prefix only
+        assert_eq!(extract_wacchoi_suffix("(ﾜｯﾁｮｲ 12345-abcd [::1])"), None);
+        // 5-char suffix only
+        assert_eq!(extract_wacchoi_suffix("(ﾜｯﾁｮｲ abcd-12345 [::1])"), None);
+    }
+
+    #[test]
+    fn extract_wacchoi_suffix_handles_plus_in_token() {
+        // '+' may appear in wacchoi tokens (e.g. "7b+6-83+P"); both sides of the hyphen
+        // must be extracted correctly.
+        let name = "foo </b>(ﾜｯﾁｮｲ 7b+6-83+P [2400::])<b>";
+        assert_eq!(extract_wacchoi_suffix(name), Some("83+P".to_string()));
     }
 
     // --- wacchoi-search filter logic ---

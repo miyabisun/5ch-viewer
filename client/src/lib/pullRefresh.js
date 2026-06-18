@@ -32,29 +32,16 @@ const DIRECTION_LOCK_PX = 5
 // This gives a rubber-band feel and bounds the translateY range.
 const PULL_MAX_PX = PULL_THRESHOLD_PX * 1.5
 
-/** Returns the current scroll metrics for the thread body scroll container.
- *  Both PC and phone now use .thread-body as the sole scroll container (new layout). */
-function getScrollState() {
-  const body = document.querySelector('.thread-body')
-  if (!body) return null
-  return {
-    scrollTop: body.scrollTop,
-    clientHeight: body.clientHeight,
-    scrollHeight: body.scrollHeight,
-  }
-}
-
-/** True when the scroll container is at (or past) the very bottom. */
-function isAtBottom() {
-  const s = getScrollState()
-  if (!s) return false
-  // Guard: if content fits in one screen, never treat it as "at the bottom"
-  // to avoid arming the gesture on short threads that cannot scroll at all.
-  if (s.scrollHeight <= s.clientHeight + BOTTOM_EPS) return false
-  return s.scrollTop + s.clientHeight >= s.scrollHeight - BOTTOM_EPS
-}
-
 export function pullRefresh(node, opts) {
+  // Scroll metrics come directly from `node` (.thread-body), which is the sole
+  // scroll container in the current layout. No DOM query needed.
+  function isAtBottom() {
+    // Guard: if content fits in one screen, never treat it as "at the bottom"
+    // to avoid arming the gesture on short threads that cannot scroll at all.
+    if (node.scrollHeight <= node.clientHeight + BOTTOM_EPS) return false
+    return node.scrollTop + node.clientHeight >= node.scrollHeight - BOTTOM_EPS
+  }
+
   // opts is expected to be a reactive getter function so the action always
   // reads the latest values without needing update().
   function getOpts() {
@@ -191,11 +178,9 @@ export function pullRefresh(node, opts) {
     ignore = false
   }
 
-  // Attach the scroll listener to .thread-body, which is the sole scroll container
-  // in the new layout (both PC and phone scroll inside .thread-body).
-  const scrollTarget = document.querySelector('.thread-body') ?? window
-
-  scrollTarget.addEventListener('scroll', onScroll, { passive: true })
+  // `node` is .thread-body itself (the sole scroll container), so attach
+  // the scroll listener directly — no extra DOM query needed.
+  node.addEventListener('scroll', onScroll, { passive: true })
   node.addEventListener('touchstart', onStart, { passive: true })
   node.addEventListener('touchmove', onMove, { passive: true })
   node.addEventListener('touchend', onEnd, { passive: true })
@@ -204,7 +189,7 @@ export function pullRefresh(node, opts) {
   return {
     destroy() {
       clearUnlock()
-      scrollTarget.removeEventListener('scroll', onScroll)
+      node.removeEventListener('scroll', onScroll)
       node.removeEventListener('touchstart', onStart)
       node.removeEventListener('touchmove', onMove)
       node.removeEventListener('touchend', onEnd)

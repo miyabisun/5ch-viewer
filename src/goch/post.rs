@@ -46,12 +46,14 @@ static FEATURE_SEL: LazyLock<Selector> =
 /// Unreserved characters (RFC 3986: ALPHA / DIGIT / - / _ / . / ~) are kept as-is;
 /// everything else is %-encoded.
 fn percent_encode_bytes(bytes: &[u8]) -> String {
+    use std::fmt::Write;
     let mut out = String::with_capacity(bytes.len() * 3);
     for &b in bytes {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
             out.push(b as char);
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            // write! into a String is infallible, so unwrap is safe.
+            write!(out, "%{b:02X}").unwrap();
         }
     }
     out

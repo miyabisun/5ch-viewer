@@ -19,9 +19,12 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;')
 }
 
-// Match the first \w{4}-\w{4} token found inside parentheses.
-// Word-boundary anchors (\b) prevent partial matches against longer hex strings.
-const WACCHOI_RE = /\(.*?\b(\w{4}-\w{4})\b.*?\)/
+// Match the first [\w+]{4}-[\w+]{4} token found inside parentheses.
+// The character class [\w+] includes '+' which appears in some wacchoi tokens.
+// Lookbehind/lookahead (?<![\w+]) / (?![\w+]) replace \b so that:
+//   - '+' (a non-word char) is accepted inside tokens, and
+//   - longer tokens like (12345-67890) do not yield a false 4-4 sub-match.
+const WACCHOI_RE = /\(.*?(?<![\w+])([\w+]{4}-[\w+]{4})(?![\w+]).*?\)/
 
 // Extract the wacchoi key from a raw name string.
 // Applies formatName first so HTML tags are stripped before matching.
@@ -64,7 +67,7 @@ function colorLevel(total) {
 //   1. formatName() strips HTML tags and decodes entities → clean plain text.
 //   2. escapeHtml() re-escapes special chars so the result is safe for {@html}.
 //   3. The first wacchoi token (same token extractWacchoi() finds) is wrapped in
-//      a span.  Only \w{4}-\w{4} appears in data-wacchoi, so no new XSS vector.
+//      a span.  Only [\w+]{4}-[\w+]{4} appears in data-wacchoi, so no new XSS vector.
 //
 // When no wacchoi token is present the escaped plain text is returned as-is.
 // Empty/null/undefined input returns ''.
@@ -94,7 +97,7 @@ export function extractWacchoiSuffix(nameOrToken) {
   if (!nameOrToken) return null
   // Resolve to a bare token: full name strings (with parens) go through extractWacchoi;
   // values that already look like a token are used as-is. extractWacchoi only yields
-  // \w{4}-\w{4}, so the suffix-length check below is always satisfied for that path.
+  // [\w+]{4}-[\w+]{4}, so the suffix-length check below is always satisfied for that path.
   const token = nameOrToken.includes('(') ? extractWacchoi(nameOrToken) : nameOrToken
   if (!token) return null
   const idx = token.lastIndexOf('-')

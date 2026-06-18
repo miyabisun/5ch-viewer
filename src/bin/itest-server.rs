@@ -185,7 +185,7 @@ async fn mock_bbs_cgi(
     let body_str = String::from_utf8_lossy(&body);
     let has_feature = body_str.contains("feature=confirmed%3A")
         || body_str.contains("feature=confirmed:");
-    let is_guid = params.get("guid").map(|v| v == "ON").unwrap_or(false);
+    let is_guid = params.get("guid").is_some_and(|v| v == "ON");
 
     // Second call (with feature + guid=ON) → success.
     if count > 0 && has_feature && is_guid {

@@ -101,17 +101,16 @@ impl CookieStore for PersistentJar {
         // silently drops cookies without an expiry, which means acorn/MonaTicket — which 5ch
         // sends without an explicit lifetime — would be lost on every process restart.
         let cookies: Vec<_> = cookie_headers.filter_map(|val| {
-            std::str::from_utf8(val.as_bytes())
+            let mut c = std::str::from_utf8(val.as_bytes())
                 .ok()
                 .and_then(|s| cookie::Cookie::parse(s).ok())
-                .map(|c| c.into_owned())
-        }).map(|mut c| {
+                .map(|c| c.into_owned())?;
             // If neither Expires nor Max-Age is set, the cookie is a session cookie.
             // Apply a default Max-Age so the JSON serialiser keeps it.
             if c.max_age().is_none() && c.expires().is_none() {
                 c.set_max_age(TimeDuration::days(SESSION_COOKIE_MAX_AGE_DAYS));
             }
-            c
+            Some(c)
         }).collect();
         self.inner.write().unwrap().store_response_cookies(cookies.into_iter(), url);
     }

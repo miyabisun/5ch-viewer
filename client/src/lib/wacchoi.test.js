@@ -85,6 +85,14 @@ describe('linkifyWacchoi', () => {
     expect(result).toContain('A&amp;B')
     expect(result).not.toContain('&amp;amp;')
   })
+
+  it('wraps a token containing "+" in a .wacchoi-badge span', () => {
+    const raw = 'foo </b>(ﾜｯﾁｮｲ 7b+6-83IP [2400::])<b>'
+    const result = linkifyWacchoi(raw)
+    expect(result).toContain(
+      '<span class="wacchoi-badge" data-wacchoi="7b+6-83IP">7b+6-83IP</span>',
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -144,6 +152,11 @@ describe('extractWacchoi', () => {
   it('extracts wacchoi from another common format (b6f1-daVb)', () => {
     const raw = 'iPhone774G </b>(ﾜｯﾁｮｲ b6f1-daVb [2001:268:77aa:c6e4:*])<b>'
     expect(extractWacchoi(raw)).toBe('b6f1-daVb')
+  })
+
+  it('extracts wacchoi token containing "+" character', () => {
+    const raw = 'foo </b>(ﾜｯﾁｮｲ 7b+6-83IP [2400::])<b>'
+    expect(extractWacchoi(raw)).toBe('7b+6-83IP')
   })
 })
 
@@ -338,6 +351,11 @@ describe('extractWacchoiSuffix', () => {
 
   it('returns null for empty string', () => {
     expect(extractWacchoiSuffix('')).toBeNull()
+  })
+
+  it('extracts suffix from a bare token containing "+"', () => {
+    // Token like '7b+6-83+P' where both parts contain '+'.
+    expect(extractWacchoiSuffix('7b+6-83+P')).toBe('83+P')
   })
 })
 

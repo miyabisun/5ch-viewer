@@ -268,14 +268,10 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
     let mut res = read_blob_posts(&conn, &server, &board, &thread_id)?;
 
     // Mark own posts: collect res_num set from own_posts table, then flag matching entries.
-    let own_nums: std::collections::HashSet<i64> = {
-        let mut stmt = conn.prepare(
-            "SELECT res_num FROM own_posts WHERE server=?1 AND board=?2 AND thread_id=?3",
-        )?;
-        let nums: Result<Vec<i64>, _> =
-            stmt.query_map(params![server, board, thread_id], |r| r.get(0))?.collect();
-        nums?.into_iter().collect()
-    };
+    let own_nums: std::collections::HashSet<i64> = conn
+        .prepare("SELECT res_num FROM own_posts WHERE server=?1 AND board=?2 AND thread_id=?3")?
+        .query_map(params![server, board, thread_id], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
     for r in &mut res {
         // Mark own posts (pink label) and HTML-sanitize the body (XSS mitigation;
         // the frontend renders bodies via {@html}).
@@ -772,19 +768,15 @@ mod tests {
 
         // Replicate the get_dat own-marking logic.
         let mut res = read_blob_posts(&conn, SERVER, BOARD, THREAD).unwrap();
-        let own_nums: std::collections::HashSet<i64> = {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT res_num FROM own_posts WHERE server=?1 AND board=?2 AND thread_id=?3",
-                )
-                .unwrap();
-            stmt.query_map(params![SERVER, BOARD, THREAD], |r| r.get(0))
-                .unwrap()
-                .collect::<Result<Vec<i64>, _>>()
-                .unwrap()
-                .into_iter()
-                .collect()
-        };
+        let own_nums: std::collections::HashSet<i64> = conn
+            .prepare(
+                "SELECT res_num FROM own_posts WHERE server=?1 AND board=?2 AND thread_id=?3",
+            )
+            .unwrap()
+            .query_map(params![SERVER, BOARD, THREAD], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
         for r in &mut res {
             if own_nums.contains(&r.num) {
                 r.own = true;
