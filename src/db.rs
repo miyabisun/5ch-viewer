@@ -49,6 +49,19 @@ pub const SCHEMA: &str = "
         created_at INTEGER DEFAULT (strftime('%s','now'))
     );
 
+    CREATE TABLE IF NOT EXISTS own_posts (
+        server     TEXT NOT NULL,
+        board      TEXT NOT NULL,
+        thread_id  TEXT NOT NULL,
+        res_num    INTEGER NOT NULL,
+        body       TEXT NOT NULL,
+        name       TEXT,
+        mail       TEXT,
+        poster_id  TEXT,
+        posted_at  INTEGER DEFAULT (strftime('%s','now')),
+        PRIMARY KEY (server, board, thread_id, res_num)
+    );
+
     CREATE TABLE IF NOT EXISTS ng_wacchoi (
         suffix     TEXT NOT NULL,   -- 4-char UA-derived suffix (zzzz after the hyphen)
         board      TEXT NOT NULL,

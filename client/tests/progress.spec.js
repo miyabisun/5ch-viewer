@@ -80,10 +80,10 @@ test.describe('phone: scroll fallback when target res is not rendered', () => {
     await expect(page.getByText('本文1', { exact: true })).toBeVisible()
 
     // Fallback path: target res (50) is not in the DOM, so the code falls back
-    // to window.scrollTo(0, document.body.scrollHeight). Verify that the window
-    // has scrolled (phone layout uses window as the scroll container).
+    // to scrolling .thread-body to the bottom. Both PC and phone now scroll inside
+    // .thread-body (new layout), so verify .thread-body.scrollTop > 0.
     await expect
-      .poll(() => page.evaluate(() => window.scrollY))
+      .poll(() => page.locator('.thread-body').evaluate((el) => el.scrollTop))
       .toBeGreaterThan(0)
   })
 })
@@ -157,10 +157,11 @@ test('opening a thread restores the saved read position (auto-scroll)', async ({
   await expect(page.getByText('本文1', { exact: true })).toBeVisible()
 
   // The page auto-scrolls to the saved read position (res 28), so it is visible
-  // and the detail-pane is scrolled away from the top.
+  // and .thread-body is scrolled away from the top (new layout: thread-body is the
+  // sole scroll container on both PC and phone).
   const target = page.locator('.res[data-res="28"]')
   await expect(target).toBeInViewport()
-  expect(
-    await page.locator('.detail-pane').evaluate((el) => el.scrollTop),
-  ).toBeGreaterThan(0)
+  await expect
+    .poll(() => page.locator('.thread-body').evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(0)
 })

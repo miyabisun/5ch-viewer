@@ -105,10 +105,10 @@ test.describe('PC: two-column layout', () => {
     // Record initial list-pane scroll position (should be 0).
     const listScrollBefore = await page.locator('.list-pane').evaluate((el) => el.scrollTop)
 
-    // Scroll the detail pane to the bottom.
-    await page.locator('.detail-pane').evaluate((el) => el.scrollTo(0, el.scrollHeight))
+    // Scroll the thread body to the bottom (new layout: .thread-body is the scroll container).
+    await page.locator('.thread-body').evaluate((el) => el.scrollTo(0, el.scrollHeight))
     await expect
-      .poll(() => page.locator('.detail-pane').evaluate((el) => el.scrollTop))
+      .poll(() => page.locator('.thread-body').evaluate((el) => el.scrollTop))
       .toBeGreaterThan(0)
 
     // The list pane must not have scrolled.

@@ -132,3 +132,76 @@
   形式（`Part09` → `Part10`）もある。
 - 同一シリーズの判定は「右端の数字を +1 し、その前後の文脈（最大6文字）で一致を確認」
   するのが誤爆を避けやすい（アルゴリズムは [spec.md](spec.md) 8.4）。
+
+## 書き込み（bbs.cgi）
+
+**実機調査済み**（2026-06、`egg/software/1779846933`「[test]書き込みテスト Part40」＝
+運営公認の書き込みテストスレで検証）。5ch への投稿は `bbs.cgi` への POST で行う。
+
+### エンドポイントとパラメータ
+
+- **POST 先**: `https://{server}.5ch.io/test/bbs.cgi`
+  - 確認ページ経由の再送時は `?guid=ON` を付ける（確認フォームの action がそれ）。
+- **Content-Type**: `application/x-www-form-urlencoded`、**本文・値は Shift_JIS**。
+  - 日本語（`MESSAGE` や `submit` ボタン文言）は **Shift_JIS にエンコードしてから**
+    URL エンコードする。UTF-8 のまま送ると文字化けする。
+- **User-Agent**: 取得系と同じ `Monazilla/1.00 ...`（[HTTP アクセスの作法](#http-アクセスの作法)）。
+- **Referer**: 当該スレの read.cgi URL を付ける
+  （`https://{server}.5ch.io/test/read.cgi/{board}/{key}/`）。
+- パラメータ:
+
+  | name | 値 | 備考 |
+  |---|---|---|
+  | `bbs` | board ID（例 `software`） | 必須 |
+  | `key` | thread_id（dat ファイル名の数字） | 必須 |
+  | `time` | UNIX 秒 | 任意の最近の値で通る |
+  | `FROM` | 名前 | 空可 |
+  | `mail` | メール欄（`sage` 等） | 空可 |
+  | `MESSAGE` | 本文（Shift_JIS） | 必須 |
+  | `submit` | `書き込む`（Shift_JIS） | 必須 |
+
+### 投稿フロー（2 段 + Cookie で 1 段に短縮）
+
+5ch は荒らし対策で **Cookie 未設定だと必ず「書き込み確認」ページ**を返す。
+
+1. **1 回目 POST** → 確認ページが返る。判定材料:
+   - レスポンスヘッダ **`x-chx-error: 0000 Confirmation`**
+   - `<title>■ 書き込み確認 ■</title>`、本文に「書きこみ＆クッキー確認」
+   - 確認フォームに hidden の **`feature` = `confirmed:<40桁hex>`** が含まれる。
+2. **2 回目 POST**（`bbs.cgi?guid=ON`）で、1 回目と**同じ**
+   `bbs/key/time/FROM/mail/MESSAGE` に加えて
+   - `feature=confirmed:<hash>`（確認ページから抽出した値をそのまま）
+   - `submit=上記全てを承諾して書き込む`（Shift_JIS）
+
+   を付けて送る → 成功。**成功レスポンスで `Set-Cookie: acorn=...` と
+   `MonaTicket=...`** が返る（`.5ch.io` ドメイン、数日有効）。
+3. **以降は Cookie（acorn / MonaTicket）を保持して送れば確認ページはスキップ**され、
+   通常の `submit=書き込む` だけで **1 回の POST で投稿が通る**（実機確認済み）。
+
+→ 実装方針: Cookie ストアを永続化し、まず 1 発で投げる。**確認ページが返ったら
+`feature` を抽出して即再送**し、成功時の Cookie を保存する。次回からは 1 発で通る。
+
+### 成功の判定と「自分のレス番号」
+
+成功レスポンス（`<title>書きこみました。</title>`）には次のヘッダが付く:
+
+| ヘッダ | 例 | 意味 |
+|---|---|---|
+| `x-resnum` | `406` | **投稿が入ったレス番号**（＝行番号） |
+| `x-posterid` | `E7CsJrO3` | そのスレでの自分の ID |
+| `x-postdate` | `1781778054.18` | 投稿時刻 |
+| `x-postplace` | `software/1779846933` | board/key |
+
+- **`x-resnum` が「自分のレス」同定の決め手**。投稿成功直後に dat にも即時反映される
+  （実機: POST 直後の dat 末尾＝`x-resnum` 行）ので、**`(server, board, thread_id,
+  res_num)` を保存すれば本文一致や時刻推定は不要**。
+- エラー時は `x-chx-error` が `Confirmation` 以外（例: 規制・連投・スレ落ち）になる、
+  または確認以外のエラーページ HTML が返る。`x-resnum` の有無＋`title` で成否判定する。
+
+### 注意
+
+- `egg/software/1779846933`「[test]書き込みテスト Part40」は**運営公認の書き込み
+  テスト用スレ（砂場）**。動作検証はここへ投稿してよい。
+- 取得系（subject/dat/SETTING）は GET 専用（[dat](#dat-スレッド本文)）。投稿系は本節の
+  POST 経路を別に設ける。SSRF 対策として server/board/thread_id は既存の
+  `validate_ref`（[url.rs] の正規表現）で投稿前に検証すること。

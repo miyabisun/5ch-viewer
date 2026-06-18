@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::goch::cookie_jar::{self, SharedJar};
 use rusqlite::Connection;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -6,10 +7,13 @@ use std::sync::{Arc, Mutex};
 /// 5ch blocks requests whose User-Agent does not contain `Monazilla/1.00`.
 pub const USER_AGENT: &str = "Monazilla/1.00 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
 
-/// Builds the shared HTTP client with the Monazilla User-Agent 5ch requires.
-pub fn build_http_client() -> reqwest::Client {
+/// Builds the shared HTTP client using the given persistent cookie jar as the provider.
+/// The jar is also stored in `AppState` so the post handler can call `jar.save()` after
+/// a successful post, persisting acorn/MonaTicket across process restarts.
+pub fn build_http_client(jar: SharedJar) -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .cookie_provider(jar)
         .build()
         .expect("Failed to build HTTP client")
 }
@@ -24,6 +28,9 @@ pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub config: Config,
     pub http: reqwest::Client,
+    /// Persistent cookie jar shared with the HTTP client. The post handler calls
+    /// `jar.save(cookies_path)` after a successful post to persist acorn/MonaTicket.
+    pub jar: SharedJar,
     /// Dats currently being fetched from 5ch. Both the foreground viewer reload and the
     /// background board prefetch consult this set so a given dat is never downloaded twice
     /// concurrently (e.g. opening a thread reloads it *and* prefetches its whole board).
@@ -31,13 +38,16 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Builds the shared state with a fresh HTTP client and an empty in-flight set. Callers
-    /// supply only the DB connection and config; the inflight guard set is an internal detail.
+    /// Builds the shared state. Loads the persistent cookie jar from `config.cookies_path`
+    /// (empty jar on first run), then builds the HTTP client with it as the cookie provider.
     pub fn new(db: Connection, config: Config) -> Self {
+        let jar = cookie_jar::open(&config.cookies_path);
+        let http = build_http_client(jar.clone());
         AppState {
             db: Arc::new(Mutex::new(db)),
             config,
-            http: build_http_client(),
+            http,
+            jar,
             inflight: Arc::new(Mutex::new(HashSet::new())),
         }
     }

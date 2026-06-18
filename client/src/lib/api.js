@@ -62,6 +62,8 @@ export const api = {
     ),
   wacchoiSearch: (s, b, suffix) =>
     request('GET', `/api/boards/${s}/${b}/wacchoi-search?suffix=${encodeURIComponent(suffix)}`),
+  post: (s, b, t, body) =>
+    request('POST', `/api/favorites/${s}/${b}/${t}/post`, body),
 }
 
 // Reliably send read progress on page unload (via sendBeacon).

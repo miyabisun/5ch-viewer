@@ -87,14 +87,9 @@ async function swipe(page, selector, { dx = 0, dy = 0 }) {
 }
 
 // Programmatically scroll the appropriate scroll container to its bottom.
+// Both PC and phone now use .thread-body as the sole scroll container.
 async function scrollToBottom(page) {
-  // Check whether we are on PC (>=768px) or phone layout.
-  const isPC = await page.evaluate(() => window.matchMedia('(min-width: 768px)').matches)
-  if (isPC) {
-    await page.locator('.detail-pane').evaluate((el) => el.scrollTo(0, el.scrollHeight))
-  } else {
-    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
-  }
+  await page.locator('.thread-body').evaluate((el) => el.scrollTo(0, el.scrollHeight))
 }
 
 // ─── overscroll-behavior tests ──────────────────────────────────────────────
@@ -102,16 +97,16 @@ async function scrollToBottom(page) {
 test.describe('overscroll-behavior: wall', () => {
   test.use({ viewport: { width: 1024, height: 800 } })
 
-  test('PC detail-pane has overscroll-behavior:contain', async ({ page }) => {
+  test('PC thread-body has overscroll-behavior-y:contain', async ({ page }) => {
     await mockRoutes(page)
     await page.goto(THREAD_PATH)
     await expect(page.getByText('本文1', { exact: true })).toBeVisible()
 
-    const value = await page.locator('.detail-pane').evaluate((el) =>
-      getComputedStyle(el).overscrollBehavior,
+    // .thread-body is now the scroll container; it carries overscroll-behavior-y:contain.
+    const value = await page.locator('.thread-body').evaluate((el) =>
+      getComputedStyle(el).overscrollBehaviorY,
     )
-    // contain or contain contain (shorthand)
-    expect(value).toMatch(/contain/)
+    expect(value).toBe('contain')
   })
 
   test('html/body has overscroll-behavior-y:contain (mobile wall)', async ({ page }) => {
@@ -302,22 +297,18 @@ test.describe('pull-to-refresh (touch)', () => {
     // Wait briefly so refreshing=true is set but the slow reload has not finished.
     await page.waitForTimeout(100)
 
-    // Panel must be visible inside the viewport while refresh is in flight.
+    // Panel must be visible (height > 0) while refresh is in flight.
+    // In the new layout the panel sits in normal flow and uses height (not transform)
+    // to show/hide. When refreshing=true its height is set to 4rem (>0).
     const panel = page.getByTestId('pull-refresh')
-    const box = await panel.boundingBox()
-    const innerHeight = await page.evaluate(() => window.innerHeight)
-    // boundingBox.y must be less than innerHeight (panel is inside the viewport).
-    // Playwright boundingBox() returns { x, y, width, height } — use .y (top edge).
-    expect(box).not.toBeNull()
-    expect(box.y).toBeLessThan(innerHeight)
+    const heightDuring = await panel.evaluate((el) => el.getBoundingClientRect().height)
+    expect(heightDuring).toBeGreaterThan(0)
 
-    // After reload finishes, the panel should fold back (y >= innerHeight or off-screen).
+    // After reload finishes, the panel should fold back (near 0 height; ≤1 to account
+    // for border-top: 1px which does not disappear when height:0).
     await page.waitForTimeout(700)
-    const boxAfter = await panel.boundingBox()
-    // After completion, panel is hidden (below viewport) — y should be >= innerHeight.
-    if (boxAfter) {
-      expect(boxAfter.y).toBeGreaterThanOrEqual(innerHeight)
-    }
+    const heightAfter = await panel.evaluate((el) => el.getBoundingClientRect().height)
+    expect(heightAfter).toBeLessThanOrEqual(1)
   })
 
   test('after pull-to-refresh: old reses have no .unread bar, new reses do', async ({ page }) => {

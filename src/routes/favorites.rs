@@ -1,10 +1,11 @@
 use crate::error::AppError;
 use crate::goch::http;
+use crate::goch::post;
 use crate::goch::refresh::{self, count_blob_posts, read_blob_posts};
 use crate::goch::url::{parse_thread_url, validate_ref};
 use crate::models::{
-    AddRequest, ArchivedRequest, DatResponse, Favorite, ProgressRequest, RatingRequest,
-    ReloadResponse,
+    AddRequest, ArchivedRequest, DatResponse, Favorite, PostRequest, ProgressRequest,
+    RatingRequest, ReloadResponse,
 };
 use crate::state::AppState;
 use axum::extract::{Path, State};
@@ -35,6 +36,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/favorites/{server}/{board}/{thread_id}/archived",
             patch(patch_archived),
+        )
+        .route(
+            "/api/favorites/{server}/{board}/{thread_id}/post",
+            post(post_message),
         )
 }
 
@@ -261,8 +266,20 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
         .ok_or_else(|| AppError::NotFound("favorite not found".into()))?;
 
     let mut res = read_blob_posts(&conn, &server, &board, &thread_id)?;
-    // HTML-sanitize post bodies (XSS mitigation; the frontend uses {@html}).
+
+    // Mark own posts: collect res_num set from own_posts table, then flag matching entries.
+    let own_nums: std::collections::HashSet<i64> = {
+        let mut stmt = conn.prepare(
+            "SELECT res_num FROM own_posts WHERE server=?1 AND board=?2 AND thread_id=?3",
+        )?;
+        let nums: Result<Vec<i64>, _> =
+            stmt.query_map(params![server, board, thread_id], |r| r.get(0))?.collect();
+        nums?.into_iter().collect()
+    };
     for r in &mut res {
+        // Mark own posts (pink label) and HTML-sanitize the body (XSS mitigation;
+        // the frontend renders bodies via {@html}).
+        r.own = own_nums.contains(&r.num);
         r.body = crate::sanitize::clean(&r.body);
     }
     Ok(Json(DatResponse {
@@ -402,6 +419,62 @@ fn spawn_board_prefetch(state: &AppState, server: &str, board: &str) {
             tracing::info!("[reload] prefetch {server}/{board}: {n} dat(s) updated");
         }
     });
+}
+
+/// Posts a message to 5ch and saves the result in own_posts.
+///
+/// Does not require the thread to be in favorites (a user can post without adding).
+/// SSRF validation is delegated to post::post_message (called first).
+async fn post_message(
+    State(state): State<AppState>,
+    Path((server, board, thread_id)): ThreadPath,
+    Json(req): Json<PostRequest>,
+) -> Result<Json<Value>, AppError> {
+    validate_ref(&server, &board, &thread_id)?;
+    if req.message.trim().is_empty() {
+        return Err(AppError::BadRequest("message は空にできません".into()));
+    }
+
+    let from = req.name.as_deref().unwrap_or("");
+    let mail = req.mail.as_deref().unwrap_or("");
+
+    let result = post::post_message(
+        &state.http,
+        &state.config.goch_base_url,
+        &server,
+        &board,
+        &thread_id,
+        from,
+        mail,
+        &req.message,
+    )
+    .await?;
+
+    // Persist the own post (no FK to favorites — user can post to any thread).
+    {
+        let conn = state.db.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO own_posts
+             (server, board, thread_id, res_num, body, name, mail, poster_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                server,
+                board,
+                thread_id,
+                result.res_num,
+                req.message,
+                req.name,
+                req.mail,
+                result.poster_id,
+            ],
+        )?;
+    }
+
+    // Save the cookie jar so acorn/MonaTicket survive process restarts.
+    // Non-fatal: a save failure only means the next post will repeat the two-step confirmation.
+    state.jar.save(&state.config.cookies_path);
+
+    Ok(Json(json!({ "ok": true, "res_num": result.res_num })))
 }
 
 /// Reads the favorite's current res_count / read_res / status.
@@ -675,5 +748,80 @@ mod tests {
         let res = parse_dat(&raw);
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].body, "新本文");
+    }
+
+    /// get_dat own-post marking: after INSERT into own_posts, the matching res must have
+    /// r.own = true and all other reses must have r.own = false.
+    /// This directly tests the query + loop in the get_dat handler (without HTTP).
+    #[test]
+    fn get_dat_marks_own_posts() {
+        let conn = setup();
+        // Store a 3-post dat.
+        let dat = "名無し<>sage<>d ID:aaa<>本文1<>スレタイ\n\
+                   名無し<><>d ID:bbb<>本文2<>\n\
+                   名無し<><>d ID:ccc<>本文3<>\n";
+        replace_blob(&conn, SERVER, BOARD, THREAD, dat).unwrap();
+
+        // Register res 2 as an own post.
+        conn.execute(
+            "INSERT INTO own_posts (server, board, thread_id, res_num, body)
+             VALUES (?1, ?2, ?3, 2, '本文2')",
+            params![SERVER, BOARD, THREAD],
+        )
+        .unwrap();
+
+        // Replicate the get_dat own-marking logic.
+        let mut res = read_blob_posts(&conn, SERVER, BOARD, THREAD).unwrap();
+        let own_nums: std::collections::HashSet<i64> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT res_num FROM own_posts WHERE server=?1 AND board=?2 AND thread_id=?3",
+                )
+                .unwrap();
+            stmt.query_map(params![SERVER, BOARD, THREAD], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<Vec<i64>, _>>()
+                .unwrap()
+                .into_iter()
+                .collect()
+        };
+        for r in &mut res {
+            if own_nums.contains(&r.num) {
+                r.own = true;
+            }
+        }
+
+        assert_eq!(res.len(), 3);
+        assert!(!res[0].own, "res 1 must NOT be own");
+        assert!(res[1].own, "res 2 must be own (inserted into own_posts)");
+        assert!(!res[2].own, "res 3 must NOT be own");
+    }
+
+    /// Inserting the same own_post twice (INSERT OR REPLACE) must not create duplicates.
+    #[test]
+    fn own_post_insert_or_replace_is_idempotent() {
+        let conn = setup();
+        for _ in 0..2 {
+            conn.execute(
+                "INSERT OR REPLACE INTO own_posts (server, board, thread_id, res_num, body)
+                 VALUES (?1, ?2, ?3, 5, 'テスト本文')",
+                params![SERVER, BOARD, THREAD],
+            )
+            .unwrap();
+        }
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM own_posts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "INSERT OR REPLACE must produce exactly one row");
+
+        // Verify the stored body.
+        let body: String = conn
+            .query_row(
+                "SELECT body FROM own_posts WHERE server=?1 AND board=?2 AND thread_id=?3 AND res_num=5",
+                params![SERVER, BOARD, THREAD],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(body, "テスト本文");
     }
 }

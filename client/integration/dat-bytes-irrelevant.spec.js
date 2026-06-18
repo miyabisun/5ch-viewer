@@ -112,13 +112,14 @@ test('status is warned at res_count=980 and stays warned after re-fetch', async 
   expect(reload.status).toBe('warned')
 })
 
-// Scenario: compute_status marks dead at RES_DEAD (1000) regardless of dat byte size.
-test('status becomes dead at res_count=1000 (byte size does not matter)', async ({ request }) => {
+// Scenario: compute_status marks warned at res_count=1000 (RES_DEAD=1002; 1000/1001 are warned).
+// (Previously this test expected 'dead', which was wrong after sentinel alignment in d69e853.)
+test('status is warned at res_count=1000 (byte size does not matter)', async ({ request }) => {
   await seedFavorite(request, { res_count: 999, blob_posts: 999 })
-  // Subject reports 1000; dat returns 1000 posts → dead.
+  // Subject reports 1000; dat returns 1000 posts → warned (dead threshold is 1002).
   await programMockThread(request, { res_count: 1000, dat_posts: 1000 })
 
   const reload = await reloadThread(request)
   expect(reload.updated).toBe(true)
-  expect(reload.status).toBe('dead')
+  expect(reload.status).toBe('warned')
 })

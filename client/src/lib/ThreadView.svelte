@@ -30,6 +30,13 @@
   // Restore-on-open guard: scroll to the saved read position only after the first
   // successful load, never after a manual reload.
   let restored = $state(false)
+  // Post modal: open/close and form state.
+  let postModalOpen = $state(false)
+  let postMessage = $state('')
+  let postName = $state('')
+  let postMail = $state('')
+  let postError = $state(null)
+  let postSubmitting = $state(false)
 
   // Open = auto-refresh. Fetch the latest (GET reload: checks subject.txt's
   // res_count and pulls new dat if it grew), then render the dat. The restore
@@ -75,6 +82,7 @@
   // to suppress gestures while overlays are in front.
   function isAnyModalOpen() {
     return (
+      postModalOpen ||
       anchorRoot != null ||
       idListId != null ||
       idMenu != null ||
@@ -87,6 +95,29 @@
     )
   }
 
+  // Submit the post modal: write to 5ch, reset the form on success, then reload
+  // so the new res (marked own = pink) appears. Errors stay in the modal.
+  async function submitPost() {
+    postError = null
+    postSubmitting = true
+    try {
+      await api.post(fav.server, fav.board, fav.thread_id, {
+        message: postMessage,
+        name: postName || undefined,
+        mail: postMail || undefined,
+      })
+      postMessage = ''
+      postName = ''
+      postMail = ''
+      postModalOpen = false
+      await load()
+    } catch (e) {
+      postError = e.message
+    } finally {
+      postSubmitting = false
+    }
+  }
+
   // Initial load (auto-refresh on open).
   $effect(() => {
     load()
@@ -95,30 +126,22 @@
   // Restore the saved read position by scrolling the last-read res into view.
   // Runs once after the dat has rendered (in an effect, not load, so the res
   // nodes exist in the DOM); the `restored` guard prevents re-runs.
+  // With the new layout, .thread-body is the scroll container on both PC and phone.
   $effect(() => {
     if (!data || restored) return
     restored = true
     const target = Math.max(data.read_res, fav.read_res)
     if (target < 1) return
-    // Defer to after the list renders, then scroll the saved res into view.
     requestAnimationFrame(() => {
       const node = document.querySelector(`.res[data-res="${target}"]`)
       if (node) {
-        // scrollIntoView automatically targets the nearest scrollable ancestor
-        // (detail-pane on PC, window on phone) — no manual branching needed.
+        // scrollIntoView uses the nearest scrollable ancestor (.thread-body in the new layout).
         node.scrollIntoView({ block: 'end' })
         return
       }
-      // Fallback (target res not rendered): scroll to the bottom of whichever
-      // element actually scrolls. On PC (>=768px) the detail-pane is the scroll
-      // container; on phone it is window. matchMedia is the reliable signal —
-      // on phone the detail-pane is display:block, so offsetParent is non-null
-      // and cannot be used to tell the two apart.
-      const pane = window.matchMedia('(min-width: 768px)').matches
-        ? document.querySelector('.detail-pane')
-        : null
-      if (pane) pane.scrollTop = pane.scrollHeight
-      else window.scrollTo(0, document.body.scrollHeight)
+      // Fallback: scroll .thread-body to the bottom.
+      const body = document.querySelector('.thread-body')
+      if (body) body.scrollTop = body.scrollHeight
     })
   })
 
@@ -755,38 +778,42 @@
   </div>
 {/snippet}
 
-<!-- Sticky title header: stays visible while scrolling (replaces the removed
-     back/update bar). Sits just below the global NavBar. -->
-<h1 class="title" data-testid="thread-title">{data?.title || fav.title}</h1>
+<!-- Thread view: flex column filling the full height of .detail-pane (PC) or dvh (phone).
+     Structure: sticky header / scrollable body / pull-refresh panel / fixed footer. -->
+<div class="thread-view">
+  <!-- Sticky title header. -->
+  <h1 class="title" data-testid="thread-title">{data?.title || fav.title}</h1>
 
-{#if refreshError}
-  <p class="refresh-error" data-testid="refresh-error" role="alert">
-    更新に失敗しました（表示は前回取得分です）: {refreshError}
-  </p>
-{/if}
+  {#if refreshError}
+    <p class="refresh-error" data-testid="refresh-error" role="alert">
+      更新に失敗しました（表示は前回取得分です）: {refreshError}
+    </p>
+  {/if}
 
-{#if data}
+  <!-- Scrollable body: flex:1 so it fills remaining space between header and footer. -->
   <div class="thread-body" use:backSwipe use:pullRefresh={() => ({
     enabled: !refreshing,
     isBlocked: isAnyModalOpen,
     onRefresh: triggerRefresh,
     onDrag: (px, phase) => { pullPx = px; pullPhase = phase },
   })}>
-    {#each data.res as r (r.num)}
-      <div class="res" use:track={r.num} class:unread={r.num > readBaseline}>
-        {@render resBody(r)}
-      </div>
-    {/each}
+    {#if data}
+      {#each data.res as r (r.num)}
+        <!-- own takes priority over unread: when r.own is true, unread class is not added -->
+        <div class="res" use:track={r.num} class:unread={r.num > readBaseline && !r.own} class:own={r.own}>
+          {@render resBody(r)}
+        </div>
+      {/each}
+    {/if}
   </div>
 
-  <!-- Pull-to-refresh panel: slides up from the bottom as the user over-pulls.
-       position:fixed keeps it out of the document flow (no layout shift).
-       translateY(100%) hides it below the viewport; reduced by pullPx to reveal it. -->
+  <!-- Pull-to-refresh panel: sits between body and footer in normal flow.
+       Height is driven by pullPx; starts at 0 (hidden), grows as the user over-pulls. -->
   <div
     class="pull-refresh-panel"
     class:above-threshold={pullPx >= PULL_THRESHOLD_PX}
     data-testid="pull-refresh"
-    style="transform: translateY({refreshing ? 0 : Math.max(0, 100 - pullPx)}%)"
+    style="height: {refreshing ? '4rem' : pullPx > 0 ? Math.min(pullPx, 4 * 16) + 'px' : '0'}"
     aria-hidden={pullPx === 0 && !refreshing}
   >
     {#if refreshing}
@@ -794,10 +821,52 @@
       <span>更新中…</span>
     {:else if pullPhase === 'dragging' && pullPx >= PULL_THRESHOLD_PX}
       <span>離して更新</span>
-    {:else}
+    {:else if pullPx > 0}
       <span>更新する</span>
     {/if}
   </div>
+
+  <!-- Fixed footer: pencil button to open the post modal. -->
+  <div class="thread-footer">
+    <button
+      class="post-btn"
+      aria-label="書き込む"
+      onclick={() => { postModalOpen = true; postError = null }}
+    >✏️</button>
+  </div>
+</div>
+
+<!-- Post (write) modal. -->
+{#if postModalOpen}
+  <Modal onclose={() => { postModalOpen = false; postError = null }}>
+    {#snippet header()}
+      <div class="menu-title">書き込む</div>
+    {/snippet}
+    <div class="post-form">
+      <label class="post-label">
+        名前
+        <input class="post-input" type="text" placeholder="（省略可）" bind:value={postName} disabled={postSubmitting} />
+      </label>
+      <label class="post-label">
+        メール
+        <input class="post-input" type="text" placeholder="sage など（省略可）" bind:value={postMail} disabled={postSubmitting} />
+      </label>
+      <label class="post-label">
+        本文
+        <textarea class="post-textarea" rows="6" placeholder="本文を入力" bind:value={postMessage} disabled={postSubmitting}></textarea>
+      </label>
+      {#if postError}
+        <p class="post-error" role="alert">{postError}</p>
+      {/if}
+      <button
+        class="post-submit"
+        disabled={postSubmitting || postMessage.trim() === ''}
+        onclick={submitPost}
+      >
+        {postSubmitting ? '送信中…' : '書き込む'}
+      </button>
+    </div>
+  </Modal>
 {/if}
 
 {#if anchorRoot != null}
@@ -938,13 +1007,21 @@
 )}
 
 <style>
-  /* Sticky title header. Sits below the global NavBar (sticky at top:0,
-     height = --navbar-h). On PC (>=768px) the detail-pane is the scroll
-     container so NavBar no longer overlaps the pane content — reset top to 0. */
+  /* Thread view: fills the full height of its container (detail-pane on PC, viewport on phone).
+     Flex column so header / body / pull-panel / footer stack vertically. */
+  .thread-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  /* Sticky title header. On phone (below NavBar), top = --navbar-h.
+     On PC the detail-pane is the scroll container so top = 0. */
   .title {
     position: sticky;
     top: var(--navbar-h, 3.2rem);
     z-index: 5;
+    flex-shrink: 0;
     margin: 0;
     padding: 0.5rem 0;
     font-size: 1.05rem;
@@ -959,6 +1036,17 @@
       top: 0;
     }
   }
+
+  /* Scrollable body: fills all remaining space between the header and the footer. */
+  .thread-body {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    /* Prevent native overscroll bounce so pull-to-refresh can take over cleanly. */
+    overscroll-behavior-y: contain;
+    padding: 0.2rem 0;
+  }
+
   .res {
     background: var(--card-bg);
     border: 1px solid var(--border);
@@ -966,8 +1054,13 @@
     padding: 0.5rem;
     margin-bottom: 0.3rem;
   }
+  /* Unread: orange left border (--unread). Not --danger because unread is not an error. */
   .res.unread {
-    border-left: 3px solid var(--danger);
+    border-left: 3px solid var(--unread);
+  }
+  /* Own post: pink left border (--own). Mutually exclusive with .unread via JS (class:unread={...&&!r.own}). */
+  .res.own {
+    border-left: 3px solid var(--own);
   }
   .num {
     font-weight: bold;
@@ -1114,15 +1207,12 @@
     color: var(--muted);
   }
 
-  /* Pull-to-refresh panel: fixed to the bottom of the viewport, slides up on over-pull.
-     transform is driven inline by pullPx. z-index sits above thread content but
-     below modals (z-index:50). */
+  /* Pull-to-refresh panel: sits in normal flow between .thread-body and .thread-footer.
+     Height is driven inline (0 = hidden, grows as the user over-pulls). Overflow:hidden
+     prevents content flash when height is near-zero. */
   .pull-refresh-panel {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 4rem;
+    flex-shrink: 0;
+    overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1131,11 +1221,9 @@
     background: var(--card-bg);
     border-top: 1px solid var(--border);
     color: var(--muted);
-    z-index: 20;
-    /* Start hidden below viewport; translateY is driven inline. */
-    will-change: transform;
     user-select: none;
     pointer-events: none;
+    transition: height 0.05s linear;
   }
   /* Highlight text when past the release threshold. */
   .pull-refresh-panel.above-threshold {
@@ -1154,5 +1242,83 @@
   }
   @keyframes pr-spin {
     to { transform: rotate(360deg); }
+  }
+
+  /* Fixed footer: stays at the bottom of .thread-view. */
+  .thread-footer {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0.4rem 0.6rem;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+  }
+  .post-btn {
+    width: 2.8rem;
+    height: 2.8rem;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    font-size: 1.3rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  .post-btn:hover {
+    background: var(--border);
+  }
+
+  /* Post form inside the modal. */
+  .post-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    min-width: min(28rem, 90vw);
+    max-width: 90vw;
+  }
+  .post-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .post-input,
+  .post-textarea {
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 0.95rem;
+  }
+  .post-textarea {
+    resize: vertical;
+    font-family: inherit;
+  }
+  .post-error {
+    margin: 0;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+    color: var(--danger);
+    background: var(--error-bg);
+    border-radius: 4px;
+  }
+  .post-submit {
+    padding: 0.6rem;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 1rem;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .post-submit:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 </style>

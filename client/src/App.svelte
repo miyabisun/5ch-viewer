@@ -207,6 +207,10 @@
     --rate-5: #e23b3b;
     /* NavBar height token: shared by NavBar layout and main PC height calc. */
     --navbar-h: 3.2rem;
+    /* Unread new-post indicator (orange). Separate from --danger (red) because unread is not an error. */
+    --unread: #ef8c00;
+    /* Own-post indicator (pink). Takes priority over unread when both would apply. */
+    --own: #e84d9e;
     /* ID badge colours (light theme). l1=none (ID hidden), l2-l5=blue→red. */
     --id-l2: #1a6fd8;
     --id-l3: #8a4fd8;
@@ -225,6 +229,9 @@
     --error-bg: #3a1a1a;
     --name: #5bbf7a;
     --link: #4dd0a0;
+    /* Unread / own indicators (dark theme). */
+    --unread: #ff9e1f;
+    --own: #ff7ac0;
     /* Unread badge: dark-red pill with white text. */
     --badge-bg: #8c1f1f;
     --badge-fg: #fff;
@@ -274,6 +281,15 @@
   }
   .layout.has-thread .detail-pane {
     display: block;
+    /* Phone: thread-view fills the viewport below NavBar so .thread-body can scroll. */
+    height: calc(100vh - var(--navbar-h, 3.2rem));
+    height: calc(100dvh - var(--navbar-h, 3.2rem));
+    overflow: hidden;
+  }
+  /* Phone: when a thread is open, remove main's padding so detail-pane bottom
+     does not overflow the viewport (padding-bottom would push it ~8px outside). */
+  .layout.has-thread {
+    padding: 0;
   }
 
   /*
@@ -309,17 +325,17 @@
     }
     /* Independent scroll per pane. min-height:0 prevents grid items from
        refusing to shrink below their content height (grid item default is auto). */
-    .list-pane,
-    .detail-pane {
+    .list-pane {
       overflow-y: auto;
       height: 100%;
       min-height: 0;
     }
-    /* Wall (stage 1 of pull-to-refresh): prevent native rubber-band/bounce on the
-       detail pane so the bottom overscroll is fully managed by the gesture code.
-       Applied only to detail-pane (not list-pane) to leave list scrolling unaffected. */
+    /* detail-pane: overflow:hidden so .thread-view (height:100%) can take over
+       scrolling internally via .thread-body.  The thread-view fills this pane. */
     .detail-pane {
-      overscroll-behavior: contain;
+      overflow: hidden;
+      height: 100%;
+      min-height: 0;
     }
     .detail-pane,
     .layout.has-thread .list-pane,

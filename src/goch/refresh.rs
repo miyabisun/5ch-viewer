@@ -278,13 +278,17 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     fn make_state(conn: Connection) -> AppState {
+        let jar = crate::goch::cookie_jar::open("/tmp/goch_test_cookies.json");
+        let http = crate::state::build_http_client(jar.clone());
         AppState {
             db: Arc::new(Mutex::new(conn)),
-            http: reqwest::Client::new(),
+            http,
+            jar,
             config: Config {
                 port: 3000,
                 base_path: String::new(),
                 db_path: ":memory:".to_string(),
+                cookies_path: "/tmp/goch_test_cookies.json".to_string(),
                 goch_base_url: String::new(),
             },
             inflight: Arc::new(Mutex::new(HashSet::new())),

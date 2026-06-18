@@ -46,10 +46,10 @@ test('the thread title stays pinned at the top while scrolling', async ({ page }
   await expect(title).toHaveText(FAV.title)
   await expect(title).toBeVisible()
 
-  // Scroll well down the thread via the detail-pane container (PC layout).
-  await page.locator('.detail-pane').evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  // Scroll well down the thread via .thread-body (new layout: sole scroll container).
+  await page.locator('.thread-body').evaluate((el) => el.scrollTo(0, el.scrollHeight))
   await expect
-    .poll(() => page.locator('.detail-pane').evaluate((el) => el.scrollTop))
+    .poll(() => page.locator('.thread-body').evaluate((el) => el.scrollTop))
     .toBeGreaterThan(0)
 
   // The title is still visible (sticky) and pinned near the top of the viewport.

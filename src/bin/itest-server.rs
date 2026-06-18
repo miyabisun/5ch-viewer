@@ -24,8 +24,8 @@
 //!       favorite's metadata res_count to `res_count` (to reproduce drift: meta=117,
 //!       blob=111).
 
-use axum::extract::{Path as AxPath, State};
-use axum::http::StatusCode;
+use axum::extract::{Path as AxPath, Query, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -33,7 +33,7 @@ use goch_viewer::config::Config;
 use goch_viewer::state::AppState;
 use goch_viewer::{db, routes};
 use rusqlite::{params, Connection};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -57,6 +57,13 @@ struct MockThread {
 struct MockInner {
     threads: HashMap<(String, String), MockThread>,
     subject_hits: HashMap<String, u64>,
+    /// How many times /test/bbs.cgi has been called in the current test scenario.
+    /// Used to implement the two-step confirmation flow:
+    ///   call 1 → confirmation page (x-chx-error: 0000 Confirmation)
+    ///   call 2 → success (x-resnum: <next_res_num>)
+    bbs_cgi_call_count: u64,
+    /// The res number that bbs.cgi will report on the second (success) call.
+    bbs_cgi_next_res: i64,
 }
 
 type MockState = Arc<Mutex<MockInner>>;
@@ -155,6 +162,102 @@ async fn mock_setting(
     (StatusCode::OK, sjis(&format!("BBS_TITLE={name}\n"))).into_response()
 }
 
+/// bbs.cgi mock: implements the two-step confirmation flow.
+///
+/// Call 1 (no acorn cookie / first call in scenario):
+///   → returns a confirmation page HTML (SJIS) with x-chx-error: 0000 Confirmation
+///     and a hidden `feature=confirmed:testfeaturehash000000001234567890ab` field.
+///
+/// Call 2 (feature field present in body / second call):
+///   → returns a success response with x-resnum / x-posterid / x-postdate headers.
+///
+/// The call counter is reset by `/_control/reset` so each test starts clean.
+async fn mock_bbs_cgi(
+    State(mock): State<MockState>,
+    Query(params): Query<HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> Response {
+    let mut inner = mock.lock().unwrap();
+    let count = inner.bbs_cgi_call_count;
+    inner.bbs_cgi_call_count += 1;
+
+    // Decode the body to check whether the `feature` field is present.
+    let body_str = String::from_utf8_lossy(&body);
+    let has_feature = body_str.contains("feature=confirmed%3A")
+        || body_str.contains("feature=confirmed:");
+    let is_guid = params.get("guid").map(|v| v == "ON").unwrap_or(false);
+
+    // Second call (with feature + guid=ON) → success.
+    if count > 0 && has_feature && is_guid {
+        let res_num = inner.bbs_cgi_next_res;
+        let mut headers = HeaderMap::new();
+        headers.insert("x-resnum", HeaderValue::from_str(&res_num.to_string()).unwrap());
+        headers.insert("x-posterid", HeaderValue::from_static("TestPosterID1"));
+        headers.insert(
+            "x-postdate",
+            HeaderValue::from_str(&format!(
+                "{}.00",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            )).unwrap(),
+        );
+        // Set a mock acorn cookie (session cookie without Max-Age, like real 5ch).
+        headers.insert(
+            "set-cookie",
+            HeaderValue::from_static(
+                "acorn=mock_acorn_value; Path=/; Domain=.5ch.io",
+            ),
+        );
+        let success_html = sjis("<html><head><title>書きこみました。</title></head><body>OK</body></html>");
+        return (StatusCode::OK, headers, success_html).into_response();
+    }
+
+    // First call → confirmation page.
+    let confirmation_html = r#"<html>
+<head><title>■ 書き込み確認 ■</title></head>
+<body>
+  <form action="bbs.cgi?guid=ON" method="post">
+    <input type="hidden" name="bbs" value="applism" />
+    <input type="hidden" name="key" value="1771127145" />
+    <input type="hidden" name="feature" value="confirmed:testfeaturehash000000001234567890ab" />
+    <input type="submit" name="submit" value="上記全てを承諾して書き込む" />
+  </form>
+</body></html>"#;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-chx-error",
+        HeaderValue::from_static("0000 Confirmation"),
+    );
+    (StatusCode::OK, headers, sjis(confirmation_html)).into_response()
+}
+
+#[derive(Deserialize)]
+struct BbsCgiCtl {
+    next_res: i64,
+}
+
+/// Programs the bbs.cgi mock: sets the res number to return on success.
+/// Call this before the post test to prime the mock.
+async fn ctl_bbs_cgi(State(mock): State<MockState>, Json(c): Json<BbsCgiCtl>) -> Json<bool> {
+    let mut inner = mock.lock().unwrap();
+    inner.bbs_cgi_next_res = c.next_res;
+    inner.bbs_cgi_call_count = 0;
+    Json(true)
+}
+
+/// Returns the current bbs.cgi call count (for test assertions).
+#[derive(Serialize)]
+struct BbsCgiStatus {
+    call_count: u64,
+}
+
+async fn ctl_bbs_cgi_status(State(mock): State<MockState>) -> Json<BbsCgiStatus> {
+    let inner = mock.lock().unwrap();
+    Json(BbsCgiStatus { call_count: inner.bbs_cgi_call_count })
+}
+
 async fn ctl_thread(State(mock): State<MockState>, Json(c): Json<ThreadCtl>) -> Json<bool> {
     mock.lock().unwrap().threads.insert(
         (c.board.clone(), c.thread_id.clone()),
@@ -190,6 +293,8 @@ async fn ctl_mock_reset(State(mock): State<MockState>) -> Json<bool> {
     let mut inner = mock.lock().unwrap();
     inner.threads.clear();
     inner.subject_hits.clear();
+    inner.bbs_cgi_call_count = 0;
+    inner.bbs_cgi_next_res = 0;
     Json(true)
 }
 
@@ -223,8 +328,10 @@ async fn ctl_seed(State(app): State<AppState>, Json(c): Json<SeedCtl>) -> Json<b
 /// Wipes all seeded data so each test starts clean (the :memory: DB persists for the process).
 async fn ctl_reset(State(app): State<AppState>) -> Json<bool> {
     let conn = app.db.lock().unwrap();
+    // own_posts has no FK to favorites, so it must be deleted explicitly.
+    conn.execute("DELETE FROM own_posts", []).unwrap();
     conn.execute("DELETE FROM favorites", []).unwrap();
-    Json(true) // dat_blobs cascade-deletes via the FK
+    Json(true) // dat_blobs cascade-deletes via the favorites FK
 }
 
 #[tokio::main]
@@ -240,7 +347,11 @@ async fn main() {
         .route("/{board}/subject.txt", get(mock_subject))
         .route("/{board}/dat/{file}", get(mock_dat))
         .route("/{board}/SETTING.TXT", get(mock_setting))
+        // bbs.cgi mock: two-step confirmation flow (call 1 = confirm page, call 2 = success).
+        .route("/test/bbs.cgi", post(mock_bbs_cgi))
         .route("/_control/thread", post(ctl_thread))
+        .route("/_control/bbs-cgi", post(ctl_bbs_cgi))
+        .route("/_control/bbs-cgi/status", get(ctl_bbs_cgi_status))
         .route("/_control/subject-hits/{board}", get(ctl_subject_hits))
         .route("/_control/reset", post(ctl_mock_reset))
         .with_state(mock_state.clone());
@@ -259,6 +370,9 @@ async fn main() {
         port: app_port,
         base_path: String::new(),
         db_path: ":memory:".into(),
+        // Integration tests use an in-memory DB; cookies are not persisted.
+        // Use a temp path that will not be written (the itest process is short-lived).
+        cookies_path: "/tmp/goch_itest_cookies.json".into(),
         goch_base_url: format!("http://127.0.0.1:{mock_port}"),
     };
     let app_state = AppState::new(conn, config);

@@ -100,3 +100,11 @@ pub struct AddNgWacchoiRequest {
     pub week_key: String,
     pub wacchoi: Option<String>,
 }
+
+/// Request body for POST /api/favorites/{server}/{board}/{thread_id}/post.
+#[derive(Debug, Deserialize)]
+pub struct PostRequest {
+    pub message: String,
+    pub name: Option<String>,
+    pub mail: Option<String>,
+}

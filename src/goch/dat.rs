@@ -31,6 +31,10 @@ pub struct Res {
     pub body: String,
     /// Extracted ID key (the part after "ID:"), or null when absent.
     pub id: Option<String>,
+    /// True when this res was posted by the current user (matched via own_posts table).
+    /// Set to false by parse_dat; overridden to true in get_dat handler.
+    #[serde(skip_deserializing, default)]
+    pub own: bool,
 }
 
 /// Splits one dat line into its `<>`-separated fields, or `None` if it is empty or
@@ -59,6 +63,7 @@ pub fn parse_dat(text: &str) -> Vec<Res> {
                 date,
                 body: f[3].to_string(),
                 id,
+                own: false,
             })
         })
         .collect()

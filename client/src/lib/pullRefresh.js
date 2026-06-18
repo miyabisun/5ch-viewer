@@ -32,22 +32,15 @@ const DIRECTION_LOCK_PX = 5
 // This gives a rubber-band feel and bounds the translateY range.
 const PULL_MAX_PX = PULL_THRESHOLD_PX * 1.5
 
-/** Returns the current scroll metrics for whichever container is active. */
+/** Returns the current scroll metrics for the thread body scroll container.
+ *  Both PC and phone now use .thread-body as the sole scroll container (new layout). */
 function getScrollState() {
-  const isPC = window.matchMedia('(min-width: 768px)').matches
-  if (isPC) {
-    const pane = document.querySelector('.detail-pane')
-    if (!pane) return null
-    return {
-      scrollTop: pane.scrollTop,
-      clientHeight: pane.clientHeight,
-      scrollHeight: pane.scrollHeight,
-    }
-  }
+  const body = document.querySelector('.thread-body')
+  if (!body) return null
   return {
-    scrollTop: window.scrollY,
-    clientHeight: window.innerHeight,
-    scrollHeight: document.documentElement.scrollHeight,
+    scrollTop: body.scrollTop,
+    clientHeight: body.clientHeight,
+    scrollHeight: body.scrollHeight,
   }
 }
 
@@ -198,12 +191,9 @@ export function pullRefresh(node, opts) {
     ignore = false
   }
 
-  // Attach the scroll listener to whichever element actually scrolls.
-  // On PC (>=768px) this is .detail-pane; on mobile it is window.
-  // We check at mount time; the matchMedia result is stable for the component lifetime.
-  const scrollTarget = window.matchMedia('(min-width: 768px)').matches
-    ? (document.querySelector('.detail-pane') ?? window)
-    : window
+  // Attach the scroll listener to .thread-body, which is the sole scroll container
+  // in the new layout (both PC and phone scroll inside .thread-body).
+  const scrollTarget = document.querySelector('.thread-body') ?? window
 
   scrollTarget.addEventListener('scroll', onScroll, { passive: true })
   node.addEventListener('touchstart', onStart, { passive: true })
