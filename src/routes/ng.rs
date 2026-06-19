@@ -458,8 +458,8 @@ mod tests {
         // スレB: res1 has same suffix 83IP but different prefix (IP violation check).
         let dat_b = "名無し</b>(ﾜｯﾁｮｲ cccc-83IP [::3])<><>2025/01/01<>本文3_83IP<>スレB\n";
 
-        replace_blob(&conn, "egg", "test", "1000000001", dat_a).unwrap();
-        replace_blob(&conn, "egg", "test", "1000000002", dat_b).unwrap();
+        replace_blob(&conn, "egg", "test", "1000000001", dat_a, 0).unwrap();
+        replace_blob(&conn, "egg", "test", "1000000002", dat_b, 0).unwrap();
 
         // Simulate wacchoi search for suffix "83IP".
         let posts_a = crate::goch::dat::parse_dat(dat_a);
@@ -534,8 +534,8 @@ mod tests {
         // スレB: no posts with ID:target.
         let dat_b = "名無し<><>2025/01/01 ID:other<>別スレの本文<>スレB\n";
 
-        replace_blob(&conn, "egg", "test", "1000000001", dat_a).unwrap();
-        replace_blob(&conn, "egg", "test", "1000000002", dat_b).unwrap();
+        replace_blob(&conn, "egg", "test", "1000000001", dat_a, 0).unwrap();
+        replace_blob(&conn, "egg", "test", "1000000002", dat_b, 0).unwrap();
 
         // Simulate the search: manually replicate the filter logic.
         let posts_a = crate::goch::dat::parse_dat(dat_a);

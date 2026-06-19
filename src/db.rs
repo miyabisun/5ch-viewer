@@ -35,10 +35,11 @@ pub const SCHEMA: &str = "
         ON favorites (rating DESC, title ASC);
 
     CREATE TABLE IF NOT EXISTS dat_blobs (
-        server     TEXT NOT NULL,
-        board      TEXT NOT NULL,
-        thread_id  TEXT NOT NULL,
-        raw        TEXT NOT NULL,  -- UTF-8 decoded dat text (Shift-JIS decoded once on write)
+        server     TEXT    NOT NULL,
+        board      TEXT    NOT NULL,
+        thread_id  TEXT    NOT NULL,
+        raw        TEXT    NOT NULL,  -- UTF-8 decoded dat text (Shift-JIS decoded once on write)
+        dat_bytes  INTEGER NOT NULL DEFAULT 0,  -- original Shift-JIS byte length (for HEAD gate)
         PRIMARY KEY (server, board, thread_id),
         FOREIGN KEY (server, board, thread_id)
             REFERENCES favorites(server, board, thread_id) ON DELETE CASCADE
@@ -101,6 +102,14 @@ pub fn open(path: &str) -> Connection {
             "ALTER TABLE favorites ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
         )
         .expect("Failed to add archived column to favorites");
+    }
+
+    // Migration: add `dat_bytes` column to dat_blobs if it does not exist yet (existing DBs).
+    if !has_column(&conn, "dat_blobs", "dat_bytes") {
+        conn.execute_batch(
+            "ALTER TABLE dat_blobs ADD COLUMN dat_bytes INTEGER NOT NULL DEFAULT 0",
+        )
+        .expect("Failed to add dat_bytes column to dat_blobs");
     }
 
     // One-time migration: if any dat_blobs row still holds a Shift-JIS BLOB (typeof='blob'),

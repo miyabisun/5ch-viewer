@@ -87,32 +87,8 @@ test('refresh skips threads whose subject count did not grow', async ({ request 
   expect(await storedPosts(request, THREADS[0])).toBe(100)
 })
 
-// Open-time prefetch through the UI: opening one thread warms the WHOLE board. The opened
-// thread is reloaded in the foreground; the other favorites of the same board are bulk-DL'd
-// in the background, so their stored dats are updated without ever being opened.
-test('opening a thread prefetches the rest of its board in the background', async ({
-  page,
-  request,
-}) => {
-  // Three favorites, all behind 5ch (blob 50 / subject 70).
-  for (const t of THREADS) {
-    await seedFavorite(request, t, { res_count: 50, blob_posts: 50 })
-    await programMockThread(request, t, { res_count: 70, dat_posts: 70 })
-  }
-
-  await page.goto('/')
-  // Open the FIRST thread only (FavoritesList sorts by natural title order; all titles equal
-  // here, so click the first rendered item).
-  await page.locator('.info').first().click()
-  // The opened thread renders the freshly fetched 70 posts.
-  await expect(page.getByText('本文70', { exact: true })).toBeVisible()
-
-  // The OTHER two threads were never opened, yet their stored dats are now 70 (prefetched).
-  await waitForStored(request, THREADS[1], 70)
-  await waitForStored(request, THREADS[2], 70)
-
-  // subject.txt is read once PER PASS for the whole board, never once per thread. With three
-  // favorites a per-thread design would read it >= 3 times; the board-grouped design reads it
-  // at most twice here (the list-mount auto-refresh pass + the open-time prefetch pass).
-  expect(await subjectHits(request, BOARD)).toBeLessThanOrEqual(2)
-})
+// Note: the open-time board prefetch (spawn_board_prefetch) was removed when the reload
+// endpoint was changed to use a HEAD gate instead of subject.txt. The reload endpoint no
+// longer reads subject.txt at all, so it has no basis to kick off a board-level prefetch.
+// Board-level bulk prefetch is now exclusively triggered by the explicit refresh button
+// (POST /api/favorites/refresh), tested in the two tests above.

@@ -308,6 +308,8 @@ async fn ctl_seed(State(app): State<AppState>, Json(c): Json<SeedCtl>) -> Json<b
     };
     // Build UTF-8 dat text for DB storage (dat_blobs.raw is TEXT, Shift-JIS decoded once on write).
     let dat_text = build_dat_text(&title, c.blob_posts);
+    // Compute the Shift-JIS byte length so the HEAD gate has an accurate baseline.
+    let dat_bytes = build_dat_sjis(&title, c.blob_posts).len() as i64;
     let conn = app.db.lock().unwrap();
     conn.execute(
         "INSERT OR REPLACE INTO favorites
@@ -317,9 +319,9 @@ async fn ctl_seed(State(app): State<AppState>, Json(c): Json<SeedCtl>) -> Json<b
     )
     .unwrap();
     conn.execute(
-        "INSERT OR REPLACE INTO dat_blobs (server, board, thread_id, raw)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![c.server, c.board, c.thread_id, dat_text],
+        "INSERT OR REPLACE INTO dat_blobs (server, board, thread_id, raw, dat_bytes)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![c.server, c.board, c.thread_id, dat_text, dat_bytes],
     )
     .unwrap();
     Json(true)

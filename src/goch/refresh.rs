@@ -142,6 +142,7 @@ pub fn persist_fetch(
             Ok(false)
         }
         DatFetch::Replace { bytes } => {
+            let dat_bytes = bytes.len() as i64;
             let text = http::decode_shift_jis(&bytes);
             let res_count = parse_dat(&text).len() as i64;
             let title = title_from_dat(&text).unwrap_or_default();
@@ -150,7 +151,7 @@ pub fn persist_fetch(
                 "[refresh] {server}/{board}/{thread_id}: fetched {res_count} posts, replacing blob"
             );
             let conn = state.db.lock().unwrap();
-            replace_blob(&conn, server, board, thread_id, &text)?;
+            replace_blob(&conn, server, board, thread_id, &text, dat_bytes)?;
             conn.execute(
                 "UPDATE favorites SET res_count=?4, status=?5,
                  title = CASE WHEN title='' THEN ?6 ELSE title END,
@@ -193,17 +194,20 @@ fn collect_board_threads(
 
 /// Replaces the raw in dat_blobs entirely (inserts if absent). Always stores the full
 /// UTF-8-decoded body, so a subsequent read never needs Shift-JIS decoding.
+/// `dat_bytes` is the original Shift-JIS byte length of the dat, used by the HEAD gate
+/// to detect changes without downloading the full body.
 pub fn replace_blob(
     conn: &rusqlite::Connection,
     server: &str,
     board: &str,
     thread_id: &str,
     text: &str,
+    dat_bytes: i64,
 ) -> Result<(), AppError> {
     conn.execute(
-        "INSERT INTO dat_blobs (server, board, thread_id, raw) VALUES (?1,?2,?3,?4)
-         ON CONFLICT(server, board, thread_id) DO UPDATE SET raw=excluded.raw",
-        params![server, board, thread_id, text],
+        "INSERT INTO dat_blobs (server, board, thread_id, raw, dat_bytes) VALUES (?1,?2,?3,?4,?5)
+         ON CONFLICT(server, board, thread_id) DO UPDATE SET raw=excluded.raw, dat_bytes=excluded.dat_bytes",
+        params![server, board, thread_id, text, dat_bytes],
     )?;
     Ok(())
 }

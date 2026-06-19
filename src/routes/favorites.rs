@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use crate::goch::http;
 use crate::goch::post;
-use crate::goch::refresh::{self, count_blob_posts, read_blob_posts};
+use crate::goch::refresh::{self, read_blob_posts};
 use crate::goch::url::{parse_thread_url, validate_ref};
 use crate::models::{
     AddRequest, ArchivedRequest, DatResponse, Favorite, PostRequest, ProgressRequest,
@@ -287,62 +287,47 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
     }))
 }
 
-/// Cache-or-fetch: refreshes the dat for a thread (GET, viewer semantics).
+/// Cache-or-fetch: refreshes the dat for a single thread (GET, viewer semantics).
 ///
-/// Take-or-skip is gated by subject.txt's res_count to keep 5ch load low:
-/// if the count has not grown, the dat is NOT fetched (only local metadata is updated).
-/// When a fetch is needed, the entire dat is GET (no Range / no diff) and the stored
-/// dat is fully replaced as UTF-8 TEXT (decoded once on write, never re-decoded on read).
+/// Uses a HEAD request to check the dat's Content-Length instead of fetching subject.txt,
+/// so only one dat URL is hit (lightweight). If Content-Length matches the stored
+/// dat_bytes the dat is unchanged and the fetch is skipped. Any mismatch (or HEAD failure)
+/// triggers a full GET. This also means writes are detected immediately after posting
+/// without needing a `?force` parameter.
 async fn reload(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<ReloadResponse>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
 
-    // 1. Determine how many posts we actually hold in the stored dat. The gate must
-    //    compare subject.txt against the stored dat, not against `favorites.res_count`:
-    //    those two can drift apart (e.g. res_count was bumped to the subject value
-    //    while a prior fetch stored fewer posts). Trusting res_count then makes the
-    //    gate believe "no growth" forever and the stored dat never catches up. Counting
-    //    the parsed posts in the stored dat is self-healing.
-    let stored_res_count: i64 = {
+    // 1. Read the stored dat_bytes from the DB.
+    //    dat_bytes=0 means the column was not yet populated (migration or first fetch);
+    //    treat it as "unknown" and always fall through to a full GET.
+    let stored_dat_bytes: i64 = {
         let conn = state.db.lock().unwrap();
-        // Existence check (404 a removed favorite, not a missing blob).
-        let exists: bool = conn
-            .query_row(
-                "SELECT 1 FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
-                params![server, board, thread_id],
-                |_| Ok(true),
-            )
-            .optional()?
-            .unwrap_or(false);
-        if !exists {
-            return Err(AppError::NotFound("favorite not found".into()));
-        }
-        count_blob_posts(&conn, &server, &board, &thread_id)?
+        conn.query_row(
+            "SELECT COALESCE(db.dat_bytes, 0)
+             FROM favorites f
+             LEFT JOIN dat_blobs db
+               ON f.server=db.server AND f.board=db.board AND f.thread_id=db.thread_id
+             WHERE f.server=?1 AND f.board=?2 AND f.thread_id=?3",
+            params![server, board, thread_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("favorite not found".into()))?
     };
 
-    // 2. Check subject.txt to see how many posts the board reports (load-reduction gate).
-    //    On subject failure, fall back to fetching the dat (cannot prove "no change").
-    let subject_count: Option<i64> = match http::fetch_subject(
+    // 2. HEAD request to get the dat's current Content-Length without downloading the body.
+    //    None = HEAD failed or header missing → fall back to full GET.
+    let head_content_length: Option<i64> = http::head_dat_content_length(
         &state.http,
         &state.config.goch_base_url,
         &server,
         &board,
+        &thread_id,
     )
-    .await
-    {
-        Ok(entries) => entries
-            .iter()
-            .find(|e| e.thread_id == thread_id)
-            .map(|e| e.res_count),
-        Err(e) => {
-            tracing::warn!("[reload] subject {server}/{board}: {e}");
-            None
-        }
-    };
+    .await;
 
-    // 3. Decide whether to fetch the dat (shared gate: only when subject reports growth).
-    if !refresh::needs_fetch(subject_count, stored_res_count) {
-        // No new posts: skip the 5ch dat fetch entirely. Only touch updated_at so the
-        // stored status (res_count-derived warned/dead) is preserved unchanged.
+    // 3. Gate: skip the full GET when we have a known stored size AND HEAD confirms no change.
+    if stored_dat_bytes > 0 && head_content_length == Some(stored_dat_bytes) {
         let conn = state.db.lock().unwrap();
         conn.execute(
             "UPDATE favorites SET updated_at=strftime('%s','now')
@@ -350,24 +335,14 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
             params![server, board, thread_id],
         )?;
         let (res_count, read_res, status) = read_meta(&conn, &server, &board, &thread_id)?;
-        return Ok(Json(ReloadResponse {
-            res_count,
-            read_res,
-            status,
-            updated: false,
-        }));
+        return Ok(Json(ReloadResponse { res_count, read_res, status, updated: false }));
     }
-
-    // 4. Fetch the entire dat (await without holding the lock).
-    //    Log the decision so a "stuck thread" can be diagnosed from the server logs:
-    //    subject vs stored counts and whether a fetch is triggered.
     tracing::info!(
-        "[reload] {server}/{board}/{thread_id}: subject={subject_count:?} stored={stored_res_count} -> fetching dat"
+        "[reload] {server}/{board}/{thread_id}: HEAD={head_content_length:?} stored={stored_dat_bytes} -> fetching dat"
     );
 
-    // Claim the dat so a concurrent board prefetch does not also download it. If the prefetch
-    // already holds it, wait for it to finish, then serve the (now refreshed) stored dat
-    // instead of a duplicate fetch — the prefetch's full-replace is authoritative.
+    // 4. Fetch the entire dat (await without holding the lock).
+    //    Claim the dat so a concurrent board prefetch does not double-download it.
     let updated = match state.claim_dat(&(server.clone(), board.clone(), thread_id.clone())) {
         Some(_guard) => {
             let fetch = http::fetch_dat(
@@ -378,7 +353,7 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
                 &thread_id,
             )
             .await?;
-            // Persist: a full UTF-8 TEXT replace + metadata recompute, or mark dead on Gone.
+            // Persist: full UTF-8 TEXT replace + metadata recompute, or mark dead on Gone.
             refresh::persist_fetch(&state, &server, &board, &thread_id, fetch)?
         }
         None => {
@@ -389,10 +364,6 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
         }
     };
 
-    // 5. Kick off a background prefetch of the rest of this board's favorites so opening
-    //    one thread warms the others (the in-flight guard skips this thread). Best-effort.
-    spawn_board_prefetch(&state, &server, &board);
-
     let conn = state.db.lock().unwrap();
     let (res_count, read_res, status) = read_meta(&conn, &server, &board, &thread_id)?;
     Ok(Json(ReloadResponse {
@@ -401,20 +372,6 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
         status,
         updated,
     }))
-}
-
-/// Spawns a background board-level prefetch (one subject.txt + bulk dat for grown threads).
-/// Non-blocking; failures are logged inside `refresh_board`.
-fn spawn_board_prefetch(state: &AppState, server: &str, board: &str) {
-    let state = state.clone();
-    let server = server.to_string();
-    let board = board.to_string();
-    tokio::spawn(async move {
-        let n = refresh::refresh_board(&state, &server, &board).await;
-        if n > 0 {
-            tracing::info!("[reload] prefetch {server}/{board}: {n} dat(s) updated");
-        }
-    });
 }
 
 /// Posts a message to 5ch and saves the result in own_posts.
@@ -535,8 +492,8 @@ mod tests {
             "名無し<>sage<>2025/01/01 ID:abc<>本文1<>スレタイ\n名無し<><>2025/01/02 ID:def<>本文2<>\n";
 
         // initial store, then a full replace (the only write path now)
-        replace_blob(&conn, SERVER, BOARD, THREAD, first).unwrap();
-        replace_blob(&conn, SERVER, BOARD, THREAD, full).unwrap();
+        replace_blob(&conn, SERVER, BOARD, THREAD, first, 0).unwrap();
+        replace_blob(&conn, SERVER, BOARD, THREAD, full, 0).unwrap();
 
         // (a) the column type is TEXT (not BLOB)
         assert_eq!(column_type(&conn), "text");
@@ -610,7 +567,7 @@ mod tests {
         let conn = setup();
         // Dat text with 2 posts, but metadata res_count bumped to 3 (drifted ahead).
         let dat = "名無し<>sage<>d ID:a<>本文1<>スレタイ\n名無し<><>d ID:b<>本文2<>\n";
-        replace_blob(&conn, SERVER, BOARD, THREAD, dat).unwrap();
+        replace_blob(&conn, SERVER, BOARD, THREAD, dat, 0).unwrap();
         conn.execute(
             "UPDATE favorites SET res_count=3 WHERE server=?1 AND board=?2 AND thread_id=?3",
             params![SERVER, BOARD, THREAD],
@@ -732,8 +689,8 @@ mod tests {
     #[test]
     fn replace_blob_overwrites_previous_body() {
         let conn = setup();
-        replace_blob(&conn, SERVER, BOARD, THREAD, "古い<>sage<>d ID:x<>古い本文<>t\n").unwrap();
-        replace_blob(&conn, SERVER, BOARD, THREAD, "新しい<>sage<>d ID:y<>新本文<>t\n").unwrap();
+        replace_blob(&conn, SERVER, BOARD, THREAD, "古い<>sage<>d ID:x<>古い本文<>t\n", 0).unwrap();
+        replace_blob(&conn, SERVER, BOARD, THREAD, "新しい<>sage<>d ID:y<>新本文<>t\n", 0).unwrap();
         let raw: String = conn
             .query_row(
                 "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -756,7 +713,7 @@ mod tests {
         let dat = "名無し<>sage<>d ID:aaa<>本文1<>スレタイ\n\
                    名無し<><>d ID:bbb<>本文2<>\n\
                    名無し<><>d ID:ccc<>本文3<>\n";
-        replace_blob(&conn, SERVER, BOARD, THREAD, dat).unwrap();
+        replace_blob(&conn, SERVER, BOARD, THREAD, dat, 0).unwrap();
 
         // Register res 2 as an own post.
         conn.execute(

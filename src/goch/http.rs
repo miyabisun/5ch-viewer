@@ -10,6 +10,7 @@ use reqwest::{Client, Response, StatusCode};
 use std::time::Duration;
 
 const MAX_ATTEMPTS: u32 = 4;
+const HEAD_MAX_ATTEMPTS: u32 = 2; // HEAD failures fall back to full GET; fewer retries needed
 const RETRY_DELAY: Duration = Duration::from_millis(2000);
 /// 5ch host. Migrated from 5ch.net to 5ch.io in 2026-03 (the old net domain was revoked).
 const HOST_SUFFIX: &str = "5ch.io";
@@ -42,15 +43,19 @@ fn setting_url(base: &str, server: &str, board: &str) -> String {
     format!("{}/{board}/SETTING.TXT", origin(base, server))
 }
 
-/// GET (fixed identity). Retries on network errors and 5xx.
-/// Returns 404/2xx as-is without retry (status handling is the caller's job).
-async fn get(client: &Client, url: &str) -> Result<Response, AppError> {
+/// Retry wrapper shared by HEAD and GET. Retries on network errors and 5xx up to
+/// `max_attempts` times; returns 2xx/4xx responses as-is (the caller interprets them).
+async fn retry_request(
+    build: impl Fn() -> reqwest::RequestBuilder,
+    max_attempts: u32,
+    label: &str,
+    url: &str,
+) -> Result<Response, AppError> {
     let mut last = String::new();
-    for attempt in 0..MAX_ATTEMPTS {
-        let req = client.get(url).header("Accept-Encoding", "identity");
-        match req.send().await {
+    for attempt in 0..max_attempts {
+        match build().header("Accept-Encoding", "identity").send().await {
             Ok(resp) => {
-                if resp.status().is_server_error() && attempt < MAX_ATTEMPTS - 1 {
+                if resp.status().is_server_error() && attempt < max_attempts - 1 {
                     last = format!("HTTP {}", resp.status());
                     tokio::time::sleep(RETRY_DELAY).await;
                     continue;
@@ -59,13 +64,23 @@ async fn get(client: &Client, url: &str) -> Result<Response, AppError> {
             }
             Err(e) => {
                 last = e.to_string();
-                if attempt < MAX_ATTEMPTS - 1 {
+                if attempt < max_attempts - 1 {
                     tokio::time::sleep(RETRY_DELAY).await;
                 }
             }
         }
     }
-    Err(AppError::Upstream(format!("GET failed: {url} ({last})")))
+    Err(AppError::Upstream(format!("{label} failed: {url} ({last})")))
+}
+
+/// HEAD with retry (limited attempts; failures fall back to full GET at the call site).
+async fn head(client: &Client, url: &str) -> Result<Response, AppError> {
+    retry_request(|| client.head(url), HEAD_MAX_ATTEMPTS, "HEAD", url).await
+}
+
+/// GET with retry. Returns 404/2xx as-is (status handling is the caller's job).
+async fn get(client: &Client, url: &str) -> Result<Response, AppError> {
+    retry_request(|| client.get(url), MAX_ATTEMPTS, "GET", url).await
 }
 
 /// Fetches and parses subject.txt.
@@ -119,9 +134,35 @@ pub enum DatFetch {
     Gone,
 }
 
+/// Sends a HEAD request to the dat URL and returns the Content-Length header value.
+///
+/// Returns `Some(len)` on success, `None` when the header is missing or the request fails.
+/// The caller must fall back to a full GET when `None` is returned.
+///
+/// `Accept-Encoding: identity` is required so 5ch does not compress the response and
+/// returns an accurate Content-Length that matches the raw Shift-JIS byte count.
+pub async fn head_dat_content_length(
+    client: &Client,
+    base: &str,
+    server: &str,
+    board: &str,
+    thread_id: &str,
+) -> Option<i64> {
+    // SSRF defense-in-depth: validate before assembling the URL.
+    validate_ref(server, board, thread_id).ok()?;
+    let url = dat_url(base, server, board, thread_id);
+    let resp = head(client, &url).await.ok().filter(|r| r.status().is_success())?;
+    // Read Content-Length directly from the header rather than resp.content_length(),
+    // because reqwest interprets HEAD response body length as 0 internally.
+    resp.headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<i64>().ok())
+}
+
 /// Fetches the entire dat (no Range / no diff).
-/// Returns the full body on success, Gone on 404. Take-or-skip is decided by the caller
-/// (it checks subject.txt's res_count before calling this, so 5ch is not hit needlessly).
+/// Returns the full body on success, Gone on 404. Take-or-skip gating is the caller's
+/// responsibility (HEAD Content-Length for single-thread reload, subject.txt for board refresh).
 pub async fn fetch_dat(
     client: &Client,
     base: &str,
