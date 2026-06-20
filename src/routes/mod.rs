@@ -1,4 +1,5 @@
 mod favorites;
+mod images;
 mod ng;
 mod search;
 
@@ -15,6 +16,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let sub = Router::new()
         .merge(favorites::routes())
+        .merge(images::routes())
         .merge(ng::routes())
         .merge(search::routes())
         .nest_service("/assets", ServeDir::new("client/build/assets"))

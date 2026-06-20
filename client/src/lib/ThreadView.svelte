@@ -4,8 +4,10 @@
   import { formatName } from './name.js'
   import { stripId, buildIdStats } from './id.js'
   import { buildWacchoiStats, wacchoiEnabled, linkifyWacchoi, extractWacchoiSuffix, wacchoiWeekKey } from './wacchoi.js'
+  import { linkify, extractImageUrls, ANCHOR_RE } from './linkify.js'
   import { copyText } from './clipboard.js'
   import Modal from './Modal.svelte'
+  import ImageViewer from './ImageViewer.svelte'
   import { pullRefresh, PULL_THRESHOLD_PX } from './pullRefresh.js'
 
   let { fav, onback, onprogress = () => {}, ngIds = new Set(), onngchange = () => {}, ngWacchoi = [], onngwacchoichange = () => {} } = $props()
@@ -56,6 +58,8 @@
     }
     data = await api.getDat(fav.server, fav.board, fav.thread_id)
     if (data.read_res > maxRead) maxRead = data.read_res
+    // Update the mosaic URL set from the server response.
+    mosaicUrls = new Set(data.mosaic_urls ?? [])
   }
 
   // Manual refresh triggered by the pull-to-refresh gesture.
@@ -92,7 +96,9 @@
       idSearchLoading ||
       idSearchResult != null ||
       wacchoiSearchLoading ||
-      wacchoiSearchResult != null
+      wacchoiSearchResult != null ||
+      imageMenu != null ||
+      imageViewerState != null
     )
   }
 
@@ -204,17 +210,8 @@
     }
   })
 
-  // In-body anchor >>N. The body is already sanitized, so >> appears as &gt;&gt;.
-  const ANCHOR_RE = /(?:&gt;){2}(\d+)/g
-
-  // Convert anchors (>>123) into clickable spans (the body is already sanitized on the server).
-  // data-anchor only contains digits, so no new XSS vector is introduced.
-  function linkify(html) {
-    return html.replace(
-      ANCHOR_RE,
-      '<span class="anchor" data-anchor="$1">&gt;&gt;$1</span>',
-    )
-  }
+  // In-body anchor >>N (imported from linkify.js — single source of truth for both
+  // the backref builder and the anchor-tree walk).
 
   // Back-reference map: N -> [res numbers that anchor to N...].
   // Built on the front-end by parsing >>N in each res body (no server change needed).
@@ -416,6 +413,73 @@
         node.removeEventListener('touchend', onEnd)
       },
     }
+  }
+
+  // --- Image mosaic state ---
+  // Set of URLs with mosaic=1 for this thread (sourced from DatResponse.mosaic_urls).
+  let mosaicUrls = $state(new Set())
+
+  // --- Image viewer state ---
+  // When open: { images: [...], initialIndex: number }
+  // images item: { href, path, url, resNum, indexInRes, globalIndex }
+  let imageViewerState = $state(null)
+
+  // Flat list of all images across all res entries (built reactively from data).
+  const allImages = $derived.by(() => {
+    if (!data?.res) return []
+    const out = []
+    for (const r of data.res) {
+      const imgs = extractImageUrls(r.body)
+      imgs.forEach((img, indexInRes) => {
+        out.push({ ...img, resNum: r.num, indexInRes, globalIndex: out.length })
+      })
+    }
+    return out
+  })
+
+  function openImageViewer(resNum, indexInRes) {
+    const idx = allImages.findIndex(
+      (img) => img.resNum === resNum && img.indexInRes === indexInRes,
+    )
+    if (idx === -1) return
+    imageViewerState = { images: allImages, initialIndex: idx }
+  }
+
+  // --- Image context menu ---
+  // { url: string, mosaic: boolean } | null
+  let imageMenu = $state(null)
+
+  // Long-press detection for thumbnails (touch, 500ms).
+  let imagePressTimer
+  let imageLongPressed = false
+  function onThumbPointerDown(e, url) {
+    if (e.pointerType !== 'touch') return
+    imageLongPressed = false
+    imagePressTimer = setTimeout(() => {
+      imageLongPressed = true
+      imageMenu = { url, mosaic: mosaicUrls.has(url) }
+    }, 500)
+  }
+  function cancelThumbPress() {
+    clearTimeout(imagePressTimer)
+  }
+
+  // Toggle mosaic for a URL and persist to the API.
+  async function toggleMosaic(url) {
+    const newMosaic = !mosaicUrls.has(url)
+    try {
+      if (newMosaic) {
+        await api.setImageMosaic(url)
+        mosaicUrls.add(url)
+      } else {
+        await api.unsetImageMosaic(url)
+        mosaicUrls.delete(url)
+      }
+      mosaicUrls = new Set(mosaicUrls) // trigger reactivity
+    } catch (e) {
+      console.error('[image-mosaic]', e)
+    }
+    imageMenu = null
   }
 
   // --- ID left-click list modal ---
@@ -700,13 +764,43 @@
   }
 </script>
 
-<!-- body is already sanitized on the server. linkify makes anchors clickable. -->
+<!-- body is already sanitized on the server. linkify makes anchors clickable and URLs into links. -->
 <!-- resNum is passed so right-click can open the reply menu for the correct res. -->
 {#snippet body(html, resNum)}
+  {@const images = extractImageUrls(html)}
   <div class="body" role="presentation"
     onclick={onBodyClick}
     oncontextmenu={(e) => onBodyContextMenu(e, resNum)}
   >{@html linkify(html)}</div>
+  {#if images.length > 0}
+    <div class="thumb-strip">
+      {#each images as img, indexInRes}
+        {@const isMosaic = mosaicUrls.has(img.url)}
+        <button
+          class="thumb-btn"
+          onclick={(e) => {
+            if (imageLongPressed) { imageLongPressed = false; e.stopPropagation(); return }
+            openImageViewer(resNum, indexInRes)
+          }}
+          oncontextmenu={(e) => { e.preventDefault(); imageMenu = { url: img.url, mosaic: isMosaic } }}
+          onpointerdown={(e) => onThumbPointerDown(e, img.url)}
+          onpointerup={cancelThumbPress}
+          onpointerleave={cancelThumbPress}
+          onpointercancel={cancelThumbPress}
+          aria-label="画像を表示"
+        >
+          <img
+            src="/api/images/{img.path}"
+            alt="画像"
+            class="thumb"
+            class:thumb-mosaic={isMosaic}
+            loading="lazy"
+            onerror={(e) => e.currentTarget.classList.add('thumb-missing')}
+          />
+        </button>
+      {/each}
+    </div>
+  {/if}
 {/snippet}
 
 <!-- Back-references (reses that anchor to this res). Tap to follow. -->
@@ -1045,6 +1139,30 @@
   </Modal>
 {/if}
 
+<!-- Image context menu (thumbnail long-press or right-click). -->
+{#if imageMenu != null}
+  <Modal onclose={() => { imageMenu = null }}>
+    {#snippet header()}<div class="menu-title">画像</div>{/snippet}
+    <div class="menu" data-testid="image-menu">
+      <button class="action" onclick={() => toggleMosaic(imageMenu.url)}>
+        {imageMenu.mosaic ? 'モザイクを解除' : 'モザイクをかける'}
+      </button>
+      <button class="action" onclick={() => { copyText(imageMenu.url); imageMenu = null }}>URL をコピー</button>
+    </div>
+  </Modal>
+{/if}
+
+<!-- Full-screen image viewer. -->
+{#if imageViewerState != null}
+  <ImageViewer
+    images={imageViewerState.images}
+    initialIndex={imageViewerState.initialIndex}
+    {mosaicUrls}
+    onclose={() => { imageViewerState = null }}
+    onImageMenu={(item) => { imageViewerState = null; imageMenu = { url: item.url, mosaic: mosaicUrls.has(item.url) } }}
+  />
+{/if}
+
 <!-- ID search modal. -->
 {@render searchResultModal(
   idSearchLoading,
@@ -1379,5 +1497,59 @@
   .post-submit:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  /* Thumbnail strip: images below the body text. */
+  .thumb-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.3rem;
+  }
+
+  /* Thumbnail button: borderless, resets button defaults. */
+  .thumb-btn {
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+    border-radius: 4px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  /* Thumbnail image: fixed 96×96 px square, cropped to cover. */
+  .thumb {
+    display: block;
+    width: 96px;
+    height: 96px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: var(--border);
+  }
+
+  /* Mosaic: strong blur applied over the thumbnail. */
+  .thumb-btn img.thumb-mosaic {
+    filter: blur(20px);
+  }
+
+  /* Failed image load: replace the broken icon with a muted placeholder cross. */
+  .thumb.thumb-missing {
+    position: relative;
+    background: var(--border);
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+  }
+  .thumb.thumb-missing::after {
+    content: '✗';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--muted);
+    font-size: 1.2rem;
   }
 </style>

@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::goch::cookie_jar::{self, SharedJar};
+use crate::goch::images::build_image_http_client;
 use rusqlite::Connection;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -28,6 +29,8 @@ pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub config: Config,
     pub http: reqwest::Client,
+    /// Separate HTTP client for image downloads (Chrome UA, no cookie jar, 5s timeout).
+    pub image_http: reqwest::Client,
     /// Persistent cookie jar shared with the HTTP client. The post handler calls
     /// `jar.save(cookies_path)` after a successful post to persist acorn/MonaTicket.
     pub jar: SharedJar,
@@ -43,10 +46,12 @@ impl AppState {
     pub fn new(db: Connection, config: Config) -> Self {
         let jar = cookie_jar::open(&config.cookies_path);
         let http = build_http_client(jar.clone());
+        let image_http = build_image_http_client();
         AppState {
             db: Arc::new(Mutex::new(db)),
             config,
             http,
+            image_http,
             jar,
             inflight: Arc::new(Mutex::new(HashSet::new())),
         }

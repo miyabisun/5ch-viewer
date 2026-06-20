@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use crate::goch::http;
+use crate::goch::images::extract_image_urls;
 use crate::goch::post;
 use crate::goch::refresh::{self, read_blob_posts};
 use crate::goch::url::{parse_thread_url, validate_ref};
@@ -278,12 +279,17 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
         r.own = own_nums.contains(&r.num);
         r.body = crate::sanitize::clean(&r.body);
     }
+
+    // Collect mosaic URLs: extract all image URLs from the raw dat, then filter by mosaic=1.
+    let mosaic_urls = query_mosaic_urls(&conn, &server, &board, &thread_id)?;
+
     Ok(Json(DatResponse {
         title,
         res_count,
         read_res,
         status,
         res,
+        mosaic_urls,
     }))
 }
 
@@ -428,6 +434,52 @@ async fn post_message(
     state.jar.save(&state.config.cookies_path);
 
     Ok(Json(json!({ "ok": true, "res_num": result.res_num })))
+}
+
+/// Reads the raw dat text and returns URLs whose mosaic flag is set to 1.
+/// Extracts image URLs from the dat, then queries image_cache for mosaic=1 matches.
+fn query_mosaic_urls(
+    conn: &rusqlite::Connection,
+    server: &str,
+    board: &str,
+    thread_id: &str,
+) -> Result<Vec<String>, AppError> {
+    // Read the raw dat text (UTF-8, already decoded at write time).
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![server, board, thread_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+
+    let raw = match raw {
+        Some(r) => r,
+        None => return Ok(vec![]),
+    };
+
+    let urls = extract_image_urls(&raw);
+    if urls.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build an IN(...) query to find which of those URLs have mosaic=1.
+    let placeholders: String = urls
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT url FROM image_cache WHERE url IN ({placeholders}) AND mosaic = 1"
+    );
+    let params_vec: Vec<&dyn rusqlite::ToSql> =
+        urls.iter().map(|u| u as &dyn rusqlite::ToSql).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let mosaic_urls: Vec<String> = stmt
+        .query_map(params_vec.as_slice(), |r| r.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(mosaic_urls)
 }
 
 /// Reads the favorite's current res_count / read_res / status.
@@ -591,7 +643,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!(!(subject_count > metadata_res_count));
+        assert!(subject_count <= metadata_res_count);
     }
 
     /// Archived favorites must not appear in the list (archived=0 filter).

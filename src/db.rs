@@ -71,6 +71,17 @@ pub const SCHEMA: &str = "
         created_at INTEGER DEFAULT (strftime('%s','now')),
         PRIMARY KEY (suffix, board, week_key)
     );
+
+    CREATE TABLE IF NOT EXISTS image_cache (
+        url         TEXT    NOT NULL PRIMARY KEY,
+        path        TEXT    NOT NULL DEFAULT '',
+        image       BLOB,
+        mime        TEXT    NOT NULL DEFAULT '',
+        mosaic      INTEGER NOT NULL DEFAULT 0,
+        created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_image_cache_path ON image_cache (path);
+    CREATE INDEX IF NOT EXISTS idx_image_cache_created ON image_cache (created_at);
 ";
 
 pub fn open(path: &str) -> Connection {
@@ -110,6 +121,14 @@ pub fn open(path: &str) -> Connection {
             "ALTER TABLE dat_blobs ADD COLUMN dat_bytes INTEGER NOT NULL DEFAULT 0",
         )
         .expect("Failed to add dat_bytes column to dat_blobs");
+    }
+
+    // Migration: add `mosaic` column to image_cache if it does not exist yet (existing DBs).
+    if !has_column(&conn, "image_cache", "mosaic") {
+        conn.execute_batch(
+            "ALTER TABLE image_cache ADD COLUMN mosaic INTEGER NOT NULL DEFAULT 0",
+        )
+        .expect("Failed to add mosaic column to image_cache");
     }
 
     // One-time migration: if any dat_blobs row still holds a Shift-JIS BLOB (typeof='blob'),
@@ -354,6 +373,60 @@ mod tests {
             )
             .unwrap();
         assert_eq!(archived, 0);
+    }
+
+    #[test]
+    fn image_cache_upsert_and_mosaic_preserved() {
+        let conn = open_memory();
+
+        // Insert a new image cache entry (BLOB not yet available → NULL).
+        conn.execute(
+            "INSERT INTO image_cache (url, path, mosaic) VALUES ('https://i.imgur.com/Abc123.jpg', 'i.imgur.com/Abc123.jpg', 1)",
+            [],
+        )
+        .unwrap();
+
+        // Check mosaic was stored as 1.
+        let mosaic: i64 = conn
+            .query_row(
+                "SELECT mosaic FROM image_cache WHERE url='https://i.imgur.com/Abc123.jpg'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(mosaic, 1);
+
+        // UPSERT: fill in the image BLOB + mime, but must not touch mosaic.
+        let fake_png: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47];
+        conn.execute(
+            "INSERT INTO image_cache (url, path, image, mime, mosaic)
+             VALUES ('https://i.imgur.com/Abc123.jpg', 'i.imgur.com/Abc123.jpg', ?1, 'image/png', 0)
+             ON CONFLICT(url) DO UPDATE SET path=excluded.path, image=excluded.image, mime=excluded.mime",
+            rusqlite::params![fake_png],
+        )
+        .unwrap();
+
+        // Mosaic must still be 1 (ON CONFLICT does not update mosaic).
+        let (mosaic2, mime2): (i64, String) = conn
+            .query_row(
+                "SELECT mosaic, mime FROM image_cache WHERE url='https://i.imgur.com/Abc123.jpg'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(mosaic2, 1, "mosaic must be preserved across UPSERT");
+        assert_eq!(mime2, "image/png");
+
+        // INSERT OR IGNORE on duplicate URL must be a no-op.
+        let result = conn.execute(
+            "INSERT OR IGNORE INTO image_cache (url, path) VALUES ('https://i.imgur.com/Abc123.jpg', 'other')",
+            [],
+        );
+        assert!(result.is_ok());
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM image_cache", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "INSERT OR IGNORE must not create a duplicate row");
     }
 
     #[test]

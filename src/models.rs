@@ -49,6 +49,8 @@ pub struct DatResponse {
     pub read_res: i64,
     pub status: String,
     pub res: Vec<Res>,
+    /// URLs of images in this thread whose mosaic flag is set to 1.
+    pub mosaic_urls: Vec<String>,
 }
 
 /// Reload (cache-or-fetch full dat) result.
@@ -107,4 +109,10 @@ pub struct PostRequest {
     pub message: String,
     pub name: Option<String>,
     pub mail: Option<String>,
+}
+
+/// Request body for POST /api/images/mosaic and DELETE /api/images/mosaic.
+#[derive(Debug, Deserialize)]
+pub struct MosaicRequest {
+    pub url: String,
 }

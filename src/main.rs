@@ -7,6 +7,16 @@ async fn main() {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt::init();
 
+    // Warn if GOCH_ALLOW_LOOPBACK_FOR_TEST is set in a release build — it has no effect
+    // there (guarded by cfg!(debug_assertions) in is_safe_ip), but the operator may be
+    // confused about the security posture.
+    if !cfg!(debug_assertions) && std::env::var("GOCH_ALLOW_LOOPBACK_FOR_TEST").is_ok() {
+        tracing::warn!(
+            "GOCH_ALLOW_LOOPBACK_FOR_TEST is set in a release build; it has NO effect. \
+             This variable is only honored in debug builds for integration tests."
+        );
+    }
+
     let config = Config::from_env();
     let port = config.port;
     let conn = db::open(&config.db_path);

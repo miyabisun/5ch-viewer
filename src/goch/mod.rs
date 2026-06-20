@@ -4,6 +4,7 @@
 pub mod cookie_jar;
 pub mod dat;
 pub mod http;
+pub mod images;
 pub mod next_thread;
 pub mod post;
 pub mod refresh;

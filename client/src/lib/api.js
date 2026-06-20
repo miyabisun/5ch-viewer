@@ -64,6 +64,8 @@ export const api = {
     request('GET', `/api/boards/${s}/${b}/wacchoi-search?suffix=${encodeURIComponent(suffix)}`),
   post: (s, b, t, body) =>
     request('POST', `/api/favorites/${s}/${b}/${t}/post`, body),
+  setImageMosaic: (url) => request('POST', '/api/images/mosaic', { url }),
+  unsetImageMosaic: (url) => request('DELETE', '/api/images/mosaic', { url }),
 }
 
 // Reliably send read progress on page unload (via sendBeacon).

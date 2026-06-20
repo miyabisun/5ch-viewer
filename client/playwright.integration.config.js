@@ -29,11 +29,16 @@ export default defineConfig({
   webServer: [
     {
       // Real Rust backend + mock 5ch. Run from the repo root (one level up).
-      command: `APP_PORT=${APP_PORT} MOCK_PORT=${MOCK_PORT} cargo run --quiet --bin itest-server`,
+      // GOCH_ALLOW_LOOPBACK_FOR_TEST: allows loopback image downloads in tests only.
+      // NEVER set this in production.
+      command: `APP_PORT=${APP_PORT} MOCK_PORT=${MOCK_PORT} GOCH_ALLOW_LOOPBACK_FOR_TEST=1 cargo run --quiet --bin itest-server`,
       cwd: '..',
       url: `${APP_URL}/api/favorites`,
       reuseExistingServer: !process.env.CI,
       timeout: 180000,
+      env: {
+        GOCH_ALLOW_LOOPBACK_FOR_TEST: '1',
+      },
     },
     {
       command: `VITE_API_TARGET=${APP_URL} bun run dev --port ${WEB_PORT} --strictPort`,

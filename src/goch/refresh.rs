@@ -159,6 +159,17 @@ pub fn persist_fetch(
                  WHERE server=?1 AND board=?2 AND thread_id=?3",
                 params![server, board, thread_id, res_count, status, title],
             )?;
+            drop(conn);
+
+            // Kick off image prefetch in the background (non-blocking for the caller).
+            let image_urls = crate::goch::images::extract_image_urls(&text);
+            if !image_urls.is_empty() {
+                let state2 = state.clone();
+                tokio::spawn(async move {
+                    crate::goch::images::prefetch_images(&state2, image_urls).await;
+                });
+            }
+
             Ok(true)
         }
     }
@@ -284,9 +295,11 @@ mod tests {
     fn make_state(conn: Connection) -> AppState {
         let jar = crate::goch::cookie_jar::open("/tmp/goch_test_cookies.json");
         let http = crate::state::build_http_client(jar.clone());
+        let image_http = crate::goch::images::build_image_http_client();
         AppState {
             db: Arc::new(Mutex::new(conn)),
             http,
+            image_http,
             jar,
             config: Config {
                 port: 3000,

@@ -25,7 +25,7 @@
 //!       blob=111).
 
 use axum::extract::{Path as AxPath, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -49,6 +49,8 @@ struct MockThread {
     dat_posts: i64,
     /// When true the dat endpoint returns 404 (thread gone).
     gone: bool,
+    /// Optional image URLs to embed in the dat body (appended to post 1).
+    image_urls: Vec<String>,
 }
 
 /// Mock state: programmed threads plus per-board subject.txt request counts. The counts let
@@ -64,6 +66,14 @@ struct MockInner {
     bbs_cgi_call_count: u64,
     /// The res number that bbs.cgi will report on the second (success) call.
     bbs_cgi_next_res: i64,
+    /// Per-filename hit counter for the mock image endpoint (/mock/img/:file).
+    image_hits: HashMap<String, u64>,
+    /// Per-filename size override: when present, the mock serves a body of this byte length
+    /// (all zeros) to simulate a large image for the 5MB size limit test.
+    image_size_overrides: HashMap<String, usize>,
+    /// Per-filename Content-Type override: when present, the mock returns this MIME type
+    /// instead of the default (derived from file extension). Used to test MIME rejection.
+    image_content_type_overrides: HashMap<String, String>,
 }
 
 type MockState = Arc<Mutex<MockInner>>;
@@ -74,13 +84,23 @@ fn sjis(text: &str) -> Vec<u8> {
 }
 
 /// Builds a dat body as UTF-8 text with `n` posts. The first post carries the thread title.
+/// Optionally embeds `image_urls` into the body of post 1 (space-separated).
 /// Used for DB seeding (dat_blobs.raw is UTF-8 TEXT).
 fn build_dat_text(title: &str, n: i64) -> String {
+    build_dat_text_with_images(title, n, &[])
+}
+
+fn build_dat_text_with_images(title: &str, n: i64, image_urls: &[String]) -> String {
     let mut s = String::new();
     for i in 1..=n {
         let title_field = if i == 1 { title } else { "" };
+        let image_suffix = if i == 1 && !image_urls.is_empty() {
+            format!(" {}", image_urls.join(" "))
+        } else {
+            String::new()
+        };
         s.push_str(&format!(
-            "名無し<>sage<>2025/01/01 00:00 ID:abc{i}<>本文{i}<>{title_field}\n"
+            "名無し<>sage<>2025/01/01 00:00 ID:abc{i}<>本文{i}{image_suffix}<>{title_field}\n"
         ));
     }
     s
@@ -103,6 +123,9 @@ struct ThreadCtl {
     dat_posts: i64,
     #[serde(default)]
     gone: bool,
+    /// Optional image URLs to embed in the dat body for image-cache integration tests.
+    #[serde(default)]
+    image_urls: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -142,7 +165,9 @@ async fn mock_dat(
     let inner = mock.lock().unwrap();
     match inner.threads.get(&(board.clone(), thread_id.clone())) {
         Some(t) if !t.gone => {
-            (StatusCode::OK, build_dat_sjis(&t.title, t.dat_posts)).into_response()
+            let dat_text = build_dat_text_with_images(&t.title, t.dat_posts, &t.image_urls);
+            let dat_bytes = sjis(&dat_text);
+            (StatusCode::OK, dat_bytes).into_response()
         }
         _ => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
@@ -272,6 +297,7 @@ async fn ctl_thread(State(mock): State<MockState>, Json(c): Json<ThreadCtl>) -> 
             res_count: c.res_count,
             dat_posts: c.dat_posts,
             gone: c.gone,
+            image_urls: c.image_urls,
         },
     );
     let _ = c.server;
@@ -295,6 +321,112 @@ async fn ctl_mock_reset(State(mock): State<MockState>) -> Json<bool> {
     inner.subject_hits.clear();
     inner.bbs_cgi_call_count = 0;
     inner.bbs_cgi_next_res = 0;
+    inner.image_hits.clear();
+    inner.image_size_overrides.clear();
+    inner.image_content_type_overrides.clear();
+    Json(true)
+}
+
+// ---- mock image handlers ---------------------------------------------------
+
+/// A minimal 1×1 PNG for test image responses.
+const TINY_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+    0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk length + type
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1×1
+    0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, // 8-bit RGB, CRC
+    0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, // IDAT chunk
+    0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+    0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59, // IDAT data + CRC
+    0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, // IEND chunk
+    0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
+/// `GET /mock/img/:file` — serves a tiny PNG (or a large zero-filled body for size tests).
+/// Increments a per-filename hit counter for GET requests only (HEAD requests are not counted
+/// so tests can assert "image was fetched exactly once" independent of the HEAD pre-check).
+async fn mock_image(
+    method: Method,
+    State(mock): State<MockState>,
+    AxPath(file): AxPath<String>,
+) -> Response {
+    let (size_override, content_type) = {
+        let mut inner = mock.lock().unwrap();
+        // Only count GET requests; HEAD is the preflight size-check and should not affect hit counts.
+        if method == Method::GET {
+            *inner.image_hits.entry(file.clone()).or_insert(0) += 1;
+        }
+        let size = inner.image_size_overrides.get(&file).copied();
+        // Use content-type override when set; otherwise derive from file extension.
+        let ct = if let Some(ct_override) = inner.image_content_type_overrides.get(&file) {
+            ct_override.clone()
+        } else if file.ends_with(".jpg") || file.ends_with(".jpeg") {
+            "image/jpeg".to_string()
+        } else if file.ends_with(".gif") {
+            "image/gif".to_string()
+        } else if file.ends_with(".webp") {
+            "image/webp".to_string()
+        } else {
+            "image/png".to_string()
+        };
+        (size, ct)
+    };
+
+    if let Some(size) = size_override {
+        // Large body: serve zeros to trigger the 5MB guard in the image downloader.
+        let body = vec![0u8; size];
+        let mut resp_headers = HeaderMap::new();
+        resp_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+        resp_headers.insert(header::CONTENT_LENGTH, size.to_string().parse().unwrap());
+        return (StatusCode::OK, resp_headers, body).into_response();
+    }
+
+    // Normal response: serve the tiny PNG bytes.
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+    (StatusCode::OK, resp_headers, TINY_PNG.to_vec()).into_response()
+}
+
+/// Returns how many times a specific image file has been requested.
+async fn ctl_image_hits(
+    State(mock): State<MockState>,
+    AxPath(file): AxPath<String>,
+) -> Json<u64> {
+    let inner = mock.lock().unwrap();
+    Json(inner.image_hits.get(&file).copied().unwrap_or(0))
+}
+
+#[derive(Deserialize)]
+struct ImageSizeCtl {
+    file: String,
+    size: usize,
+}
+
+/// Programs the mock image server to return a body of `size` bytes for `file`.
+/// Used to test the 5MB size limit guard.
+async fn ctl_image_size(
+    State(mock): State<MockState>,
+    Json(c): Json<ImageSizeCtl>,
+) -> Json<bool> {
+    let mut inner = mock.lock().unwrap();
+    inner.image_size_overrides.insert(c.file, c.size);
+    Json(true)
+}
+
+#[derive(Deserialize)]
+struct ImageContentTypeCtl {
+    file: String,
+    content_type: String,
+}
+
+/// Programs the mock image server to return the given Content-Type for `file`.
+/// Used to test MIME rejection (e.g. text/html, image/svg+xml).
+async fn ctl_image_content_type(
+    State(mock): State<MockState>,
+    Json(c): Json<ImageContentTypeCtl>,
+) -> Json<bool> {
+    let mut inner = mock.lock().unwrap();
+    inner.image_content_type_overrides.insert(c.file, c.content_type);
     Json(true)
 }
 
@@ -333,7 +465,45 @@ async fn ctl_reset(State(app): State<AppState>) -> Json<bool> {
     // own_posts has no FK to favorites, so it must be deleted explicitly.
     conn.execute("DELETE FROM own_posts", []).unwrap();
     conn.execute("DELETE FROM favorites", []).unwrap();
+    conn.execute("DELETE FROM image_cache", []).unwrap();
     Json(true) // dat_blobs cascade-deletes via the favorites FK
+}
+
+#[derive(Deserialize)]
+struct SeedImageCtl {
+    url: String,
+    path: String,
+    mime: String,
+    #[serde(default)]
+    mosaic: i64,
+}
+
+/// Seeds an image_cache row directly (bypasses the HTTP download pipeline).
+/// Used by tests that need to verify the serve endpoint without hitting external URLs.
+/// The `image` BLOB is filled with a minimal 1×1 PNG so the serve path is exercised.
+async fn ctl_seed_image(State(app): State<AppState>, Json(c): Json<SeedImageCtl>) -> Json<bool> {
+    // Minimal PNG: 1×1 pixel, RGB.
+    let tiny_png: Vec<u8> = vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+        0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+        0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+        0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
+        0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+        0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    let conn = app.db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO image_cache (url, path, image, mime, mosaic)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(url) DO UPDATE SET path=excluded.path, image=excluded.image,
+             mime=excluded.mime, mosaic=excluded.mosaic",
+        params![c.url, c.path, tiny_png, c.mime, c.mosaic],
+    )
+    .unwrap();
+    Json(true)
 }
 
 #[tokio::main]
@@ -351,10 +521,15 @@ async fn main() {
         .route("/{board}/SETTING.TXT", get(mock_setting))
         // bbs.cgi mock: two-step confirmation flow (call 1 = confirm page, call 2 = success).
         .route("/test/bbs.cgi", post(mock_bbs_cgi))
+        // Mock image endpoint: serves tiny PNG/JPEG/GIF/WebP or large bodies for size tests.
+        .route("/mock/img/{file}", get(mock_image))
         .route("/_control/thread", post(ctl_thread))
         .route("/_control/bbs-cgi", post(ctl_bbs_cgi))
         .route("/_control/bbs-cgi/status", get(ctl_bbs_cgi_status))
         .route("/_control/subject-hits/{board}", get(ctl_subject_hits))
+        .route("/_control/image-hits/{file}", get(ctl_image_hits))
+        .route("/_control/image-size", post(ctl_image_size))
+        .route("/_control/image-content-type", post(ctl_image_content_type))
         .route("/_control/reset", post(ctl_mock_reset))
         .with_state(mock_state.clone());
     let mock_addr = format!("127.0.0.1:{mock_port}");
@@ -384,6 +559,7 @@ async fn main() {
     // explicitly and the 60s background poll would only add nondeterminism.
     let control = Router::new()
         .route("/_control/seed-favorite", post(ctl_seed))
+        .route("/_control/seed-image", post(ctl_seed_image))
         .route("/_control/reset", post(ctl_reset))
         .with_state(app_state.clone());
     let app = control.merge(routes::build_router(app_state));
