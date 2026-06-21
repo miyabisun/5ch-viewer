@@ -1182,11 +1182,13 @@
     height: 100%;
   }
 
-  /* Sticky title header. On phone (below NavBar), top = --navbar-h.
-     On PC the detail-pane is the scroll container so top = 0. */
+  /* Sticky title header. .title's nearest scroll ancestor is .thread-body
+     (overflow-y:auto), which fills .detail-pane. The body's top edge sits
+     directly below the sticky NavBar, so top:0 pins the title flush to
+     that edge on both phone and PC. */
   .title {
     position: sticky;
-    top: var(--navbar-h, 3.2rem);
+    top: 0;
     z-index: 5;
     flex-shrink: 0;
     margin: 0;
@@ -1197,11 +1199,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  @media (min-width: 768px) {
-    .title {
-      top: 0;
-    }
   }
 
   /* Scrollable body: fills all remaining space between the header and the footer. */
@@ -1251,6 +1248,16 @@
     color: var(--link);
     cursor: pointer;
     text-decoration: underline;
+  }
+  /* External URL links inside res bodies (output by linkify.js).
+     Share --link with .anchor so all clickable links share the same hue. */
+  :global(.body a),
+  :global(.body a:visited) {
+    color: var(--link);
+    text-decoration: underline;
+  }
+  :global(.body a:hover) {
+    text-decoration: none;
   }
   /* Inline wacchoi badge: inherits colour from .name so that per-res colour
      classes (id-l2..l5) applied to .name propagate without extra wrappers.

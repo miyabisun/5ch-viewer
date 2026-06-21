@@ -194,7 +194,7 @@
     --danger: #c00;
     --error-bg: #fee;
     --name: #060;
-    --link: #1a6;
+    --link: #2a8fbd;
     /* Unread badge: dark-red pill with white text. */
     --badge-bg: #a01818;
     --badge-fg: #fff;
@@ -228,7 +228,7 @@
     --danger: #ff6b6b;
     --error-bg: #3a1a1a;
     --name: #5bbf7a;
-    --link: #4dd0a0;
+    --link: #7fdbff;
     /* Unread / own indicators (dark theme). */
     --unread: #ff9e1f;
     --own: #ff7ac0;
