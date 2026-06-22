@@ -59,9 +59,12 @@ test('opening a thread auto-refreshes via GET (no POST, no buttons)', async ({
   await expect(page.getByText('本文2')).toBeVisible()
   expect(reloadMethod).toBe('GET')
 
-  // The old back/update buttons are gone.
-  await expect(page.getByRole('button', { name: /更新/ })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: /戻る/ })).toHaveCount(0)
+  // The old back/update buttons are gone from the thread view (detail pane).
+  // (The FavoritesList footer has a 更新 button in the list pane, so we scope
+  // the assertion to the detail pane only.)
+  const detailPane = page.locator('.detail-pane')
+  await expect(detailPane.getByRole('button', { name: /更新/ })).toHaveCount(0)
+  await expect(detailPane.getByRole('button', { name: /戻る/ })).toHaveCount(0)
 })
 
 // Regression (the "stuck at 111" bug): opening a thread must run the reload (GET)

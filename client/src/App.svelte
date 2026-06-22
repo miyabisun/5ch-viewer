@@ -60,12 +60,19 @@
   const REFRESH_RELIST_DELAY_MS = 1500
   let relistTimer = null
   function refreshAndReload() {
-    api
+    return api
       .refreshFavorites()
-      .then(() => {
-        relistTimer = setTimeout(() => load(), REFRESH_RELIST_DELAY_MS)
+      .then(
+        () =>
+          new Promise((resolve) => {
+            relistTimer = setTimeout(() => {
+              load().finally(resolve)
+            }, REFRESH_RELIST_DELAY_MS)
+          }),
+      )
+      .catch((e) => {
+        console.error('[refresh]', e)
       })
-      .catch((e) => console.error('[refresh]', e))
   }
 
   // Find the matching favorite for a thread descriptor, or build a minimal
@@ -167,7 +174,7 @@
     {:else if page === 'archive'}
       <ArchiveList onopen={open} />
     {:else}
-      <FavoritesList {favorites} onopen={open} onchange={load} />
+      <FavoritesList {favorites} onopen={open} onchange={load} onrefresh={refreshAndReload} />
     {/if}
   </section>
 
