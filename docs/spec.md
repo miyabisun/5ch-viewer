@@ -1,7 +1,7 @@
 # viewer-of-5ch 仕様書
 
 本アプリ（5ch をスクレイピングして閲覧する Web サービス）の仕様。
-**5ch 側の外部仕様（ドメイン・dat 形式・アクセス作法・find.5ch.net 等）は
+**5ch 側の外部仕様（ドメイン・dat 形式・アクセス作法・ff5ch.syoboi.jp 等）は
 [5ch-spec.md](5ch-spec.md) に分離**してある。本書はアプリ自身の設計に集中する。
 
 ## 参照リポジトリ
@@ -29,7 +29,7 @@ PC やタブレットで読めない。そこで VPS 上に Web サービスを�
 ### やること
 - お気に入りスレの本文閲覧と既読位置の端末間同期
 - dat を Range 差分取得し SQLite に一元管理
-- スレタイ検索（find.5ch.net をラップ）と URL 直接登録
+- スレタイ検索（ff5ch.syoboi.jp をラップ）と URL 直接登録
 - スレッド監視と次スレ自動取得（sentinel から移植）
 - お気に入りの星評価（0〜5）による分類表示
 
@@ -89,7 +89,8 @@ novel-server を踏襲し、**1 つの Rust バイナリ**でフロント配信�
 | tokio 1 (full) | 非同期ランタイム・定期実行 |
 | rusqlite 0.33 (bundled) | SQLite。プールは使わず `Mutex<Connection>` |
 | reqwest 0.12 | HTTP クライアント（Range・UA 制御） |
-| scraper 0.21 | find.5ch.net の HTML スクレイピング |
+| scraper 0.21 | 投稿フォーム HTML のパース（post.rs） |
+| quick-xml 0.36 | ff5ch.syoboi.jp の RSS パース |
 | ammonia 4 | レス本文の HTML サニタイズ |
 | encoding_rs | Shift_JIS ↔ UTF-8 |
 | serde / serde_json | JSON |
@@ -123,7 +124,7 @@ novel-server を踏襲し、**1 つの Rust バイナリ**でフロント配信�
 | --- | --- |
 | スレを開く / 下に引っ張ってリロード | 該当スレの dat を Range 差分取得 |
 | お気に入り登録 | 板の SETTING.TXT を 1 回（board_name 取得） |
-| スレタイ検索 | find.5ch.net をラップ |
+| スレタイ検索 | ff5ch.syoboi.jp をラップ（第三者） |
 | バックグラウンド監視 | 板の subject.txt（板単位で 1 回・共有） |
 
 ページを開いただけで全お気に入りを一括更新するような無人ポーリングはしない。
@@ -210,7 +211,7 @@ CREATE TABLE IF NOT EXISTS dat_blobs (
   （2 秒）で間引き、離脱時は `navigator.sendBeacon()` で確実に送る。正本はサーバー。
 
 ### 8.2 スレッドの追加
-- **(A) スレタイ検索**: find.5ch.net をサーバーでラップ（CORS 回避）。`GET /api/search`
+- **(A) スレタイ検索**: ff5ch.syoboi.jp をサーバーでラップ（CORS 回避、精度のため第三者を採用）。`GET /api/search`
   で全 5ch 横断検索 → 候補一覧 → 選んで登録。結果 URL から server/board/thread_id を
   抽出（5ch-spec 参照、`parse_thread_url` 再利用）。
 - **(B) URL 直接登録**（ChMate 移行用）: スレ URL を貼り付け、`parse_thread_url` で
@@ -249,7 +250,7 @@ CREATE TABLE IF NOT EXISTS dat_blobs (
 | POST | `…/{…}/reload` | Range 差分取得を実行 |
 | PATCH | `…/{…}/progress` | 既読位置 `read_res` 更新 |
 | PATCH | `…/{…}/rating` | 星評価更新 |
-| GET | `/api/search?q={keyword}` | スレタイ検索（find.5ch.net ラップ） |
+| GET | `/api/search?q={keyword}` | スレタイ検索（ff5ch.syoboi.jp ラップ） |
 
 ## 11. 非機能要件
 - **メモリ**: dat 全体を常駐させず必要時に SQLite から読む。`cache_size` は実測調整。
@@ -271,5 +272,5 @@ CREATE TABLE IF NOT EXISTS dat_blobs (
 - 板一覧→スレ一覧の常設ブラウジング
 - 5ch への書き込み
 - アンカーのツリー表示（現状は1段モーダル）
-- find.5ch.net 結果の短 TTL キャッシュ
+- ff5ch.syoboi.jp 結果の短 TTL キャッシュ
 - NG ワード / 画像プレビュー

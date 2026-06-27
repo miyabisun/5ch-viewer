@@ -23,7 +23,7 @@
   圧縮レスポンスを返し、`Content-Length` が消えてサイズ判定・Range 取得が壊れる。
 - レスポンスは **Shift_JIS**。
 - 5xx はリトライ可。**404 はリトライしない**（dat 消失＝スレ落ち）。
-- find.5ch.net 以外（subject/dat/SETTING）はブラウザ判定でなく Monazilla UA で通る。
+- ff5ch.syoboi.jp を含む外部サービス（subject/dat/SETTING）はブラウザ判定でなく Monazilla UA で通る。
 
 ## subject.txt（板のスレッド一覧）
 
@@ -99,18 +99,28 @@
 - `https://{server}.5ch.io/{board}/SETTING.TXT`
 - `BBS_TITLE=スマホアプリ` の行に板の日本語名。
 
-## スレタイ検索（find.5ch.net）
+## スレタイ検索（ff5ch.syoboi.jp）
 
-- `https://find.5ch.net/search?q={URLエンコード}`（任意で `Sort` / `maxResult` /
-  `atLeast` 等）。
-- **ブラウザ相当の User-Agent が必須**（無いと 403＝ボット弾き。Monazilla では不可）。
-- レスポンスは **JS 不要のサーバーレンダリング HTML**（JSON API ではない）。
-- セレクタ: 結果リンク `a.list_line_link`、その中のスレタイ `.list_line_link_title`。
-- **結果リンクの href はスキーム省略形** `//{server}.5ch.io/test/read.cgi/{board}/{thread_id}`。
-  `https://` を補ってから server/board/thread_id を抽出する。
+公式の 5ch 検索エンドポイントは検索精度が低く（無関係スレが上位に来る）、代わりに第三者の
+**ff5ch.syoboi.jp**（しょぼいカレンダー運営）を採用している。精度が大幅に優れる
+（完全部分一致・新しい順）ため。
+
+- エンドポイント: `https://ff5ch.syoboi.jp/?q={URLエンコード}&alt=rss`
+- **User-Agent はプロジェクト標準の Monazilla UA で通る**（ブラウザ UA 不要）。
+- レスポンスは **RSS 2.0 XML**（HTML スクレイピング不要）。
+- RSS フィールド:
+
+  | 要素 | 内容 |
+  |---|---|
+  | `<title>` | スレタイ。末尾の `  (N)` がレス数（正規表現 `\((\d+)\)\s*$`） |
+  | `<guid>` | 絶対 URL `http://{server}.5ch.io/test/read.cgi/{board}/{thread_id}/` |
+  | `<pubdate>` | スレ作成日時 |
+  | `<category>` | 板名 |
+
+- `<channel>` 直下にも `<title>` があるため、`<item>` 内の `<title>` のみを採用する。
+- `<guid>` は `http://` 始まりだが `parse_thread_url` は `https?://` 両対応のため変換不要。
 - **レス数はスレタイ末尾の `(123)`** から取る（タイトル中の `(仮)` 等と区別するため
   「末尾の括弧」のみ。正規表現 `\((\d+)\)\s*$`）。
-- 代替（403 が強化された場合）: 各板の subject.txt をローカル全文検索。
 
 ## スレッドの終了
 

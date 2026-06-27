@@ -15,7 +15,7 @@ struct SearchQuery {
     q: String,
 }
 
-/// Thread-title search (wraps find.5ch.net. spec 8.2A / 10).
+/// Thread-title search (wraps ff5ch.syoboi.jp. spec 8.2A / 10).
 async fn search_handler(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,

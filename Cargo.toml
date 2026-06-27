@@ -28,6 +28,7 @@ regex-lite = "0.1"
 encoding_rs = "0.8"
 urlencoding = "2"
 scraper = "0.21"
+quick-xml = "0.36"
 
 [lints.clippy]
 all = "warn"

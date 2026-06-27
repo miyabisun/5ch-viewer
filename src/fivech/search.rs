@@ -1,20 +1,20 @@
-//! Wrapping and parsing of find.5ch.net (the official thread-title search).
-//! Hitting it directly from the browser is blocked by CORS, so the server fetches it and returns JSON.
-//! The response is HTML that needs no JS. Result links are `a.list_line_link`, href is the thread URL
-//! (scheme-relative `//server.5ch.io/test/read.cgi/board/thread_id`), and the title is
-//! `.list_line_link_title`. The trailing `(123)` in the title is the post count.
+//! Wrapping and parsing of ff5ch.syoboi.jp (third-party thread-title search by syoboi.jp).
+//! The official 5ch search has poor precision (unrelated threads rank high); ff5ch gives
+//! far better results (exact substring match, newest-first). The server fetches it to
+//! avoid CORS; response is RSS 2.0 XML.
 
 use crate::error::AppError;
 use crate::fivech::url::parse_thread_url;
+use crate::state::USER_AGENT;
+use quick_xml::escape::unescape;
+use quick_xml::events::Event;
+use quick_xml::reader::Reader;
 use regex_lite::Regex;
 use reqwest::Client;
-use scraper::{Html, Selector};
 use serde::Serialize;
 use std::sync::LazyLock;
 
-const SEARCH_BASE: &str = "https://find.5ch.net/search?q=";
-/// find.5ch.net requires a browser-like UA (Monazilla may be rejected).
-const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
+const SEARCH_BASE: &str = "https://ff5ch.syoboi.jp/?q=";
 
 // Derive the post count from the trailing "(123)" in the title.
 static RES_COUNT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\((\d+)\)\s*$").unwrap());
@@ -28,109 +28,133 @@ pub struct SearchResult {
     pub res_count: i64,
 }
 
-/// Searches via find.5ch.net and returns the result list.
+/// Searches via ff5ch.syoboi.jp and returns the result list.
 pub async fn search(client: &Client, query: &str) -> Result<Vec<SearchResult>, AppError> {
-    let url = format!("{SEARCH_BASE}{}", urlencoding::encode(query));
-    let resp = client
-        .get(&url)
-        .header("User-Agent", BROWSER_UA)
-        .header("Accept-Encoding", "identity")
-        .send()
-        .await?;
+    let url = format!("{SEARCH_BASE}{}&alt=rss", urlencoding::encode(query));
+    let resp = client.get(&url).header("User-Agent", USER_AGENT).send().await?;
     if !resp.status().is_success() {
         return Err(AppError::Upstream(format!(
-            "find.5ch.net HTTP {}",
+            "ff5ch.syoboi.jp HTTP {}",
             resp.status()
         )));
     }
-    let html = resp.text().await?;
-    Ok(parse_search_html(&html))
+    Ok(parse_search_rss(&resp.text().await?))
 }
 
-/// Parses the search-result HTML from find.5ch.net.
-pub fn parse_search_html(html: &str) -> Vec<SearchResult> {
-    let doc = Html::parse_document(html);
-    let link_sel = Selector::parse("a.list_line_link").unwrap();
-    let title_sel = Selector::parse(".list_line_link_title").unwrap();
+/// Parses the RSS 2.0 search result from ff5ch.syoboi.jp.
+///
+/// Each `<item>` provides `<title>` (with trailing `  (N)` as post count) and
+/// `<guid>` (absolute thread URL). The `<channel>`-level `<title>` is skipped
+/// because we only capture children of `<item>`.
+pub fn parse_search_rss(xml: &str) -> Vec<SearchResult> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    reader.config_mut().expand_empty_elements = true;
 
     let mut results = Vec::new();
-    for link in doc.select(&link_sel) {
-        let Some(href) = link.value().attr("href") else {
-            continue;
-        };
-        // href is the scheme-relative "//server.5ch.io/..." form. parse_thread_url
-        // requires https?://, so prepend it.
-        let normalized = href.strip_prefix("//").map(|r| format!("https://{r}"));
-        let target = normalized.as_deref().unwrap_or(href);
-        let Some(tref) = parse_thread_url(target) else {
-            continue;
-        };
+    let mut in_item = false;
+    let mut title = String::new();
+    let mut guid = String::new();
 
-        let raw_title = link
-            .select(&title_sel)
-            .next()
-            .map(|t| t.text().collect::<String>())
-            .unwrap_or_default();
-        let raw_title = raw_title.trim();
-
-        // Extract the trailing "(123)" as the post count and remove it from the title.
-        let (title, res_count) = match RES_COUNT_RE.captures(raw_title) {
-            Some(c) => {
-                let count = c[1].parse().unwrap_or(0);
-                let title = raw_title[..c.get(0).unwrap().start()].trim().to_string();
-                (title, count)
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => match e.name().as_ref() {
+                b"item" => {
+                    in_item = true;
+                    title.clear();
+                    guid.clear();
+                }
+                // read_text consumes the element body and returns its text content;
+                // we then unescape XML entities (&amp; etc).
+                b"title" if in_item => title = read_unescaped(&mut reader, e.to_end().name()),
+                b"guid" if in_item => guid = read_unescaped(&mut reader, e.to_end().name()),
+                _ => {}
+            },
+            Ok(Event::End(e)) if e.name().as_ref() == b"item" => {
+                in_item = false;
+                if let Some(r) = build_result(&title, &guid) {
+                    results.push(r);
+                }
             }
-            None => (raw_title.to_string(), 0),
-        };
-
-        results.push(SearchResult {
-            title,
-            server: tref.server,
-            board: tref.board,
-            thread_id: tref.thread_id,
-            res_count,
-        });
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
     }
     results
+}
+
+/// Reads the inner text of the current element up to `end` and XML-unescapes it.
+/// Returns an empty string if the read or unescape fails.
+fn read_unescaped(reader: &mut Reader<&[u8]>, end: quick_xml::name::QName<'_>) -> String {
+    reader
+        .read_text(end)
+        .ok()
+        .and_then(|raw| unescape(&raw).ok().map(|c| c.into_owned()))
+        .unwrap_or_default()
+}
+
+/// Splits trailing "  (N)" off the title and pairs it with a parsed thread URL.
+/// Returns None when the guid is not a valid 5ch thread URL.
+fn build_result(raw_title: &str, guid: &str) -> Option<SearchResult> {
+    // guid may start with http:// — parse_thread_url accepts https?://.
+    let tref = parse_thread_url(guid.trim())?;
+    let raw = raw_title.trim();
+    let (title, res_count) = match RES_COUNT_RE.captures(raw) {
+        Some(c) => (
+            raw[..c.get(0).unwrap().start()].trim().to_string(),
+            c[1].parse().unwrap_or(0),
+        ),
+        None => (raw.to_string(), 0),
+    };
+    Some(SearchResult {
+        title,
+        server: tref.server,
+        board: tref.board,
+        thread_id: tref.thread_id,
+        res_count,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Fixed HTML sample excerpted from a real find.5ch.net response.
-    const SAMPLE: &str = r##"<!DOCTYPE html>
-<html><body>
-<div class="list">
-    <div class="list_line">
-        <a class="list_line_link" href="//rio2016.5ch.io/test/read.cgi/4sama/1780960049">
-            <div class="list_line_link_title">【ID無し】KPOP雑談★3862【ルセラ aespa】  (588)</div>
-        </a>
-        <div class="list_line_info">
-            <div class="list_line_info_container list_line_info_container-board"><a href="//rio2016.5ch.io/4sama/">アジアエンタメ</a></div>
-            <div class="list_line_info_container">2026年06月09日 14:18</div>
-        </div>
-    </div>
-    <div class="list_line">
-        <a class="list_line_link" href="//kizuna.5ch.io/test/read.cgi/iPhone/1780556440">
-            <div class="list_line_link_title">iPhone 質問スレ Part100 (仮) (23)</div>
-        </a>
-    </div>
-</div>
-</body></html>"##;
+    // Fixed RSS sample excerpted from a real ff5ch.syoboi.jp response.
+    // Item 1 uses http:// guid with trailing slash to verify both are accepted.
+    const SAMPLE: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>5ch検索 「test」</title>
+    <item>
+      <title>FDM式3Dプリンター個人向け 37レイヤー目  (850)</title>
+      <guid ispermalink="true">http://medaka.5ch.io/test/read.cgi/printer/1779746829/</guid>
+      <description>FDM式3Dプリンター個人向け 37レイヤー目 </description>
+      <pubdate>Tue, 26 May 2026 07:07:09 +0900</pubdate>
+      <category>プリンタ</category>
+    </item>
+    <item>
+      <title>iPhone 質問スレ Part100 (仮)  (23)</title>
+      <guid ispermalink="true">http://kizuna.5ch.io/test/read.cgi/iPhone/1780556440/</guid>
+      <description>iPhone 質問スレ</description>
+      <pubdate>Mon, 09 Jun 2026 10:00:00 +0900</pubdate>
+      <category>iPhone</category>
+    </item>
+  </channel>
+</rss>"##;
 
     #[test]
     fn parses_results_from_sample() {
-        let results = parse_search_html(SAMPLE);
+        let results = parse_search_rss(SAMPLE);
         assert_eq!(results.len(), 2);
+        // Item 1: http:// guid with trailing slash must parse correctly.
         assert_eq!(
             results[0],
             SearchResult {
-                title: "【ID無し】KPOP雑談★3862【ルセラ aespa】".into(),
-                server: "rio2016".into(),
-                board: "4sama".into(),
-                thread_id: "1780960049".into(),
-                res_count: 588,
+                title: "FDM式3Dプリンター個人向け 37レイヤー目".into(),
+                server: "medaka".into(),
+                board: "printer".into(),
+                thread_id: "1779746829".into(),
+                res_count: 850,
             }
         );
     }
@@ -138,7 +162,7 @@ mod tests {
     #[test]
     fn keeps_parentheses_inside_title() {
         // Only the trailing (23) is the post count. The "(仮)" within the title is kept.
-        let results = parse_search_html(SAMPLE);
+        let results = parse_search_rss(SAMPLE);
         assert_eq!(results[1].title, "iPhone 質問スレ Part100 (仮)");
         assert_eq!(results[1].res_count, 23);
         assert_eq!(results[1].server, "kizuna");
@@ -148,23 +172,52 @@ mod tests {
 
     #[test]
     fn returns_empty_for_no_results() {
-        assert_eq!(parse_search_html("<html><body>no hits</body></html>"), vec![]);
+        let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>5ch検索 「nothing」</title></channel></rss>"##;
+        assert_eq!(parse_search_rss(xml), vec![]);
     }
 
     #[test]
     fn skips_links_with_invalid_url() {
-        let html = r#"<a class="list_line_link" href="//example.com/foo/123">
-            <div class="list_line_link_title">外部リンク (10)</div></a>"#;
-        assert_eq!(parse_search_html(html), vec![]);
+        let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>外部リンク (10)</title>
+    <guid ispermalink="true">http://example.com/foo/123</guid>
+  </item>
+</channel></rss>"##;
+        assert_eq!(parse_search_rss(xml), vec![]);
     }
 
     #[test]
     fn handles_title_without_res_count() {
-        let html = r#"<a class="list_line_link" href="//mi.5ch.io/test/read.cgi/news4vip/1780976160">
-            <div class="list_line_link_title">レス数なしスレ</div></a>"#;
-        let results = parse_search_html(html);
+        let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>レス数なしスレ</title>
+    <guid ispermalink="true">http://mi.5ch.io/test/read.cgi/news4vip/1780976160/</guid>
+  </item>
+</channel></rss>"##;
+        let results = parse_search_rss(xml);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "レス数なしスレ");
         assert_eq!(results[0].res_count, 0);
+    }
+
+    #[test]
+    fn ignores_channel_level_title() {
+        // <channel><title> must not appear as a search result.
+        let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>5ch検索 「xxx」</title>
+  <item>
+    <title>正しいスレタイ (42)</title>
+    <guid ispermalink="true">http://eagle.5ch.io/test/read.cgi/livejupiter/1700000000/</guid>
+  </item>
+</channel></rss>"##;
+        let results = parse_search_rss(xml);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "正しいスレタイ");
+        assert_eq!(results[0].res_count, 42);
     }
 }

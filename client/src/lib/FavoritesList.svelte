@@ -115,36 +115,25 @@
         {#snippet actions(f)}
           <div class="section-label">お気に入りレベル</div>
           <!--
-            Star rating: 6 characters total — leftmost ☆ (r=0) always clears to rating 0;
-            r=1..5 are lit (★) when f.rating >= r, otherwise ☆.
-            Selection is shown by COLOR, not underline.
+            Star rating: 6 buttons total. Leftmost (r=0) is ☆ and clears the rating.
+            r=1..5 always show ★; selection is conveyed by COLOR — .on (yellow) when
+            f.rating >= r, .off (gray) otherwise — not by glyph shape.
           -->
           <div class="stars">
-            <!-- r=0: always ☆, clicking sets rating to 0 (remove from favorites level). -->
-            <a
-              href="#rate-0"
-              class="star off"
-              data-rating={0}
-              aria-label="お気に入り解除"
-              onclick={(e) => {
-                e.preventDefault()
-                setRating(f, 0)
-              }}
-            >☆</a>
-            {#each [1, 2, 3, 4, 5] as r}
-              {@const lit = f.rating >= r}
+            {#each [0, 1, 2, 3, 4, 5] as r}
+              {@const lit = r > 0 && f.rating >= r}
               <a
                 href="#rate-{r}"
                 class="star"
                 class:on={lit}
                 class:off={!lit}
                 data-rating={r}
-                aria-label="レベル {r}"
+                aria-label={r === 0 ? 'お気に入り解除' : `レベル ${r}`}
                 onclick={(e) => {
                   e.preventDefault()
                   setRating(f, r)
                 }}
-              >{lit ? '★' : '☆'}</a>
+              >{r === 0 ? '☆' : '★'}</a>
             {/each}
           </div>
         {/snippet}

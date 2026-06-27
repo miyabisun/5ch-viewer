@@ -77,7 +77,8 @@ test('stars reflect the current rating with color, and modal closes via × / scr
   await expect(page.locator('.star.on')).toHaveCount(3)
   await expect(page.locator('.star.off')).toHaveCount(3)
   await expect(page.locator('.star[data-rating="3"]')).toHaveText('★')
-  await expect(page.locator('.star[data-rating="4"]')).toHaveText('☆')
+  await expect(page.locator('.star[data-rating="4"]')).toHaveText('★')
+  await expect(page.locator('.star[data-rating="5"]')).toHaveText('★')
 
   // Close via the top-right ×.
   await page.getByRole('button', { name: '閉じる' }).click()
