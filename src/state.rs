@@ -1,6 +1,6 @@
 use crate::config::Config;
-use crate::goch::cookie_jar::{self, SharedJar};
-use crate::goch::images::build_image_http_client;
+use crate::fivech::cookie_jar::{self, SharedJar};
+use crate::fivech::images::build_image_http_client;
 use rusqlite::Connection;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};

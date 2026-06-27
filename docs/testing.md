@@ -14,11 +14,11 @@
 
 ## 5ch アクセスの差し替え
 
-`src/goch/http.rs` は通常 `https://{server}.5ch.io` にアクセスするが、
-**環境変数 `GOCH_BASE_URL`** を設定すると全リクエストをその origin に向ける。
+`src/fivech/http.rs` は通常 `https://{server}.5ch.io` にアクセスするが、
+**環境変数 `FIVECH_BASE_URL`** を設定すると全リクエストをその origin に向ける。
 
 - 本番: 未設定 → `https://{server}.5ch.io`(従来どおり)
-- テスト: `GOCH_BASE_URL=http://127.0.0.1:3002` → ローカルのモック 5ch へ
+- テスト: `FIVECH_BASE_URL=http://127.0.0.1:3002` → ローカルのモック 5ch へ
 
 差し替えても SSRF 検証(`validate_ref`)・Monazilla UA・Shift_JIS デコード・
 `Accept-Encoding: identity` はそのまま。変わるのはホスト部分のみ
@@ -29,7 +29,7 @@
 `src/bin/itest-server.rs` が 1 プロセスで 2 つの HTTP サーバーを立てる。
 
 - アプリ本体: `routes::build_router` をそのまま使い、**インメモリ SQLite**(`:memory:`、
-  単一 Connection なのでプロセス生存中は保持)で起動。`goch_base_url` をモックへ向ける。
+  単一 Connection なのでプロセス生存中は保持)で起動。`fivech_base_url` をモックへ向ける。
   バックグラウンド同期(`start_sync`)は起動しない(60 秒ポーリングは総合テストの
   決定性を損なうため。reload はテストが明示的に駆動する)。
 - モック 5ch: `subject.txt` / dat / `SETTING.TXT` を返す。レス数や dat 消失(404)を

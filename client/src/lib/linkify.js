@@ -14,7 +14,7 @@
 export const ANCHOR_RE = /(?:&gt;){2}(\d+)/g
 
 // Matches bare http/https/ttp/ttps image URLs ending with a recognized extension.
-// Must match the same set as the Rust regex in goch::images.
+// Must match the same set as the Rust regex in fivech::images.
 const IMAGE_URL_RE = /\b(h?ttps?:\/\/[^\s<>"']+?\.(?:png|jpe?g|gif|webp))\b/gi
 
 // Matches any bare http/https/ttp/ttps URL (non-image links included).

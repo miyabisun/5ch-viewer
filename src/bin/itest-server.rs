@@ -6,7 +6,7 @@
 //!   1. A mock 5ch server (subject.txt / dat / SETTING.TXT) whose responses can be
 //!      reprogrammed at runtime via `POST /_control/thread`.
 //!   2. The real app router (`routes::build_router`) on an in-memory SQLite DB, with
-//!      `goch_base_url` pointed at the mock so every dat/subject fetch hits it instead
+//!      `fivech_base_url` pointed at the mock so every dat/subject fetch hits it instead
 //!      of 5ch.io. SSRF validation, Monazilla UA, Shift_JIS and identity all stay live.
 //!
 //! Ports (override via env): APP_PORT=3001, MOCK_PORT=3002. The DB is `:memory:` and a
@@ -29,13 +29,13 @@ use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use goch_viewer::config::Config;
-use goch_viewer::state::AppState;
-use goch_viewer::{db, routes};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use viewer_of_5ch::config::Config;
+use viewer_of_5ch::state::AppState;
+use viewer_of_5ch::{db, routes};
 
 /// One thread's scenario inside the mock 5ch server.
 #[derive(Clone)]
@@ -549,8 +549,8 @@ async fn main() {
         db_path: ":memory:".into(),
         // Integration tests use an in-memory DB; cookies are not persisted.
         // Use a temp path that will not be written (the itest process is short-lived).
-        cookies_path: "/tmp/goch_itest_cookies.json".into(),
-        goch_base_url: format!("http://127.0.0.1:{mock_port}"),
+        cookies_path: "/tmp/fivech_itest_cookies.json".into(),
+        fivech_base_url: format!("http://127.0.0.1:{mock_port}"),
     };
     let app_state = AppState::new(conn, config);
 

@@ -5,7 +5,7 @@
 //! `DELETE /api/images/mosaic`— set mosaic=0 for a URL.
 
 use crate::error::AppError;
-use crate::goch::images::normalize_image_path;
+use crate::fivech::images::normalize_image_path;
 use crate::models::MosaicRequest;
 use crate::state::AppState;
 use axum::body::Bytes;

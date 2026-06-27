@@ -1,5 +1,5 @@
 // Theme management: OS-follow by default, manual override saved to localStorage.
-const KEY = 'goch-theme'
+const KEY = '5ch-theme'
 
 // Resolve the effective theme: stored override, or OS preference.
 function resolve() {

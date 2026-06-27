@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::goch::search::{self, SearchResult};
+use crate::fivech::search::{self, SearchResult};
 use crate::state::AppState;
 use axum::extract::{Query, State};
 use axum::routing::get;

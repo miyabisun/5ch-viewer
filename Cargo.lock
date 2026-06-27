@@ -535,34 +535,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "goch-viewer"
-version = "0.1.0"
-dependencies = [
- "ammonia",
- "axum",
- "chrono",
- "cookie",
- "cookie_store",
- "dotenvy",
- "encoding_rs",
- "futures-util",
- "regex-lite",
- "reqwest",
- "rusqlite",
- "scraper",
- "serde",
- "serde_json",
- "thiserror",
- "time",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "url",
- "urlencoding",
-]
-
-[[package]]
 name = "h2"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2167,6 +2139,34 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "viewer-of-5ch"
+version = "0.1.0"
+dependencies = [
+ "ammonia",
+ "axum",
+ "chrono",
+ "cookie",
+ "cookie_store",
+ "dotenvy",
+ "encoding_rs",
+ "futures-util",
+ "regex-lite",
+ "reqwest",
+ "rusqlite",
+ "scraper",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "urlencoding",
+]
 
 [[package]]
 name = "want"

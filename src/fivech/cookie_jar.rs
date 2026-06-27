@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn save_and_load_roundtrip() {
-        let tmp = std::env::temp_dir().join("goch_test_cookies.json");
+        let tmp = std::env::temp_dir().join("fivech_test_cookies.json");
         let path = tmp.to_str().unwrap();
 
         // Create a jar with one cookie and save it.
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn load_missing_file_returns_empty_jar() {
         // A path that doesn't exist must not panic — returns an empty jar.
-        let jar = PersistentJar::load("/tmp/goch_nonexistent_XXXXXX.json");
+        let jar = PersistentJar::load("/tmp/fivech_nonexistent_XXXXXX.json");
         let url = Url::parse("https://egg.5ch.io/test/bbs.cgi").unwrap();
         assert!(jar.cookies(&url).is_none());
     }
@@ -212,7 +212,7 @@ mod tests {
     /// cookie without any Expires or Max-Age field.
     #[test]
     fn session_cookie_persists_after_save_and_load() {
-        let tmp = std::env::temp_dir().join("goch_test_session_cookies.json");
+        let tmp = std::env::temp_dir().join("fivech_test_session_cookies.json");
         let path = tmp.to_str().unwrap();
 
         let jar = PersistentJar::new();

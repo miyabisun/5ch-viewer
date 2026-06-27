@@ -1,4 +1,4 @@
-use crate::goch::dat::Res;
+use crate::fivech::dat::Res;
 use serde::{Deserialize, Serialize};
 
 /// Favorite thread (list API response).

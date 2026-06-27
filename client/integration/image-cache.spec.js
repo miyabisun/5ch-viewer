@@ -6,7 +6,7 @@
 //   /_control/image-size             — programs a large Content-Length for a file
 //   /_control/image-content-type     — overrides Content-Type for a file (MIME rejection test)
 //
-// GOCH_ALLOW_LOOPBACK_FOR_TEST is set in playwright.integration.config.js so that
+// FIVECH_ALLOW_LOOPBACK_FOR_TEST is set in playwright.integration.config.js so that
 // the Rust backend can download images from http://127.0.0.1:{MOCK_PORT}/mock/img/.
 // Private IPs other than loopback (10.x, 172.16-31.x, 192.168.x, etc.) remain blocked.
 
@@ -122,7 +122,7 @@ test('seeded image is served via GET /api/images/{path}', async ({ request }) =>
 // ---------------------------------------------------------------------------
 
 // Case a: dat with image URL → after reload, image_cache has BLOB (real prefetch path).
-// The dat body contains a loopback mock URL; GOCH_ALLOW_LOOPBACK_FOR_TEST permits download.
+// The dat body contains a loopback mock URL; FIVECH_ALLOW_LOOPBACK_FOR_TEST permits download.
 test('dat image URL triggers prefetch: image is cached after reload', async ({ request }) => {
   const file = 'test1.png'
   const imgUrl = mockImgUrl(file)
@@ -232,7 +232,7 @@ test('image with text/html MIME type is rejected and not cached', async ({ reque
 // SSRF guard tests (case e)
 // ---------------------------------------------------------------------------
 
-// Case e: SSRF guard — private IP (10.x) is blocked even with GOCH_ALLOW_LOOPBACK_FOR_TEST.
+// Case e: SSRF guard — private IP (10.x) is blocked even with FIVECH_ALLOW_LOOPBACK_FOR_TEST.
 // We use 10.0.0.1 (a non-loopback private IP) which is never allowed regardless of the env var.
 test('SSRF: private IP (10.0.0.1) image is not downloaded', async ({ request }) => {
   const privateImg = 'http://10.0.0.1/x.png'

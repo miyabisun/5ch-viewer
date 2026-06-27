@@ -17,4 +17,4 @@ echo "==> building server..."
 cargo build
 
 echo "==> starting server (http://localhost:3000)..."
-target/debug/goch-viewer
+target/debug/viewer-of-5ch

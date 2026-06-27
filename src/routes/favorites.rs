@@ -1,9 +1,9 @@
 use crate::error::AppError;
-use crate::goch::http;
-use crate::goch::images::extract_image_urls;
-use crate::goch::post;
-use crate::goch::refresh::{self, read_blob_posts};
-use crate::goch::url::{parse_thread_url, validate_ref};
+use crate::fivech::http;
+use crate::fivech::images::extract_image_urls;
+use crate::fivech::post;
+use crate::fivech::refresh::{self, read_blob_posts};
+use crate::fivech::url::{parse_thread_url, validate_ref};
 use crate::models::{
     AddRequest, ArchivedRequest, DatResponse, Favorite, PostRequest, ProgressRequest,
     RatingRequest, ReloadResponse,
@@ -92,7 +92,7 @@ async fn add(
 ) -> Result<Json<Value>, AppError> {
     let (server, board, thread_id) = resolve_ref(&req)?;
     let board_name =
-        http::fetch_board_name(&state.http, &state.config.goch_base_url, &server, &board).await;
+        http::fetch_board_name(&state.http, &state.config.fivech_base_url, &server, &board).await;
     let title = req.title.unwrap_or_default();
     {
         let conn = state.db.lock().unwrap();
@@ -325,7 +325,7 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
     //    None = HEAD failed or header missing → fall back to full GET.
     let head_content_length: Option<i64> = http::head_dat_content_length(
         &state.http,
-        &state.config.goch_base_url,
+        &state.config.fivech_base_url,
         &server,
         &board,
         &thread_id,
@@ -353,7 +353,7 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
         Some(_guard) => {
             let fetch = http::fetch_dat(
                 &state.http,
-                &state.config.goch_base_url,
+                &state.config.fivech_base_url,
                 &server,
                 &board,
                 &thread_id,
@@ -399,7 +399,7 @@ async fn post_message(
 
     let result = post::post_message(
         &state.http,
-        &state.config.goch_base_url,
+        &state.config.fivech_base_url,
         &server,
         &board,
         &thread_id,
@@ -500,11 +500,11 @@ fn read_meta(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::goch::dat::parse_dat;
-    use crate::goch::refresh::{compute_status, replace_blob};
+    use crate::fivech::dat::parse_dat;
+    use crate::fivech::refresh::{compute_status, replace_blob};
     use rusqlite::Connection;
 
-    // Mirrors the threshold in goch::refresh (status is now res_count-only).
+    // Mirrors the threshold in fivech::refresh (status is now res_count-only).
     const RES_WARN: i64 = 980;
 
     const SERVER: &str = "egg";

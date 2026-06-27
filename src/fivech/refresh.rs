@@ -12,8 +12,8 @@
 //! twice.
 
 use crate::error::AppError;
-use crate::goch::dat::{count_dat_posts, parse_dat, title_from_dat};
-use crate::goch::http::{self, DatFetch};
+use crate::fivech::dat::{count_dat_posts, parse_dat, title_from_dat};
+use crate::fivech::http::{self, DatFetch};
 use crate::state::AppState;
 use rusqlite::{params, OptionalExtension};
 use std::collections::HashMap;
@@ -60,7 +60,7 @@ pub async fn refresh_board(state: &AppState, server: &str, board: &str) -> usize
     }
 
     // One subject.txt read covers the whole board.
-    let entries = match http::fetch_subject(&state.http, &state.config.goch_base_url, server, board)
+    let entries = match http::fetch_subject(&state.http, &state.config.fivech_base_url, server, board)
         .await
     {
         Ok(e) => e,
@@ -102,7 +102,7 @@ pub async fn refresh_thread(state: &AppState, server: &str, board: &str, thread_
 
     let fetch = match http::fetch_dat(
         &state.http,
-        &state.config.goch_base_url,
+        &state.config.fivech_base_url,
         server,
         board,
         thread_id,
@@ -162,11 +162,11 @@ pub fn persist_fetch(
             drop(conn);
 
             // Kick off image prefetch in the background (non-blocking for the caller).
-            let image_urls = crate::goch::images::extract_image_urls(&text);
+            let image_urls = crate::fivech::images::extract_image_urls(&text);
             if !image_urls.is_empty() {
                 let state2 = state.clone();
                 tokio::spawn(async move {
-                    crate::goch::images::prefetch_images(&state2, image_urls).await;
+                    crate::fivech::images::prefetch_images(&state2, image_urls).await;
                 });
             }
 
@@ -248,7 +248,7 @@ pub fn read_blob_posts(
     server: &str,
     board: &str,
     thread_id: &str,
-) -> Result<Vec<crate::goch::dat::Res>, AppError> {
+) -> Result<Vec<crate::fivech::dat::Res>, AppError> {
     Ok(read_blob_raw(conn, server, board, thread_id)?
         .map(|text| parse_dat(&text))
         .unwrap_or_default())
@@ -293,9 +293,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     fn make_state(conn: Connection) -> AppState {
-        let jar = crate::goch::cookie_jar::open("/tmp/goch_test_cookies.json");
+        let jar = crate::fivech::cookie_jar::open("/tmp/fivech_test_cookies.json");
         let http = crate::state::build_http_client(jar.clone());
-        let image_http = crate::goch::images::build_image_http_client();
+        let image_http = crate::fivech::images::build_image_http_client();
         AppState {
             db: Arc::new(Mutex::new(conn)),
             http,
@@ -305,8 +305,8 @@ mod tests {
                 port: 3000,
                 base_path: String::new(),
                 db_path: ":memory:".to_string(),
-                cookies_path: "/tmp/goch_test_cookies.json".to_string(),
-                goch_base_url: String::new(),
+                cookies_path: "/tmp/fivech_test_cookies.json".to_string(),
+                fivech_base_url: String::new(),
             },
             inflight: Arc::new(Mutex::new(HashSet::new())),
         }

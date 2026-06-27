@@ -2,10 +2,10 @@
 //! res_count, determine end-of-thread, and auto-add the next thread (does not fetch the dat body).
 
 use crate::error::AppError;
-use crate::goch::http;
-use crate::goch::next_thread::find_next_thread;
-use crate::goch::refresh::compute_status;
-use crate::goch::subject::SubjectEntry;
+use crate::fivech::http;
+use crate::fivech::next_thread::find_next_thread;
+use crate::fivech::refresh::compute_status;
+use crate::fivech::subject::SubjectEntry;
 use crate::state::AppState;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -66,7 +66,7 @@ async fn run_once(state: &AppState) -> Result<(), AppError> {
     }
 
     for ((server, board), threads) in by_board {
-        match http::fetch_subject(&state.http, &state.config.goch_base_url, &server, &board).await {
+        match http::fetch_subject(&state.http, &state.config.fivech_base_url, &server, &board).await {
             Ok(entries) => {
                 for w in &threads {
                     process_thread(state, &server, &board, w, &entries);
@@ -164,7 +164,7 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
 mod tests {
     use crate::config::Config;
     use crate::db::SCHEMA;
-    use crate::goch::subject::SubjectEntry;
+    use crate::fivech::subject::SubjectEntry;
     use crate::state::AppState;
     use rusqlite::{Connection, params};
     use std::collections::HashSet;
@@ -178,9 +178,9 @@ mod tests {
     }
 
     fn make_state(conn: Connection) -> AppState {
-        let jar = crate::goch::cookie_jar::open("/tmp/goch_test_cookies.json");
+        let jar = crate::fivech::cookie_jar::open("/tmp/fivech_test_cookies.json");
         let http = crate::state::build_http_client(jar.clone());
-        let image_http = crate::goch::images::build_image_http_client();
+        let image_http = crate::fivech::images::build_image_http_client();
         AppState {
             db: Arc::new(Mutex::new(conn)),
             http,
@@ -190,8 +190,8 @@ mod tests {
                 port: 3000,
                 base_path: String::new(),
                 db_path: ":memory:".to_string(),
-                cookies_path: "/tmp/goch_test_cookies.json".to_string(),
-                goch_base_url: String::new(),
+                cookies_path: "/tmp/fivech_test_cookies.json".to_string(),
+                fivech_base_url: String::new(),
             },
             inflight: Arc::new(Mutex::new(HashSet::new())),
         }

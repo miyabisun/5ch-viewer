@@ -16,8 +16,8 @@
 //! locally-cached dat blobs for posts whose wacchoi suffix matches, grouped by thread.
 
 use crate::error::AppError;
-use crate::goch::refresh::read_blob_posts;
-use crate::goch::url::validate_board;
+use crate::fivech::refresh::read_blob_posts;
+use crate::fivech::url::validate_board;
 use crate::models::{AddNgRequest, AddNgWacchoiRequest, IdSearchThread, NgId, NgWacchoi};
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
@@ -144,7 +144,7 @@ fn board_post_search(
     state: &AppState,
     server: &str,
     board: &str,
-    keep: impl Fn(&crate::goch::dat::Res) -> bool,
+    keep: impl Fn(&crate::fivech::dat::Res) -> bool,
 ) -> Result<Vec<IdSearchThread>, AppError> {
     // Collect favorites for this board (all statuses — dead threads still have cached blobs).
     let thread_rows: Vec<(String, String)> = {
@@ -222,7 +222,7 @@ async fn add_ng_wacchoi(
     validate_suffix(&req.suffix)?;
     validate_week_key(&req.week_key)?;
     // board validation reuses the same SEGMENT_RE as validate_board (no thread_id needed).
-    crate::goch::url::validate_board("dummy", &req.board)
+    crate::fivech::url::validate_board("dummy", &req.board)
         .map_err(|_| AppError::BadRequest(format!("invalid board: {}", req.board)))?;
     let conn = state.db.lock().unwrap();
     conn.execute(
@@ -247,7 +247,7 @@ async fn remove_ng_wacchoi(
 ) -> Result<Json<Value>, AppError> {
     validate_suffix(&q.suffix)?;
     validate_week_key(&q.week_key)?;
-    crate::goch::url::validate_board("dummy", &q.board)
+    crate::fivech::url::validate_board("dummy", &q.board)
         .map_err(|_| AppError::BadRequest(format!("invalid board: {}", q.board)))?;
     let conn = state.db.lock().unwrap();
     let n = conn.execute(
@@ -326,7 +326,7 @@ fn validate_week_key(week_key: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::goch::refresh::replace_blob;
+    use crate::fivech::refresh::replace_blob;
     use rusqlite::Connection;
 
     fn setup() -> Connection {
@@ -462,7 +462,7 @@ mod tests {
         replace_blob(&conn, "egg", "test", "1000000002", dat_b, 0).unwrap();
 
         // Simulate wacchoi search for suffix "83IP".
-        let posts_a = crate::goch::dat::parse_dat(dat_a);
+        let posts_a = crate::fivech::dat::parse_dat(dat_a);
         let matched_a: Vec<_> = posts_a
             .into_iter()
             .filter(|r| extract_wacchoi_suffix(&r.name).as_deref() == Some("83IP"))
@@ -471,7 +471,7 @@ mod tests {
         assert_eq!(matched_a.len(), 1);
         assert_eq!(matched_a[0].body, "本文1_83IP");
 
-        let posts_b = crate::goch::dat::parse_dat(dat_b);
+        let posts_b = crate::fivech::dat::parse_dat(dat_b);
         let matched_b: Vec<_> = posts_b
             .into_iter()
             .filter(|r| extract_wacchoi_suffix(&r.name).as_deref() == Some("83IP"))
@@ -538,7 +538,7 @@ mod tests {
         replace_blob(&conn, "egg", "test", "1000000002", dat_b, 0).unwrap();
 
         // Simulate the search: manually replicate the filter logic.
-        let posts_a = crate::goch::dat::parse_dat(dat_a);
+        let posts_a = crate::fivech::dat::parse_dat(dat_a);
         let matched_a: Vec<_> = posts_a
             .into_iter()
             .filter(|r| r.id.as_deref() == Some("target"))
@@ -546,7 +546,7 @@ mod tests {
         assert_eq!(matched_a.len(), 1);
         assert_eq!(matched_a[0].body, "targetの本文");
 
-        let posts_b = crate::goch::dat::parse_dat(dat_b);
+        let posts_b = crate::fivech::dat::parse_dat(dat_b);
         let matched_b: Vec<_> = posts_b
             .into_iter()
             .filter(|r| r.id.as_deref() == Some("target"))

@@ -4,8 +4,8 @@
 //! - Retry on 5xx, do not retry on 404.
 
 use crate::error::AppError;
-use crate::goch::subject::{parse_subject_txt, SubjectEntry};
-use crate::goch::url::validate_ref;
+use crate::fivech::subject::{parse_subject_txt, SubjectEntry};
+use crate::fivech::url::validate_ref;
 use reqwest::{Client, Response, StatusCode};
 use std::time::Duration;
 

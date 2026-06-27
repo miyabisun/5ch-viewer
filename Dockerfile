@@ -19,10 +19,10 @@ RUN touch src/main.rs && cargo build --release
 # Stage 3: Runtime
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=backend /app/target/release/goch-viewer /usr/local/bin/
+COPY --from=backend /app/target/release/viewer-of-5ch /usr/local/bin/
 COPY --from=frontend /app/client/build /app/client/build
 WORKDIR /app
 ENV PORT=3000
 ENV DATABASE_PATH=/data/5ch-viewer.db
 EXPOSE 3000
-CMD ["goch-viewer"]
+CMD ["viewer-of-5ch"]

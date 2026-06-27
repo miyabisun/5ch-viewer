@@ -5,7 +5,7 @@
 //! `.list_line_link_title`. The trailing `(123)` in the title is the post count.
 
 use crate::error::AppError;
-use crate::goch::url::parse_thread_url;
+use crate::fivech::url::parse_thread_url;
 use regex_lite::Regex;
 use reqwest::Client;
 use scraper::{Html, Selector};

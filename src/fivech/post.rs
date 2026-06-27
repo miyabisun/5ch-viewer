@@ -12,7 +12,7 @@
 //! acorn/MonaTicket cookies so subsequent posts skip step 2 entirely.
 
 use crate::error::AppError;
-use crate::goch::url::validate_ref;
+use crate::fivech::url::validate_ref;
 use reqwest::{Client, Response};
 use scraper::{Html, Selector};
 use std::sync::LazyLock;

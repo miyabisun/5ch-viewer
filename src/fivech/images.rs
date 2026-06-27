@@ -121,7 +121,7 @@ pub fn build_image_http_client() -> Client {
         .expect("Failed to build image HTTP client")
 }
 
-// GOCH_ALLOW_LOOPBACK_FOR_TEST: TEST-ONLY env var.
+// FIVECH_ALLOW_LOOPBACK_FOR_TEST: TEST-ONLY env var.
 // When set, loopback addresses (127.x.x.x / ::1) are allowed through the SSRF guard
 // so integration tests can serve mock images from http://127.0.0.1:{MOCK_PORT}/mock/img/.
 // NEVER set this variable in production. All other private/link-local/ULA IPs remain
@@ -141,12 +141,12 @@ pub(crate) fn is_safe_host(host: &str) -> bool {
 }
 
 fn is_safe_ip(ip: IpAddr) -> bool {
-    // TEST-ONLY: GOCH_ALLOW_LOOPBACK_FOR_TEST permits loopback (127.x.x.x / ::1)
+    // TEST-ONLY: FIVECH_ALLOW_LOOPBACK_FOR_TEST permits loopback (127.x.x.x / ::1)
     // so that integration tests can download images from the local mock server.
     // The env var is honored ONLY in debug builds; in release builds it has no effect.
     // All other unsafe IPs (private, link-local, ULA) are rejected unconditionally.
     let allow_loopback = cfg!(debug_assertions)
-        && std::env::var("GOCH_ALLOW_LOOPBACK_FOR_TEST").is_ok();
+        && std::env::var("FIVECH_ALLOW_LOOPBACK_FOR_TEST").is_ok();
 
     match ip {
         IpAddr::V4(v4) => {
@@ -559,7 +559,7 @@ mod tests {
     #[test]
     fn safe_host_rejects_ipv4_mapped_loopback() {
         // ::ffff:127.0.0.1 maps to the IPv4 loopback; must be rejected in non-test mode.
-        // In unit tests GOCH_ALLOW_LOOPBACK_FOR_TEST is not set, so it is rejected.
+        // In unit tests FIVECH_ALLOW_LOOPBACK_FOR_TEST is not set, so it is rejected.
         assert!(!is_safe_host("::ffff:127.0.0.1"));
     }
 

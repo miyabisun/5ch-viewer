@@ -13,7 +13,7 @@ test('theme toggle flips data-theme, persists, and survives reload', async ({ pa
   // Toggle to dark: attribute changes and is saved to localStorage.
   await page.getByTestId('theme-toggle').click()
   await expect(html).toHaveAttribute('data-theme', 'dark')
-  expect(await page.evaluate(() => localStorage.getItem('goch-theme'))).toBe('dark')
+  expect(await page.evaluate(() => localStorage.getItem('5ch-theme'))).toBe('dark')
 
   // Reload: stored override is restored (independent of OS preference).
   await page.reload()
@@ -22,7 +22,7 @@ test('theme toggle flips data-theme, persists, and survives reload', async ({ pa
   // Toggle back to light persists too.
   await page.getByTestId('theme-toggle').click()
   await expect(html).toHaveAttribute('data-theme', 'light')
-  expect(await page.evaluate(() => localStorage.getItem('goch-theme'))).toBe('light')
+  expect(await page.evaluate(() => localStorage.getItem('5ch-theme'))).toBe('light')
 })
 
 test('theme follows OS preference when no override stored', async ({ page }) => {

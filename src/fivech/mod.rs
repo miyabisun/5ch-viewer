@@ -1,4 +1,4 @@
-//! 5ch (goch) access layer.
+//! 5ch access layer.
 //! Starting with pure functions that use neither HTTP nor DB (parsing, next-thread detection).
 
 pub mod cookie_jar;

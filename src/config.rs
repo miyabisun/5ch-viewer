@@ -11,7 +11,7 @@ pub struct Config {
     /// Origin used to reach 5ch. Empty = production default (`https://{server}.5ch.io`).
     /// When set (e.g. a local mock in integration tests), every board/thread URL is built
     /// against this single origin instead of per-server 5ch.io hosts.
-    pub goch_base_url: String,
+    pub fivech_base_url: String,
 }
 
 impl Config {
@@ -45,8 +45,8 @@ impl Config {
                 .unwrap_or_else(|| "./data/cookies.json".to_string())
         });
 
-        // GOCH_BASE_URL overrides the 5ch origin (used by integration tests to point at a mock).
-        let goch_base_url = env::var("GOCH_BASE_URL")
+        // FIVECH_BASE_URL overrides the 5ch origin (used by integration tests to point at a mock).
+        let fivech_base_url = env::var("FIVECH_BASE_URL")
             .unwrap_or_default()
             .trim_end_matches('/')
             .to_string();
@@ -56,7 +56,7 @@ impl Config {
             base_path,
             db_path,
             cookies_path,
-            goch_base_url,
+            fivech_base_url,
         }
     }
 }

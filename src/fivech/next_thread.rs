@@ -1,6 +1,6 @@
 //! Next-thread detection. A port of sentinel's find-next-thread.js.
 
-use crate::goch::subject::SubjectEntry;
+use crate::fivech::subject::SubjectEntry;
 use regex_lite::Regex;
 use std::sync::LazyLock;
 

@@ -1,4 +1,4 @@
-# 5ch-viewer 仕様書
+# viewer-of-5ch 仕様書
 
 本アプリ（5ch をスクレイピングして閲覧する Web サービス）の仕様。
 **5ch 側の外部仕様（ドメイン・dat 形式・アクセス作法・find.5ch.net 等）は
@@ -60,7 +60,7 @@ novel-server を踏襲し、**1 つの Rust バイナリ**でフロント配信�
 ┌─────────────────────────────────────────────┐
 │ VPS                                          │
 │  ┌────────────────────────────────────────┐ │
-│  │ goch-viewer (single Rust binary)        │ │
+│  │ viewer-of-5ch (single Rust binary)      │ │
 │  │  ┌──────────┐   ┌──────────────────┐    │ │
 │  │  │ axum     │   │ background sync    │   │ │
 │  │  │ - SPA配信 │   │ (tokio interval)   │   │ │
@@ -143,11 +143,11 @@ novel-server を踏襲し、**1 つの Rust バイナリ**でフロント配信�
 4. **416 縮小検出** — サーバーサイズ ≤ N。Content-Range で同一サイズなら変化なし、
    それ以外は全取得。
 
-実装: `goch/http.rs::fetch_dat`、`goch/dat.rs::validate_diff`、`routes/favorites.rs`。
+実装: `fivech/http.rs::fetch_dat`、`fivech/dat.rs::validate_diff`、`routes/favorites.rs`。
 
 ### 6.4 SSRF 対策（入力検証）
 `server`/`board`/`thread_id` がユーザー入力（URL 貼付・直接指定・検索結果）から URL
-組み立てに入るため、全入力経路で `goch/url.rs::validate_ref`
+組み立てに入るため、全入力経路で `fivech/url.rs::validate_ref`
 （server/board=`^[a-zA-Z0-9_-]+$`、thread_id=`^[0-9]+$`）を通す（多層防御）。
 
 ## 7. データモデル（SQLite）
@@ -259,11 +259,11 @@ CREATE TABLE IF NOT EXISTS dat_blobs (
 ## 12. sentinel からの移植マップ
 | 移植元（Node.js） | 移植先（Rust） |
 | --- | --- |
-| `functions/parse-subject.js` | `goch/subject.rs` |
-| `functions/find-next-thread.js` | `goch/next_thread.rs`（テストも移植） |
-| `functions/parse-thread-url.js` | `goch/url.rs` |
+| `functions/parse-subject.js` | `fivech/subject.rs` |
+| `functions/find-next-thread.js` | `fivech/next_thread.rs`（テストも移植） |
+| `functions/parse-thread-url.js` | `fivech/url.rs` |
 | `functions/group-threads-by-board.js` | `sync.rs`（板グルーピング） |
-| `modules/http.js` | `goch/http.rs`（UA/identity/リトライ/404 非リトライ） |
+| `modules/http.js` | `fivech/http.rs`（UA/identity/リトライ/404 非リトライ） |
 | `modules/checker.js` | `sync.rs`（状態遷移・次スレ検出・自動追加） |
 | `modules/discord.js` | 移植しない（通知は自動追加で代替） |
 

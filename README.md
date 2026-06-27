@@ -1,4 +1,4 @@
-# 5ch-viewer (goch-viewer)
+# viewer-of-5ch
 
 スマホ・タブレット・PC のどこからでも、5ch スレッドの続きを同じ既読位置で読む
 個人用ビューワー。dat と既読位置をサーバー（SQLite）に集約して端末間同期する。
@@ -29,8 +29,8 @@ cargo run --release
 ## Docker
 
 ```bash
-docker build -t goch-viewer .
-docker run -p 3000:3000 -v goch-data:/data goch-viewer
+docker build -t viewer-of-5ch .
+docker run -p 3000:3000 -v viewer-of-5ch-data:/data viewer-of-5ch
 ```
 
 ## 環境変数
