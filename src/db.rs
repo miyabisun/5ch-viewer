@@ -84,31 +84,11 @@ pub const SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_image_cache_created ON image_cache (created_at);
 ";
 
-pub fn open(path: &str) -> Connection {
-    tracing::info!("Database: {}", path);
-
-    // Create the parent directory (e.g. ./data) if it does not exist.
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        if !parent.as_os_str().is_empty() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-    }
-
-    let conn = Connection::open(path).expect("Failed to open database");
-
-    conn.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         PRAGMA synchronous = NORMAL;
-         PRAGMA cache_size = -32000;
-         PRAGMA temp_store = MEMORY;
-         PRAGMA foreign_keys = ON;",
-    )
-    .expect("Failed to set PRAGMA");
-
-    conn.execute_batch(SCHEMA).expect("Failed to create tables");
-
+/// Applies idempotent schema migrations for existing databases created before a given
+/// column/cleanup was introduced. Safe to call repeatedly (each step is a no-op once applied).
+pub fn migrate(conn: &Connection) {
     // Migration: add `archived` column to favorites if it does not exist yet (existing DBs).
-    if !has_column(&conn, "favorites", "archived") {
+    if !has_column(conn, "favorites", "archived") {
         conn.execute_batch(
             "ALTER TABLE favorites ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
         )
@@ -116,7 +96,7 @@ pub fn open(path: &str) -> Connection {
     }
 
     // Migration: add `dat_bytes` column to dat_blobs if it does not exist yet (existing DBs).
-    if !has_column(&conn, "dat_blobs", "dat_bytes") {
+    if !has_column(conn, "dat_blobs", "dat_bytes") {
         conn.execute_batch(
             "ALTER TABLE dat_blobs ADD COLUMN dat_bytes INTEGER NOT NULL DEFAULT 0",
         )
@@ -124,7 +104,7 @@ pub fn open(path: &str) -> Connection {
     }
 
     // Migration: add `mosaic` column to image_cache if it does not exist yet (existing DBs).
-    if !has_column(&conn, "image_cache", "mosaic") {
+    if !has_column(conn, "image_cache", "mosaic") {
         conn.execute_batch(
             "ALTER TABLE image_cache ADD COLUMN mosaic INTEGER NOT NULL DEFAULT 0",
         )
@@ -151,6 +131,32 @@ pub fn open(path: &str) -> Connection {
         conn.execute("DELETE FROM dat_blobs", [])
             .expect("Failed to clear legacy BLOB rows from dat_blobs");
     }
+}
+
+pub fn open(path: &str) -> Connection {
+    tracing::info!("Database: {}", path);
+
+    // Create the parent directory (e.g. ./data) if it does not exist.
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
+
+    let conn = Connection::open(path).expect("Failed to open database");
+
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA cache_size = -32000;
+         PRAGMA temp_store = MEMORY;
+         PRAGMA foreign_keys = ON;",
+    )
+    .expect("Failed to set PRAGMA");
+
+    conn.execute_batch(SCHEMA).expect("Failed to create tables");
+
+    migrate(&conn);
 
     conn
 }
@@ -341,6 +347,22 @@ mod tests {
                 created_at INTEGER DEFAULT (strftime('%s','now')),
                 updated_at INTEGER DEFAULT (strftime('%s','now')),
                 PRIMARY KEY (server, board, thread_id)
+            );
+            CREATE TABLE dat_blobs (
+                server     TEXT NOT NULL,
+                board      TEXT NOT NULL,
+                thread_id  TEXT NOT NULL,
+                raw        TEXT NOT NULL,
+                PRIMARY KEY (server, board, thread_id),
+                FOREIGN KEY (server, board, thread_id)
+                    REFERENCES favorites(server, board, thread_id) ON DELETE CASCADE
+            );
+            CREATE TABLE image_cache (
+                url        TEXT NOT NULL PRIMARY KEY,
+                path       TEXT NOT NULL DEFAULT '',
+                image      BLOB,
+                mime       TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
             );",
         )
         .unwrap();
@@ -353,16 +375,13 @@ mod tests {
         )
         .unwrap();
 
-        // Simulate the migration (same logic as in open()).
         assert!(
             !has_column(&conn, "favorites", "archived"),
             "pre-condition: archived column must not exist yet"
         );
 
-        conn.execute_batch(
-            "ALTER TABLE favorites ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
-        )
-        .unwrap();
+        // Run the actual migration function used by open().
+        migrate(&conn);
 
         // Column must now exist and the pre-existing row must have archived=0.
         let archived: i64 = conn
@@ -444,12 +463,8 @@ mod tests {
     }
 
     /// Migration regression: BLOB rows (from the old Shift-JIS schema) must be deleted by the
-    /// one-time migration in `open()`, while TEXT rows (the new schema) must be left intact.
-    ///
-    /// This test simulates the migration path directly (without calling `open()`, which requires
-    /// a real file path) by reproducing the same two SQL statements that `open()` executes.
-    /// Keeping the logic here means that if the `typeof='blob'` predicate or the DELETE ever
-    /// regresses, this test will catch it before the server starts with a corrupt cache row.
+    /// one-time migration in `open()` (via the shared `migrate()` function), while TEXT rows
+    /// (the new schema) must be left intact.
     #[test]
     fn migration_deletes_blob_rows_preserves_text_rows() {
         // Start from the current (TEXT) schema so CREATE TABLE IF NOT EXISTS does not interfere.
@@ -493,18 +508,8 @@ mod tests {
             .unwrap();
         assert_eq!(blob_type, "blob", "pre-condition: thread 1002 must be blob");
 
-        // --- run the migration (same logic as in open()) ---
-        let blob_rows: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM dat_blobs WHERE typeof(raw) = 'blob'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        if blob_rows > 0 {
-            conn.execute("DELETE FROM dat_blobs", []).unwrap();
-        }
-        // --- end migration ---
+        // Run the actual migration function used by open().
+        migrate(&conn);
 
         // After migration: only the TEXT row (1001) survives — DELETE cleared everything,
         // but in a real scenario the TEXT rows would be re-seeded by the next reload.
@@ -524,15 +529,8 @@ mod tests {
         )
         .unwrap();
 
-        let blob_rows2: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM dat_blobs WHERE typeof(raw) = 'blob'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        // blob_rows2 == 0, so the DELETE branch is NOT taken.
-        assert_eq!(blob_rows2, 0);
+        // Run migrate() again: no BLOB rows exist now, so the DELETE branch must not fire.
+        migrate(&conn);
 
         let count_text_only: i64 = conn
             .query_row("SELECT COUNT(*) FROM dat_blobs", [], |r| r.get(0))

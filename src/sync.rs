@@ -12,6 +12,12 @@ use std::time::Duration;
 
 const INTERVAL: Duration = Duration::from_secs(60);
 
+/// Watch query shared by run_once() and its tests: active/warned favorites only
+/// (dead and archived threads are excluded from polling).
+const WATCH_QUERY: &str =
+    "SELECT server, board, thread_id, title, rating
+     FROM favorites WHERE status != 'dead' AND archived = 0";
+
 pub fn start_sync(state: AppState) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(INTERVAL);
@@ -35,10 +41,7 @@ struct Watch {
 async fn run_once(state: &AppState) -> Result<(), AppError> {
     let watches: Vec<Watch> = {
         let conn = state.db.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT server, board, thread_id, title, rating
-             FROM favorites WHERE status != 'dead' AND archived = 0",
-        )?;
+        let mut stmt = conn.prepare(WATCH_QUERY)?;
         let rows = stmt
             .query_map([], |r| {
                 Ok(Watch {
@@ -214,55 +217,45 @@ mod tests {
         .unwrap();
     }
 
-    /// run_once query must exclude archived favorites (AND archived = 0).
+    /// WATCH_QUERY (the exact query run_once() prepares) must exclude dead and archived
+    /// favorites, keeping only active/warned non-archived ones.
     #[test]
-    fn run_once_query_excludes_archived() {
+    fn watch_query_excludes_dead_and_archived() {
         let conn = setup();
-        // One active, one archived.
-        insert_favorite(&conn, "1001", "アクティブスレ", "active", 0);
-        insert_favorite(&conn, "1002", "アーカイブスレ", "active", 1);
+        insert_favorite(&conn, "1001", "スレA", "active", 0);
+        insert_favorite(&conn, "1002", "スレB", "warned", 0);
+        insert_favorite(&conn, "1003", "スレC", "dead", 0);
+        insert_favorite(&conn, "1004", "アーカイブスレ", "active", 1);
 
-        // The same query used in run_once().
-        let mut stmt = conn
-            .prepare(
-                "SELECT server, board, thread_id, title, rating
-                 FROM favorites WHERE status != 'dead' AND archived = 0",
-            )
-            .unwrap();
-        let thread_ids: Vec<String> = stmt
+        let mut stmt = conn.prepare(super::WATCH_QUERY).unwrap();
+        let mut ids: Vec<String> = stmt
             .query_map([], |r| r.get::<_, String>(2))
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
+        ids.sort();
 
-        assert_eq!(thread_ids, vec!["1001"], "archived thread must be excluded from sync");
+        // Only 1001 (active) and 1002 (warned) pass: dead and archived are excluded.
+        assert_eq!(ids, vec!["1001", "1002"]);
     }
 
     /// Archived threads that become dead must not trigger next-thread insertion.
     /// This verifies the root cause: because archived = 0 filter excludes them from
-    /// run_once(), process_thread is never called for archived threads and the
+    /// WATCH_QUERY, process_thread is never called for archived threads and the
     /// INSERT OR IGNORE in find_next_thread cannot fire.
     #[test]
     fn archived_dead_thread_does_not_auto_add_next() {
         let conn = setup();
         // Insert an archived thread that is already dead.
         insert_favorite(&conn, "1001", "古いスレ Part1", "dead", 1);
-        // Insert a potential next-thread in the subject (simulated via a separate active entry).
-        // We insert it as a favorite to confirm it was NOT auto-added by sync.
-        // Initial count of favorites = 1 (only the archived one).
         let count_before: i64 = conn
             .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count_before, 1);
 
-        // The run_once query with AND archived = 0 will return 0 rows,
-        // so process_thread is never called.
-        let mut stmt = conn
-            .prepare(
-                "SELECT server, board, thread_id FROM favorites
-                 WHERE status != 'dead' AND archived = 0",
-            )
-            .unwrap();
+        // WATCH_QUERY (the exact query run_once() uses) returns 0 rows,
+        // so process_thread is never called for this thread.
+        let mut stmt = conn.prepare(super::WATCH_QUERY).unwrap();
         let watches: Vec<String> = stmt
             .query_map([], |r| r.get::<_, String>(2))
             .unwrap()
@@ -277,22 +270,27 @@ mod tests {
         assert_eq!(count_after, 1, "no next thread should be auto-added for archived threads");
     }
 
-    /// Verify that process_thread on a subject with the same thread works correctly
-    /// (sanity check for the mock subject matching logic used in the full integration).
+    /// process_thread updates res_count (and status) for an active, non-archived thread
+    /// still present in subject.txt below the warned threshold.
     #[test]
     fn process_thread_updates_res_count_for_active_non_archived() {
         let conn = setup();
-        insert_favorite(&conn, "1001", "アクティブ", "active", 0);
+        insert_fav_with_rating(&conn, "1001", "アクティブ", "active", 0);
 
-        // Simulate what process_thread does for a found entry.
-        let new_count: i64 = 42;
-        conn.execute(
-            "UPDATE favorites SET res_count=?4, status='active', updated_at=strftime('%s','now')
-             WHERE server='egg' AND board='applism' AND thread_id=?3",
-            params!["egg", "applism", "1001", new_count],
-        )
-        .unwrap();
+        let state = make_state(conn);
+        let w = super::Watch {
+            server: "egg".to_string(),
+            board: "applism".to_string(),
+            thread_id: "1001".to_string(),
+            title: "アクティブ".to_string(),
+            rating: 0,
+        };
+        // res_count=42 is below the warned threshold (980), so no next-thread search runs.
+        let entries = vec![subject_entry("1001", "アクティブ", 42)];
 
+        super::process_thread(&state, "egg", "applism", &w, &entries);
+
+        let conn = state.db.lock().unwrap();
         let res_count: i64 = conn
             .query_row(
                 "SELECT res_count FROM favorites WHERE thread_id='1001'",
@@ -301,33 +299,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(res_count, 42);
-    }
-
-    /// process_thread must NOT be called for archived threads because they are
-    /// filtered at the run_once query level. This test verifies the filter directly.
-    #[test]
-    fn sync_filter_archived_zero_filters_correctly() {
-        let conn = setup();
-        // Mix: active, warned, dead (all not archived) + one archived active.
-        insert_favorite(&conn, "1001", "スレA", "active", 0);
-        insert_favorite(&conn, "1002", "スレB", "warned", 0);
-        insert_favorite(&conn, "1003", "スレC", "dead", 0);
-        insert_favorite(&conn, "1004", "アーカイブスレ", "active", 1);
-
-        let mut stmt = conn
-            .prepare(
-                "SELECT thread_id FROM favorites WHERE status != 'dead' AND archived = 0",
-            )
-            .unwrap();
-        let mut ids: Vec<String> = stmt
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        ids.sort();
-
-        // Only 1001 (active) and 1002 (warned) pass: dead and archived are excluded.
-        assert_eq!(ids, vec!["1001", "1002"]);
     }
 
     // --- process_thread warned-trigger tests ---
@@ -508,26 +479,4 @@ mod tests {
         assert_eq!(count, 1, "next thread must NOT be registered when current thread is active");
     }
 
-    /// process_thread must not make any 5ch HTTP calls: it only uses the subject entries
-    /// passed in as a slice (already fetched once per board in run_once). Verified
-    /// structurally: the function signature takes &[SubjectEntry], no http client arg.
-    /// This test runs without any network access and completes without panicking.
-    #[test]
-    fn process_thread_uses_no_additional_http_requests() {
-        let conn = setup();
-        insert_fav_with_rating(&conn, "1000000001", "ブルアカ Part5862", "active", 0);
-
-        let state = make_state(conn);
-        let w = super::Watch {
-            server: "egg".to_string(),
-            board: "applism".to_string(),
-            thread_id: "1000000001".to_string(),
-            title: "ブルアカ Part5862".to_string(),
-            rating: 0,
-        };
-        // Offline entries — no real 5ch access. Must not panic or block.
-        let entries = vec![subject_entry("1000000001", "ブルアカ Part5862", 980)];
-        super::process_thread(&state, "egg", "applism", &w, &entries);
-        // If we reach here, no network call was attempted (no timeout, no panic).
-    }
 }

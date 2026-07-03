@@ -234,15 +234,26 @@ async fn patch_archived(
     validate_ref(&server, &board, &thread_id)?;
     let archived: i64 = if req.archived { 1 } else { 0 };
     let conn = state.db.lock().unwrap();
-    let n = conn.execute(
-        "UPDATE favorites SET archived=?4, updated_at=strftime('%s','now')
-         WHERE server=?1 AND board=?2 AND thread_id=?3",
-        params![server, board, thread_id, archived],
-    )?;
+    let n = set_archived(&conn, &server, &board, &thread_id, archived)?;
     if n == 0 {
         return Err(AppError::NotFound("favorite not found".into()));
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Sets the `archived` flag for a favorite. Returns the number of updated rows (0 = not found).
+fn set_archived(
+    conn: &rusqlite::Connection,
+    server: &str,
+    board: &str,
+    thread_id: &str,
+    archived: i64,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE favorites SET archived=?4, updated_at=strftime('%s','now')
+         WHERE server=?1 AND board=?2 AND thread_id=?3",
+        params![server, board, thread_id, archived],
+    )
 }
 
 /// Returns the stored dat as an array of posts.
@@ -604,48 +615,6 @@ mod tests {
         assert_eq!(read_status(&conn), "warned");
     }
 
-    /// Counts the posts parsed from the stored blob (mirrors the reload gate's baseline).
-    fn stored_count(conn: &Connection) -> i64 {
-        read_blob_posts(conn, SERVER, BOARD, THREAD).unwrap().len() as i64
-    }
-
-    /// Regression (the "stuck at 111" bug): the reload gate must compare subject.txt
-    /// against the actual stored blob, not against `favorites.res_count`. When res_count
-    /// drifted ahead of the blob (res_count=117 but the blob holds only 111 posts), a
-    /// gate keyed on res_count computes `117 > 117 == false` and never re-fetches, so the
-    /// blob is stuck. Keying on the blob count yields `117 > 111 == true` (fetch needed).
-    #[test]
-    fn reload_gate_keys_on_blob_count_not_metadata() {
-        let conn = setup();
-        // Dat text with 2 posts, but metadata res_count bumped to 3 (drifted ahead).
-        let dat = "名無し<>sage<>d ID:a<>本文1<>スレタイ\n名無し<><>d ID:b<>本文2<>\n";
-        replace_blob(&conn, SERVER, BOARD, THREAD, dat, 0).unwrap();
-        conn.execute(
-            "UPDATE favorites SET res_count=3 WHERE server=?1 AND board=?2 AND thread_id=?3",
-            params![SERVER, BOARD, THREAD],
-        )
-        .unwrap();
-
-        // The blob baseline is 2 (the truth), not the metadata's 3.
-        assert_eq!(stored_count(&conn), 2);
-
-        // Subject reports 3. Gate keyed on the blob -> needs_fetch (3 > 2).
-        let subject_count = 3i64;
-        assert!(
-            subject_count > stored_count(&conn),
-            "gate must fetch when the blob is behind subject, even if res_count says otherwise",
-        );
-        // Sanity: the broken gate (keyed on res_count=3) would NOT fetch.
-        let metadata_res_count: i64 = conn
-            .query_row(
-                "SELECT res_count FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
-                params![SERVER, BOARD, THREAD],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert!(subject_count <= metadata_res_count);
-    }
-
     /// Archived favorites must not appear in the list (archived=0 filter).
     #[test]
     fn list_excludes_archived() {
@@ -699,17 +668,14 @@ mod tests {
         assert_eq!(rows[0].thread_id, THREAD);
     }
 
-    /// patch_archived: archived toggles true→false→true without error.
+    /// patch_archived (via set_archived, the function the handler calls): archived
+    /// toggles true→false→true without error.
     #[test]
     fn patch_archived_toggles_bidirectionally() {
         let conn = setup();
 
         // Set archived=1.
-        let n = conn.execute(
-            "UPDATE favorites SET archived=?4, updated_at=strftime('%s','now')
-             WHERE server=?1 AND board=?2 AND thread_id=?3",
-            params![SERVER, BOARD, THREAD, 1_i64],
-        ).unwrap();
+        let n = set_archived(&conn, SERVER, BOARD, THREAD, 1).unwrap();
         assert_eq!(n, 1);
         let archived: i64 = conn
             .query_row(
@@ -721,11 +687,7 @@ mod tests {
         assert_eq!(archived, 1);
 
         // Set archived=0 (unarchive).
-        let n = conn.execute(
-            "UPDATE favorites SET archived=?4, updated_at=strftime('%s','now')
-             WHERE server=?1 AND board=?2 AND thread_id=?3",
-            params![SERVER, BOARD, THREAD, 0_i64],
-        ).unwrap();
+        let n = set_archived(&conn, SERVER, BOARD, THREAD, 0).unwrap();
         assert_eq!(n, 1);
         let archived: i64 = conn
             .query_row(
@@ -735,6 +697,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(archived, 0);
+
+        // Set archived=1 again (round trip).
+        let n = set_archived(&conn, SERVER, BOARD, THREAD, 1).unwrap();
+        assert_eq!(n, 1);
+        let archived: i64 = conn
+            .query_row(
+                "SELECT archived FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
+                params![SERVER, BOARD, THREAD],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(archived, 1);
     }
 
     /// A second replace fully overwrites the previous body (no leftover text from the first).

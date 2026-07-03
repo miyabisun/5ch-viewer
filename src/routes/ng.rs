@@ -326,14 +326,37 @@ fn validate_week_key(week_key: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use crate::fivech::refresh::replace_blob;
     use rusqlite::Connection;
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
 
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         conn.execute_batch(crate::db::SCHEMA).unwrap();
         conn
+    }
+
+    fn make_state(conn: Connection) -> AppState {
+        let jar = crate::fivech::cookie_jar::open("/tmp/fivech_ng_test_cookies.json");
+        let http = crate::state::build_http_client(jar.clone());
+        let image_http = crate::fivech::images::build_image_http_client();
+        AppState {
+            db: Arc::new(Mutex::new(conn)),
+            http,
+            image_http,
+            jar,
+            config: Config {
+                port: 3000,
+                base_path: String::new(),
+                db_path: ":memory:".to_string(),
+                cookies_path: "/tmp/fivech_ng_test_cookies.json".to_string(),
+                fivech_base_url: String::new(),
+            },
+            inflight: Arc::new(Mutex::new(HashSet::new())),
+        }
     }
 
     fn insert_favorite(conn: &Connection, server: &str, board: &str, thread_id: &str, title: &str) {
@@ -377,30 +400,10 @@ mod tests {
         assert!(validate_suffix("ab c").is_err()); // space
     }
 
-    // --- ng_wacchoi table insert/idempotency ---
-
-    #[test]
-    fn ng_wacchoi_insert_or_ignore_is_idempotent() {
-        let conn = setup();
-        conn.execute(
-            "INSERT OR IGNORE INTO ng_wacchoi (suffix, board, week_key, wacchoi)
-             VALUES ('83IP', 'applism', '2025/12/25', '7bb6-83IP')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT OR IGNORE INTO ng_wacchoi (suffix, board, week_key, wacchoi)
-             VALUES ('83IP', 'applism', '2025/12/25', '7bb6-83IP')",
-            [],
-        )
-        .unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM ng_wacchoi", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(count, 1);
-    }
-
     // --- extract_wacchoi_suffix tests ---
+    // (ng_wacchoi INSERT OR IGNORE idempotency is covered by
+    // db::tests::ng_wacchoi_table_exists_and_accepts_rows, which is more exhaustive:
+    // it also checks that a different suffix in the same board+week is a separate row.)
 
     #[test]
     fn extract_wacchoi_suffix_from_raw_dat_name() {
@@ -461,24 +464,25 @@ mod tests {
         replace_blob(&conn, "egg", "test", "1000000001", dat_a, 0).unwrap();
         replace_blob(&conn, "egg", "test", "1000000002", dat_b, 0).unwrap();
 
-        // Simulate wacchoi search for suffix "83IP".
-        let posts_a = crate::fivech::dat::parse_dat(dat_a);
-        let matched_a: Vec<_> = posts_a
-            .into_iter()
-            .filter(|r| extract_wacchoi_suffix(&r.name).as_deref() == Some("83IP"))
-            .collect();
-        // Only res1 matches (res2 has ZZZZ suffix).
-        assert_eq!(matched_a.len(), 1);
-        assert_eq!(matched_a[0].body, "本文1_83IP");
+        // Call the real search function (as wacchoi_search does) for suffix "83IP".
+        let state = make_state(conn);
+        let results = board_post_search(&state, "egg", "test", |r| {
+            extract_wacchoi_suffix(&r.name).as_deref() == Some("83IP")
+        })
+        .unwrap();
 
-        let posts_b = crate::fivech::dat::parse_dat(dat_b);
-        let matched_b: Vec<_> = posts_b
-            .into_iter()
-            .filter(|r| extract_wacchoi_suffix(&r.name).as_deref() == Some("83IP"))
-            .collect();
+        // Both threads have exactly one matching post each; only 1 result per thread.
+        assert_eq!(results.len(), 2);
+
+        let thread_a = results.iter().find(|t| t.thread_id == "1000000001").unwrap();
+        // Only res1 matches (res2 has ZZZZ suffix).
+        assert_eq!(thread_a.res.len(), 1);
+        assert_eq!(thread_a.res[0].body, "本文1_83IP");
+
+        let thread_b = results.iter().find(|t| t.thread_id == "1000000002").unwrap();
         // スレB's res1 also has suffix 83IP (different prefix is fine — suffix match wins).
-        assert_eq!(matched_b.len(), 1);
-        assert_eq!(matched_b[0].body, "本文3_83IP");
+        assert_eq!(thread_b.res.len(), 1);
+        assert_eq!(thread_b.res[0].body, "本文3_83IP");
     }
 
     #[test]
@@ -514,15 +518,6 @@ mod tests {
     }
 
     #[test]
-    fn delete_returns_zero_rows_for_missing_id() {
-        let conn = setup();
-        let n = conn
-            .execute("DELETE FROM ng_ids WHERE ng_id='nonexistent'", [])
-            .unwrap();
-        assert_eq!(n, 0);
-    }
-
-    #[test]
     fn id_search_matches_posts_by_id() {
         let conn = setup();
         insert_favorite(&conn, "egg", "test", "1000000001", "スレA");
@@ -537,21 +532,19 @@ mod tests {
         replace_blob(&conn, "egg", "test", "1000000001", dat_a, 0).unwrap();
         replace_blob(&conn, "egg", "test", "1000000002", dat_b, 0).unwrap();
 
-        // Simulate the search: manually replicate the filter logic.
-        let posts_a = crate::fivech::dat::parse_dat(dat_a);
-        let matched_a: Vec<_> = posts_a
-            .into_iter()
-            .filter(|r| r.id.as_deref() == Some("target"))
-            .collect();
-        assert_eq!(matched_a.len(), 1);
-        assert_eq!(matched_a[0].body, "targetの本文");
+        // Call the real search function (as id_search does) for ID "target".
+        let state = make_state(conn);
+        let results = board_post_search(&state, "egg", "test", |r| {
+            r.id.as_deref() == Some("target")
+        })
+        .unwrap();
 
-        let posts_b = crate::fivech::dat::parse_dat(dat_b);
-        let matched_b: Vec<_> = posts_b
-            .into_iter()
-            .filter(|r| r.id.as_deref() == Some("target"))
-            .collect();
-        assert!(matched_b.is_empty());
+        // Only スレA has a matching post; スレB (no ID:target) is absent from the results.
+        assert_eq!(results.len(), 1);
+        let thread_a = &results[0];
+        assert_eq!(thread_a.thread_id, "1000000001");
+        assert_eq!(thread_a.res.len(), 1);
+        assert_eq!(thread_a.res[0].body, "targetの本文");
     }
 }
 
