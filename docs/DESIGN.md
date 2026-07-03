@@ -9,11 +9,12 @@ description: >
   the implementation of these tokens.
 colors:
   # --- Project accent (amber; happens to equal the template default) ---
+  # Unsuffixed = Washi theme (light), -dark = Sumi theme (dark).
   accent: "#9a6a00"
   accent-subtle: "rgba(154, 106, 0, 0.12)"
   accent-dark: "#e0a800"
   accent-subtle-dark: "rgba(224, 168, 0, 0.15)"
-  # --- Functional data colors (light / -dark pairs) ---
+  # --- Functional data colors (Washi / Sumi pairs) ---
   name: "#006600"
   name-dark: "#5bbf7a"
   star-on: "#e0a000"
@@ -59,15 +60,16 @@ component recipes) live there and are NOT restated here. This document
 records only what is unique to 5ch-viewer. On chrome questions the
 template wins; on the domain semantics below this file wins.
 
-Accent: **amber** (`#9a6a00` light / `#e0a800` dark) — this is also the
+Accent: **amber** (`#9a6a00` Washi / `#e0a800` Sumi) — this is also the
 template's default, so 5ch-viewer needs no accent override in practice.
 
 ## Colors
 
 Everything below is a **functional data color** in the Sumi sense: it
 encodes thread/post state, never decoration, and is exempt from the
-one-accent rule. All come in light/dark pairs and are implemented as CSS
-custom properties in `client/src/App.svelte`.
+one-accent rule. All come in Washi (light) / Sumi (dark) pairs and are
+implemented as CSS custom properties in `client/src/App.svelte`
+(`:root` = Washi, `[data-theme='dark']` = Sumi).
 
 - **Name (#006600 / #5bbf7a):** Poster name and res number — the classic
   2ch green, kept as domain heritage.
