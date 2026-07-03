@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- 壺 (tsubo): 2ch's traditional mascot shape. Bright brown pot with a
+       very dark "2" centered on the body. Flat fills per the Sumi design
+       language (no gradients); the rim is a darker brown so the silhouette
+       reads at 16px. -->
+  <!-- Rim / mouth -->
+  <rect x="10.4" y="2.2" width="11.2" height="3.6" rx="1.8" fill="#a2691f"/>
+  <!-- Neck flowing into the bulbous body -->
+  <path
+    fill="#c98a3b"
+    d="M12.3 5.8 L19.7 5.8
+       C19.7 8.0 20.9 9.0 22.8 10.5
+       C25.5 12.6 27 15.6 27 18.8
+       C27 25.0 22.1 29.6 16 29.6
+       C9.9 29.6 5 25.0 5 18.8
+       C5 15.6 6.5 12.6 9.2 10.5
+       C11.1 9.0 12.3 8.0 12.3 5.8 Z"/>
+  <!-- The "2" -->
+  <text x="16" y="24" text-anchor="middle"
+        font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="13.5" font-weight="800" fill="#241203">2</text>
+</svg>
