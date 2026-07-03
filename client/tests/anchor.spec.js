@@ -29,13 +29,18 @@ function datResponse() {
   }
 }
 
-// Regression: real 5ch dat bodies wrap >>N in <a href="../test/read.cgi/..."> tags.
-// The server sanitizer must strip those <a> tags so the frontend linkify path works.
-test('thread-anchor <a> from dat is stripped to plain >>N span by the server', async ({
+// Real 5ch dat bodies wrap >>N in <a href="../test/read.cgi/..."> tags; the server
+// sanitizer (src/sanitize.rs, covered by strips_thread_anchor_relative_path /
+// _absolute_path / strips_multiple_thread_anchors) strips those <a> tags and leaves
+// the plain &gt;&gt;N text. This test verifies the frontend side of that pipeline:
+// given an already-sanitized body, the >>N text is linkified into a clickable
+// .anchor span (not left as plain text or a raw link), and clicking it opens the modal.
+test('a sanitized >>N in a dat body renders as a clickable .anchor span (not a raw link)', async ({
   page,
 }) => {
-  // Simulate server-sanitized body: the sanitizer has already stripped the <a> tag
-  // and left the inner &gt;&gt;1 text, which linkify then wraps in .anchor span.
+  // Body as it looks after server-side sanitization: the <a href="../test/read.cgi/...">
+  // has already been stripped, leaving only the inner &gt;&gt;1 text for the frontend
+  // to linkify into an .anchor span.
   const datWithRealAnchor = {
     title: FAV.title,
     res_count: 2,
@@ -48,8 +53,8 @@ test('thread-anchor <a> from dat is stripped to plain >>N span by the server', a
         name: '名無し',
         mail: '',
         date: '2025 ID:b',
-        // After server sanitization, the <a href="../test/read.cgi/..."> is stripped
-        // and only the inner &gt;&gt;1 text remains (same as the existing mock).
+        // Already-sanitized body: only the inner &gt;&gt;1 text remains (same shape
+        // the server would produce after stripping the <a href="../test/read.cgi/...">).
         body: '&gt;&gt;1 read.cgiアンカーから変換',
       },
     ],
@@ -260,7 +265,9 @@ test('anchor modal closes via × and via outside click (no bottom 閉じる)', a
 
   // No bottom 閉じる button anymore: the only close affordance is the top-right ×.
   await expect(page.locator('.modal').getByText('閉じる')).toHaveCount(0)
-  await expect(page.locator('.modal-close')).toHaveText('×')
+  // The close affordance is a quiet icon button with an SVG x (DESIGN.md), not a text glyph.
+  await expect(page.locator('.modal-close svg')).toBeVisible()
+  await expect(page.locator('.modal-close')).toHaveText('')
 
   // Top-right × closes it.
   await page.locator('.modal-close').click()

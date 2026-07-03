@@ -58,18 +58,18 @@
 </div>
 
 <style>
+  /* List row: card style — 8px radius, surface-raised, 1px border (DESIGN.md). */
   .thread {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    padding-left: 0.6rem;
-    background: var(--card-bg);
+    gap: 8px;
+    padding: 8px;
+    background: var(--surface-raised);
     border: 1px solid var(--border);
     /* The left edge color bar is supplied by the caller via --row-color. */
     border-left: 4px solid var(--row-color, var(--muted));
-    border-radius: 6px;
-    margin-bottom: 0.3rem;
+    border-radius: 8px;
+    margin-bottom: 4px;
     cursor: pointer;
     /* Disable the browser's long-press text selection / callout on touch. */
     -webkit-touch-callout: none;
@@ -83,21 +83,23 @@
     min-width: 0;
   }
   .title {
+    font-size: 15px;
     font-weight: 600;
+    line-height: 1.3;
   }
   .sub {
-    font-size: 0.8rem;
+    font-size: 12px;
     color: var(--muted);
   }
-  /* Unread badge: dark-red rounded pill, white text. Hidden when 0 (not rendered). */
+  /* Unread badge: dark-red full-radius pill, white text. Hidden when 0 (not rendered). */
   .unread {
     flex: none;
     background: var(--badge-bg);
     color: var(--badge-fg);
-    font-size: 0.75rem;
+    font-size: 12px;
     font-weight: bold;
     line-height: 1;
-    padding: 0.2rem 0.45rem;
-    border-radius: 999px;
+    padding: 4px 8px;
+    border-radius: 9999px;
   }
 </style>

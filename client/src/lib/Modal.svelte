@@ -2,6 +2,8 @@
   // Reusable modal: close via the top-right ×, a scrim (outside) click, or Esc.
   // The bottom "閉じる" button convention is intentionally dropped in favor of
   // this shared behavior so all modals (anchor tree, favorites menu, ...) match.
+  import Icon from './Icon.svelte'
+
   let { onclose, children, header } = $props()
 
   function onKey(e) {
@@ -27,9 +29,11 @@
     {#if header}
       <div class="modal-header">{@render header()}</div>
     {/if}
-    <!-- × button: row 1, column 2 (or column 1/-1 when no header). Kept visually
-         subtle (muted color, transparent bg) so it does not compete with content. -->
-    <button class="modal-close" aria-label="閉じる" onclick={onclose}>×</button>
+    <!-- × button: row 1, column 2 (or column 1/-1 when no header). Quiet icon
+         button (muted color, transparent bg) so it does not compete with content. -->
+    <button class="modal-close" aria-label="閉じる" onclick={onclose}>
+      <Icon name="x" size="20" />
+    </button>
     <!-- Scrollable content area spanning both columns in row 2.
          Scrollbar is hidden (Firefox: scrollbar-width; WebKit: ::-webkit-scrollbar). -->
     <div class="modal-content">
@@ -42,45 +46,51 @@
   .modal-bg {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.4);
+    background: var(--scrim);
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 1rem;
+    padding: 16px;
     z-index: 50;
   }
+  /* Floating layer: 12px radius + the only sanctioned drop shadow (DESIGN.md). */
   .modal {
-    background: var(--card-bg);
-    border-radius: 8px;
-    padding: 1rem;
+    background: var(--surface-raised);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
     max-width: 100%;
     overflow: hidden;
-    /* Grid: column 1 = flexible title, column 2 = 30px × button.
-       Row 1 = header row (min 30px so the × always has height), row 2 = content. */
+    /* Grid: column 1 = flexible title, column 2 = 36px × button.
+       Row 1 = header row (min 36px so the × always has height), row 2 = content. */
     display: grid;
-    grid-template-columns: 1fr 30px;
-    grid-template-rows: minmax(30px, auto) 1fr;
-    gap: 0 0.25rem;
+    grid-template-columns: 1fr 36px;
+    grid-template-rows: minmax(36px, auto) 1fr;
+    gap: 0 4px;
   }
   .modal-header {
     grid-row: 1;
     grid-column: 1;
     align-self: center;
+    font-size: 17px;
     font-weight: 600;
+    line-height: 1.3;
     word-break: break-word;
-    padding-right: 0.25rem;
+    padding-right: 4px;
   }
-  /* × button: grid cell (row 1, column 2), fixed 30×30px.
+  /* × button: quiet icon button (36×36 hit area), grid cell (row 1, column 2).
      Kept visually subtle so it does not compete with content. Hover gives a slight affordance. */
   .modal-close {
     grid-row: 1;
     grid-column: 2;
-    width: 30px;
-    height: 30px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     line-height: 1;
-    font-size: 1.2rem;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     background: transparent;
     color: var(--muted);
     cursor: pointer;
@@ -89,7 +99,7 @@
     justify-self: center;
   }
   .modal-close:hover {
-    color: var(--fg);
+    color: var(--on-surface);
     background: var(--border);
   }
   /* Scrollable content: spans both columns in row 2. Scrollbar hidden for clean look. */

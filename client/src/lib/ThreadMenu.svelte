@@ -61,33 +61,14 @@
   .menu {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: 8px;
     width: 100%;
   }
   .menu-url {
-    font-size: 0.75rem;
+    font-size: 12px;
     color: var(--muted);
     word-break: break-all;
-    margin-top: 0.15rem;
+    margin-top: 4px;
   }
-  :global(.menu .section-label) {
-    font-size: 0.75rem;
-    color: var(--muted);
-    margin-top: 0.4rem;
-  }
-  :global(.menu .action) {
-    width: 100%;
-    padding: 0.7rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
-    color: var(--fg);
-    cursor: pointer;
-    text-align: center;
-    font-size: 0.95rem;
-  }
-  :global(.menu .action.danger) {
-    color: var(--danger);
-    margin-top: 0.4rem;
-  }
+  /* .action / .section-label styling comes from the shared .menu recipes in App.svelte. */
 </style>

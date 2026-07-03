@@ -190,18 +190,26 @@
 </main>
 
 <style>
+  /* Sumi design tokens (DESIGN.md). Chrome colors come from here exclusively;
+     components must never hardcode hex values. */
   :global(:root) {
-    --bg: #fafafa;
-    --fg: #222;
-    --muted: #888;
-    --border: #eee;
-    --card-bg: #fff;
-    --nav-bg: #fff;
-    --accent: #e0a000;
-    --danger: #c00;
-    --error-bg: #fee;
+    /* Native widgets (select dropdown, scrollbars) follow the active theme. */
+    color-scheme: light;
+    --surface: #fafafa;
+    --surface-raised: #ffffff;
+    --on-surface: #222222;
+    --muted: #6f6f6f;
+    --border: #e6e6e3;
+    --scrim: rgba(0, 0, 0, 0.4);
+    --accent: #9a6a00;
+    --accent-subtle: rgba(154, 106, 0, 0.12);
+    --link: #1f6f99;
+    --danger: #b3261e;
+    --danger-subtle: #fdeeee;
+    /* --- Functional data colors (project-domain, exempt from the one-accent rule) --- */
     --name: #060;
-    --link: #2a8fbd;
+    /* Star-rating glyph when lit (data viz, decoupled from the chrome accent). */
+    --star-on: #e0a000;
     /* Unread badge: dark-red pill with white text. */
     --badge-bg: #a01818;
     --badge-fg: #fff;
@@ -225,17 +233,21 @@
     --id-l5: #e23b3b;
   }
   :global([data-theme='dark']) {
-    --bg: #1a1a1a;
-    --fg: #e6e6e6;
-    --muted: #999;
-    --border: #333;
-    --card-bg: #242424;
-    --nav-bg: #202020;
-    --accent: #e0a000;
-    --danger: #ff6b6b;
-    --error-bg: #3a1a1a;
-    --name: #5bbf7a;
+    color-scheme: dark;
+    --surface: #191919;
+    --surface-raised: #232323;
+    --on-surface: #e6e6e6;
+    --muted: #9a9a9a;
+    --border: #333333;
+    --scrim: rgba(0, 0, 0, 0.6);
+    --accent: #e0a800;
+    --accent-subtle: rgba(224, 168, 0, 0.15);
     --link: #7fdbff;
+    --danger: #ff6b6b;
+    --danger-subtle: #3a1a1a;
+    /* --- Functional data colors (dark theme) --- */
+    --name: #5bbf7a;
+    --star-on: #e0a800;
     /* Unread / own indicators (dark theme). */
     --unread: #ff9e1f;
     --own: #ff7ac0;
@@ -255,6 +267,139 @@
     --rate-4: #ff9e1f;
     --rate-5: #ff5a5a;
   }
+
+  /* Shared focus ring (DESIGN.md): accent at 60% opacity on :focus-visible only.
+     The UA default blue ring must never appear. */
+  :global(:focus-visible) {
+    outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+    outline-offset: 2px;
+  }
+  /* Inputs/textareas/selects: suppress the UA outline on focus in favor of an
+     accent border (never remove focus indication without a substitute).
+     :root raises specificity above per-component base border rules. */
+  :global(:root input:focus),
+  :global(:root textarea:focus),
+  :global(:root select:focus) {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  /* --- Shared control recipes (DESIGN.md Components) ---
+     Svelte styles are component-scoped, so the recipes reused across
+     components live here (App is always mounted). Components keep only
+     their layout-specific overrides. */
+  /* Default button: surface-raised bg, 1px border, label type, 6px radius. */
+  :global(.btn) {
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-raised);
+    color: var(--on-surface);
+    font-size: 15px;
+    font-weight: 500;
+    font-family: inherit;
+    line-height: 1.2;
+    cursor: pointer;
+  }
+  :global(.btn:hover:not(:disabled)) {
+    background: var(--border);
+  }
+  :global(.btn:disabled) {
+    opacity: 0.5;
+    cursor: default;
+  }
+  /* Icon button (used with .btn): 36×36 hit area, SVG centered. */
+  :global(.icon-btn) {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  /* Input/textarea: surface bg (one level below the card/modal), body type. */
+  :global(.input) {
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--on-surface);
+    font-size: 16px;
+    font-family: inherit;
+  }
+  :global(.input::placeholder) {
+    color: var(--muted);
+  }
+  /* Menu actions: modal-presented stack of full-width default buttons
+     (DESIGN.md Menus), with caption-muted section labels. */
+  :global(.menu .action) {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-raised);
+    color: var(--on-surface);
+    cursor: pointer;
+    text-align: center;
+    font-size: 15px;
+    font-weight: 500;
+  }
+  :global(.menu .action:hover) {
+    background: var(--border);
+  }
+  :global(.menu .action.danger) {
+    color: var(--danger);
+    margin-top: 8px;
+  }
+  :global(.menu .section-label) {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  /* Error banner: danger text on a danger-subtle tint. */
+  :global(.error) {
+    color: var(--danger);
+    background: var(--danger-subtle);
+    padding: 8px 12px;
+    border-radius: 8px;
+  }
+  /* Pull-to-refresh panel (FavoritesList top edge / ThreadView bottom edge;
+     the border side is set by each owner). Height is driven inline
+     (0 = hidden); overflow:hidden prevents content flash near zero. */
+  :global(.pull-refresh-panel) {
+    flex-shrink: 0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 14px;
+    background: var(--surface-raised);
+    color: var(--muted);
+    user-select: none;
+    pointer-events: none;
+    transition: height 0.05s linear;
+  }
+  /* Highlight text when past the release threshold. */
+  :global(.pull-refresh-panel.above-threshold) {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  /* Spinner: 1.5px-stroke circle in accent (circle shape, not a control radius). */
+  :global(.pull-refresh-spinner) {
+    display: inline-block;
+    width: 1.1rem;
+    height: 1.1rem;
+    border: 1.5px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: pr-spin 0.7s linear infinite;
+  }
+  @keyframes -global-pr-spin {
+    to { transform: rotate(360deg); }
+  }
+
   :global(html),
   :global(body) {
     /* Wall for mobile (window scroll): prevent native overscroll bounce at the
@@ -264,13 +409,15 @@
   :global(body) {
     margin: 0;
     font-family: system-ui, sans-serif;
-    background: var(--bg);
-    color: var(--fg);
+    font-size: 16px;
+    line-height: 1.6;
+    background: var(--surface);
+    color: var(--on-surface);
   }
   main {
     max-width: 720px;
     margin: 0 auto;
-    padding: 0.5rem;
+    padding: 8px;
   }
   .pane {
     min-width: 0;
@@ -323,7 +470,7 @@
       overflow: hidden;
       display: grid;
       grid-template-columns: minmax(18rem, 22rem) 1fr;
-      gap: 0.75rem;
+      gap: 12px;
       /* stretch (default) so panes fill the grid row height */
       align-items: stretch;
     }
@@ -351,14 +498,9 @@
     }
     .placeholder {
       color: var(--muted);
+      font-size: 14px;
       text-align: center;
-      margin-top: 3rem;
+      margin-top: 24px;
     }
-  }
-  .error {
-    color: var(--danger);
-    background: var(--error-bg);
-    padding: 0.5rem;
-    border-radius: 4px;
   }
 </style>

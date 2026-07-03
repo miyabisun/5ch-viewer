@@ -2,6 +2,7 @@
   import { api } from './api.js'
   import ThreadRow from './ThreadRow.svelte'
   import ThreadMenu from './ThreadMenu.svelte'
+  import Icon from './Icon.svelte'
   import { topPullRefresh, PULL_THRESHOLD_PX } from './topPullRefresh.js'
 
   let { favorites, onopen, onchange, onrefresh = () => {} } = $props()
@@ -80,9 +81,9 @@
       <span class="pull-refresh-spinner"></span>
       <span>更新中…</span>
     {:else if aboveThreshold}
-      <span>↑ 離して更新</span>
+      <span>離して更新</span>
     {:else}
-      <span>↓ 引いて更新</span>
+      <span>引いて更新</span>
     {/if}
   </div>
 
@@ -144,13 +145,13 @@
   <!-- Sticky footer with refresh button -->
   <div class="favorites-footer">
     <button
-      class="refresh-btn"
+      class="refresh-btn btn"
       data-testid="favorites-refresh-btn"
       disabled={refreshing}
       onclick={triggerRefresh}
       aria-label="更新"
     >
-      🔄 更新
+      <Icon name="refresh-cw" /> 更新
     </button>
   </div>
 </div>
@@ -162,37 +163,10 @@
     min-height: 0;
   }
 
-  /* Top pull-to-refresh panel: grows from top as user drags down. */
+  /* Top pull-to-refresh panel (shared recipe in App.svelte): grows from the
+     top as the user drags down, so the border sits on the bottom edge. */
   .pull-refresh-panel.top {
-    flex-shrink: 0;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    font-size: 0.95rem;
-    background: var(--card-bg);
     border-bottom: 1px solid var(--border);
-    color: var(--muted);
-    user-select: none;
-    pointer-events: none;
-    transition: height 0.05s linear;
-  }
-  .pull-refresh-panel.top.above-threshold {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  .pull-refresh-spinner {
-    display: inline-block;
-    width: 1.1rem;
-    height: 1.1rem;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: pr-spin 0.7s linear infinite;
-  }
-  @keyframes pr-spin {
-    to { transform: rotate(360deg); }
   }
 
   .favorites-body {
@@ -200,18 +174,21 @@
     min-height: 0;
   }
 
+  /* Group header: ★ repeated per rating — data viz, so it uses --star-on (gold),
+     not the chrome accent. */
   h2 {
-    font-size: 1rem;
-    color: var(--accent);
-    margin: 1rem 0 0.3rem;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--star-on);
+    margin: 16px 0 4px;
   }
 
   /* Star rating: color, not underline, conveys selection. */
   .stars {
     display: flex;
     justify-content: center;
-    gap: 0.2rem;
-    font-size: 1.6rem;
+    gap: 4px;
+    font-size: 24px;
     line-height: 1;
   }
   .star {
@@ -219,7 +196,7 @@
     cursor: pointer;
   }
   .star.on {
-    color: var(--accent);
+    color: var(--star-on);
   }
   .star.off {
     color: var(--rate-0);
@@ -231,28 +208,17 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    padding: 0.4rem 0.6rem;
-    background: var(--bg);
+    padding: 8px 12px;
+    background: var(--surface);
     border-top: 1px solid var(--border);
     position: sticky;
     bottom: 0;
     z-index: 5;
   }
+  /* .btn with an inline icon before the label. */
   .refresh-btn {
-    border: 1px solid var(--border);
-    background: var(--card-bg);
-    color: var(--fg);
-    border-radius: 6px;
-    padding: 0.4rem 0.8rem;
-    font-size: 0.95rem;
-    cursor: pointer;
-    line-height: 1.4;
-  }
-  .refresh-btn:hover:not(:disabled) {
-    background: var(--border);
-  }
-  .refresh-btn:disabled {
-    opacity: 0.5;
-    cursor: default;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
 </style>

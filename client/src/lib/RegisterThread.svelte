@@ -61,16 +61,17 @@
 </script>
 
 <div class="add">
-  <select value={mode} onchange={onModeChange}>
+  <select class="btn" value={mode} onchange={onModeChange}>
     <option value="search">スレタイ検索</option>
     <option value="url">URL指定</option>
   </select>
   <input
+    class="input"
     placeholder={mode === 'url' ? 'スレッドURLを貼り付け' : 'キーワードで検索'}
     bind:value={url}
     onkeydown={(e) => e.key === 'Enter' && add()}
   />
-  <button onclick={add} disabled={searching}>
+  <button class="btn" onclick={add} disabled={searching}>
     {mode === 'search' ? (searching ? '検索中…' : '検索') : '追加'}
   </button>
 </div>
@@ -83,7 +84,7 @@
           <div class="title">{r.title}</div>
           <div class="sub">{r.board} {r.res_count}</div>
         </div>
-        <button class="add-btn" onclick={() => addFromSearch(r)}>追加</button>
+        <button class="add-btn btn" onclick={() => addFromSearch(r)}>追加</button>
       </div>
     {/each}
   </div>
@@ -92,24 +93,25 @@
 <style>
   .add {
     display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
+    gap: 8px;
+    margin-bottom: 16px;
   }
   .add input {
     flex: 1;
-    padding: 0.4rem;
+    min-width: 0;
   }
   .results {
-    margin-bottom: 1rem;
+    margin-bottom: 16px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
+    background: var(--surface-raised);
     overflow: hidden;
   }
   .result {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem;
+    gap: 8px;
+    padding: 8px;
     border-bottom: 1px solid var(--border);
   }
   .result:last-child {
@@ -120,14 +122,15 @@
     min-width: 0;
   }
   .add-btn {
-    padding: 0.3rem 0.6rem;
-    cursor: pointer;
+    padding: 4px 12px;
+    flex: none;
   }
   .title {
+    font-size: 15px;
     font-weight: 600;
   }
   .sub {
-    font-size: 0.8rem;
+    font-size: 12px;
     color: var(--muted);
   }
 </style>

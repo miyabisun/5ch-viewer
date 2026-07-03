@@ -3,6 +3,7 @@
   import { api } from './api.js'
   import ThreadRow from './ThreadRow.svelte'
   import ThreadMenu from './ThreadMenu.svelte'
+  import Icon from './Icon.svelte'
 
   let { onopen } = $props()
 
@@ -93,7 +94,9 @@
     >
       <span class="board-name">{g.board_name}</span>
       <span class="board-count">({g.threads.length})</span>
-      <span class="chevron" aria-hidden="true">{open.has(g.key) ? '▲' : '▼'}</span>
+      <span class="chevron" aria-hidden="true">
+        <Icon name={open.has(g.key) ? 'chevron-up' : 'chevron-down'} size="16" />
+      </span>
     </button>
 
     {#if open.has(g.key)}
@@ -115,36 +118,32 @@
 {/if}
 
 <style>
-  .error {
-    color: var(--danger);
-    background: var(--error-bg);
-    padding: 0.5rem;
-    border-radius: 4px;
-  }
   .empty {
     color: var(--muted);
+    font-size: 14px;
     text-align: center;
-    margin-top: 3rem;
+    margin-top: 24px;
   }
   .board-group {
-    margin-bottom: 0.5rem;
+    margin-bottom: 8px;
   }
+  /* List-row style header: surface-raised card with an 8px radius. */
   .board-header {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 8px;
     width: 100%;
-    padding: 0.5rem 0.6rem;
-    background: var(--card-bg);
+    padding: 8px 12px;
+    background: var(--surface-raised);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
-    color: var(--fg);
-    font-size: 0.95rem;
+    color: var(--on-surface);
+    font-size: 15px;
     text-align: left;
   }
   .board-header:hover {
-    background: var(--bg);
+    background: var(--border);
   }
   .board-name {
     font-weight: 600;
@@ -156,16 +155,17 @@
   }
   .board-count {
     color: var(--muted);
-    font-size: 0.85rem;
+    font-size: 12px;
     flex: none;
   }
   .chevron {
     color: var(--muted);
-    font-size: 0.7rem;
+    display: flex;
+    align-items: center;
     flex: none;
   }
   .board-threads {
-    padding-left: 0.5rem;
-    padding-top: 0.25rem;
+    padding-left: 8px;
+    padding-top: 4px;
   }
 </style>

@@ -8,6 +8,7 @@
   import { copyText } from './clipboard.js'
   import Modal from './Modal.svelte'
   import ImageViewer from './ImageViewer.svelte'
+  import Icon from './Icon.svelte'
   import { pullRefresh, PULL_THRESHOLD_PX } from './pullRefresh.js'
 
   let { fav, onback, onprogress = () => {}, ngIds = new Set(), onngchange = () => {}, ngWacchoi = [], onngwacchoichange = () => {} } = $props()
@@ -797,6 +798,8 @@
             loading="lazy"
             onerror={(e) => e.currentTarget.classList.add('thumb-missing')}
           />
+          <!-- Failed-load placeholder cross: shown via .thumb-missing + .thumb-error. -->
+          <span class="thumb-error" aria-hidden="true"><Icon name="x" size="20" /></span>
         </button>
       {/each}
     </div>
@@ -914,7 +917,7 @@
   <h1 class="title" data-testid="thread-title">{data?.title || fav.title}</h1>
 
   {#if refreshError}
-    <p class="refresh-error" data-testid="refresh-error" role="alert">
+    <p class="refresh-error error" data-testid="refresh-error" role="alert">
       更新に失敗しました（表示は前回取得分です）: {refreshError}
     </p>
   {/if}
@@ -957,11 +960,12 @@
 
   <!-- Fixed footer: pencil button to open the post modal. -->
   <div class="thread-footer">
+    <!-- Icon button (36×36, 6px radius) — circular FABs are not used (DESIGN.md Shapes). -->
     <button
-      class="post-btn"
+      class="btn icon-btn"
       aria-label="書き込む"
       onclick={() => { postModalOpen = true; postError = null }}
-    >✏️</button>
+    ><Icon name="pencil" size="18" /></button>
   </div>
 </div>
 
@@ -975,19 +979,19 @@
       <div class="post-row">
         <label class="post-label">
           名前
-          <input class="post-input" type="text" placeholder="（省略可）" bind:value={postName} disabled={postSubmitting} />
+          <input class="input" type="text" placeholder="（省略可）" bind:value={postName} disabled={postSubmitting} />
         </label>
         <label class="post-label">
           メール
-          <input class="post-input" type="text" placeholder="sage" bind:value={postMail} disabled={postSubmitting} />
+          <input class="input" type="text" placeholder="sage" bind:value={postMail} disabled={postSubmitting} />
         </label>
       </div>
       <label class="post-label">
         本文
-        <textarea class="post-textarea" rows="6" placeholder="本文を入力" bind:value={postMessage} disabled={postSubmitting}></textarea>
+        <textarea class="post-textarea input" rows="6" placeholder="本文を入力" bind:value={postMessage} disabled={postSubmitting}></textarea>
       </label>
       {#if postError}
-        <p class="post-error" role="alert">{postError}</p>
+        <p class="post-error error" role="alert">{postError}</p>
       {/if}
       <button
         class="post-submit"
@@ -1192,9 +1196,11 @@
     z-index: 5;
     flex-shrink: 0;
     margin: 0;
-    padding: 0.5rem 0;
-    font-size: 1.05rem;
-    background: var(--bg);
+    padding: 8px 0;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.3;
+    background: var(--surface);
     border-bottom: 1px solid var(--border);
     white-space: nowrap;
     overflow: hidden;
@@ -1208,15 +1214,16 @@
     min-height: 0;
     /* Prevent native overscroll bounce so pull-to-refresh can take over cleanly. */
     overscroll-behavior-y: contain;
-    padding: 0.2rem 0;
+    padding: 4px 0;
   }
 
+  /* Res card: 8px radius (list-row scale), surface-raised on surface. */
   .res {
-    background: var(--card-bg);
+    background: var(--surface-raised);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0.5rem;
-    margin-bottom: 0.3rem;
+    border-radius: 8px;
+    padding: 8px;
+    margin-bottom: 4px;
   }
   /* Unread: orange left border (--unread). Not --danger because unread is not an error. */
   .res.unread {
@@ -1232,15 +1239,15 @@
   }
   .name {
     color: var(--name);
-    margin-left: 0.3rem;
+    margin-left: 4px;
   }
   .date {
-    font-size: 0.75rem;
+    font-size: 12px;
     color: var(--muted);
-    margin-left: 0.3rem;
+    margin-left: 4px;
   }
   .body {
-    margin-top: 0.3rem;
+    margin-top: 4px;
     white-space: pre-wrap;
     word-break: break-word;
   }
@@ -1266,47 +1273,43 @@
     color: inherit;
   }
   .backrefs {
-    margin-top: 0.3rem;
+    margin-top: 4px;
     display: flex;
     flex-wrap: wrap;
-    gap: 0.4rem;
-    font-size: 0.8rem;
+    gap: 8px;
+    font-size: 12px;
   }
   /* Anchor tree: depth-driven indentation via inline margin-left (set per node).
      A left border on each indented node gives the visual tree guide. */
   .anchor-node {
     /* padding-left leaves room for the border without shifting text too much */
-    padding-left: 0.5rem;
+    padding-left: 8px;
     border-left: 2px solid var(--border);
   }
   /* Tighter vertical spacing inside the tree for scannability. */
   .anchor-node .res {
-    margin-bottom: 0.2rem;
+    margin-bottom: 4px;
   }
   .anchor-node .res.missing {
     color: var(--muted);
-    font-size: 0.85rem;
+    font-size: 14px;
   }
   /* Highlight the pivot res (the clicked N) in the anchor tree.
      border-left here overrides the node-level border and gives a coloured accent;
      indentation is unaffected (it comes from margin-left on .anchor-node). */
   .anchor-node .res.anchor-self {
-    border-left: 3px solid var(--accent, var(--link));
-    background: var(--highlight-bg, var(--card-bg));
+    border-left: 3px solid var(--accent);
+    background: var(--accent-subtle);
   }
   .refresh-error {
-    margin: 0.4rem 0;
-    padding: 0.4rem 0.6rem;
-    font-size: 0.85rem;
-    color: var(--danger);
-    background: var(--error-bg);
-    border-radius: 4px;
+    margin: 8px 0;
+    font-size: 14px;
   }
   /* ID/wacchoi badge: same font-size as surrounding .date text.
      Gap from the preceding element comes from an &nbsp; placed inside
      each {#if} block (just before the span), so it only renders when the badge is shown. */
   .id-badge {
-    font-size: 0.75rem;
+    font-size: 12px;
   }
   /* id-l1: single-occurrence ID — shown as muted text (clickable but no colour accent). */
   .id-l1 { color: var(--muted); }
@@ -1333,25 +1336,16 @@
   .menu {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: 8px;
     width: 16rem;
     max-width: 100%;
   }
   .menu-title {
     font-weight: 600;
     word-break: break-all;
-    font-size: 0.9rem;
+    font-size: 14px;
   }
-  .action {
-    padding: 0.7rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
-    color: var(--fg);
-    cursor: pointer;
-    text-align: center;
-    font-size: 0.95rem;
-  }
+  /* .action styling comes from the shared .menu recipes in App.svelte. */
 
   /* ID list modal content (same-ID reses in the current thread). */
   .id-list {
@@ -1359,7 +1353,7 @@
     max-width: 90vw;
   }
   .id-list-res {
-    font-size: 0.9rem;
+    font-size: 14px;
   }
 
   /* ID search result modal content. */
@@ -1368,54 +1362,23 @@
     max-width: 90vw;
   }
   .search-thread-title {
-    font-size: 0.9rem;
+    font-size: 14px;
     color: var(--accent);
-    margin: 0.8rem 0 0.3rem;
+    margin: 12px 0 4px;
     border-bottom: 1px solid var(--border);
-    padding-bottom: 0.2rem;
+    padding-bottom: 4px;
   }
   .search-res {
-    font-size: 0.9rem;
+    font-size: 14px;
   }
   .search-empty {
     color: var(--muted);
   }
 
-  /* Pull-to-refresh panel: sits in normal flow between .thread-body and .thread-footer.
-     Height is driven inline (0 = hidden, grows as the user over-pulls). Overflow:hidden
-     prevents content flash when height is near-zero. */
+  /* Pull-to-refresh panel (shared recipe in App.svelte): sits between
+     .thread-body and .thread-footer, so the border sits on the top edge. */
   .pull-refresh-panel {
-    flex-shrink: 0;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    font-size: 0.95rem;
-    background: var(--card-bg);
     border-top: 1px solid var(--border);
-    color: var(--muted);
-    user-select: none;
-    pointer-events: none;
-    transition: height 0.05s linear;
-  }
-  /* Highlight text when past the release threshold. */
-  .pull-refresh-panel.above-threshold {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  /* Simple CSS spinner (no extra dependencies). */
-  .pull-refresh-spinner {
-    display: inline-block;
-    width: 1.1rem;
-    height: 1.1rem;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: pr-spin 0.7s linear infinite;
-  }
-  @keyframes pr-spin {
-    to { transform: rotate(360deg); }
   }
 
   /* Fixed footer: stays at the bottom of .thread-view. */
@@ -1424,45 +1387,30 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    padding: 0.4rem 0.6rem;
-    background: var(--bg);
+    padding: 8px 12px;
+    background: var(--surface);
     border-top: 1px solid var(--border);
-  }
-  .post-btn {
-    width: 2.8rem;
-    height: 2.8rem;
-    border-radius: 50%;
-    border: 1px solid var(--border);
-    background: var(--card-bg);
-    font-size: 1.3rem;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
-  }
-  .post-btn:hover {
-    background: var(--border);
   }
 
   /* Post form inside the modal. */
   .post-form {
     display: flex;
     flex-direction: column;
-    gap: 0.6rem;
+    gap: 8px;
     min-width: min(28rem, 90vw);
     max-width: 90vw;
   }
   /* Name + mail fields side by side to save vertical space. */
   .post-row {
     display: flex;
-    gap: 0.6rem;
+    gap: 8px;
   }
+  /* Field labels: caption-size muted text above the field (DESIGN.md Inputs). */
   .post-label {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
-    font-size: 0.85rem;
+    gap: 4px;
+    font-size: 12px;
     color: var(--muted);
   }
   /* Inside .post-row each label stretches equally. */
@@ -1470,34 +1418,22 @@
     flex: 1;
     min-width: 0;
   }
-  .post-input,
-  .post-textarea {
-    padding: 0.4rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg);
-    color: var(--fg);
-    font-size: 0.95rem;
-  }
+  /* Fields use the shared .input recipe (App.svelte). */
   .post-textarea {
     resize: vertical;
-    font-family: inherit;
   }
   .post-error {
     margin: 0;
-    padding: 0.4rem 0.6rem;
-    font-size: 0.85rem;
-    color: var(--danger);
-    background: var(--error-bg);
-    border-radius: 4px;
+    font-size: 14px;
   }
+  /* Primary button: accent bg — the single primary action of this screen. */
   .post-submit {
-    padding: 0.6rem;
+    padding: 8px;
     border: none;
     border-radius: 6px;
-    background: #555;
-    color: #fff;
-    font-size: 1rem;
+    background: var(--accent);
+    color: var(--surface-raised);
+    font-size: 15px;
     cursor: pointer;
     font-weight: 600;
   }
@@ -1510,17 +1446,19 @@
   .thumb-strip {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.3rem;
-    margin-top: 0.3rem;
+    gap: 4px;
+    margin-top: 4px;
   }
 
-  /* Thumbnail button: borderless, resets button defaults. */
+  /* Thumbnail button: borderless, resets button defaults.
+     position:relative anchors the .thumb-error overlay. */
   .thumb-btn {
+    position: relative;
     padding: 0;
     border: none;
     background: none;
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: 6px;
     overflow: hidden;
     flex-shrink: 0;
   }
@@ -1531,7 +1469,7 @@
     width: 96px;
     height: 96px;
     object-fit: cover;
-    border-radius: 4px;
+    border-radius: 6px;
     background: var(--border);
   }
 
@@ -1540,23 +1478,22 @@
     filter: blur(20px);
   }
 
-  /* Failed image load: replace the broken icon with a muted placeholder cross. */
+  /* Failed image load: muted placeholder background... */
   .thumb.thumb-missing {
-    position: relative;
     background: var(--border);
-    color: var(--muted);
+  }
+  /* ...with an SVG cross overlay (shown only next to a failed .thumb).
+     :global() because .thumb-missing is added at runtime via classList. */
+  .thumb-error {
+    display: none;
+  }
+  .thumb:global(.thumb-missing) + .thumb-error {
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.5rem;
-  }
-  .thumb.thumb-missing::after {
-    content: '✗';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
     color: var(--muted);
-    font-size: 1.2rem;
+    pointer-events: none;
   }
 </style>

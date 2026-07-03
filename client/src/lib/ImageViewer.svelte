@@ -1,5 +1,6 @@
 <script>
   import { imageSwipe } from './imageSwipe.js'
+  import Icon from './Icon.svelte'
 
   // images: [{ href, path, url, resNum, indexInRes, globalIndex }]
   // initialIndex: which image to show first
@@ -78,7 +79,9 @@
   use:imageSwipe={() => ({ onPrev: prev, onNext: next, onClose: onclose })}
 >
   <!-- × close button -->
-  <button class="viewer-close" aria-label="閉じる" onclick={onclose}>×</button>
+  <button class="viewer-close" aria-label="閉じる" onclick={onclose}>
+    <Icon name="x" size="22" />
+  </button>
 
   {#if current}
     <!-- Image container: click on image should not close (handled by backdrop). -->
@@ -109,13 +112,13 @@
       aria-label="前の画像"
       disabled={currentIndex === 0}
       onclick={(e) => { e.stopPropagation(); prev() }}
-    >&#8249;</button>
+    ><Icon name="chevron-left" size="28" /></button>
     <button
       class="viewer-nav viewer-next"
       aria-label="次の画像"
       disabled={currentIndex === images.length - 1}
       onclick={(e) => { e.stopPropagation(); next() }}
-    >&#8250;</button>
+    ><Icon name="chevron-right" size="28" /></button>
   {/if}
 
   <!-- Footer: position counter -->
@@ -136,16 +139,20 @@
     user-select: none;
   }
 
+  /* Icon button (36×36, 6px radius) over the near-black backdrop.
+     The whites/rgba blacks in this overlay are a sanctioned exception (DESIGN.md). */
   .viewer-close {
     position: absolute;
-    top: 0.75rem;
-    right: 0.75rem;
-    width: 2.2rem;
-    height: 2.2rem;
-    font-size: 1.4rem;
+    top: 12px;
+    right: 12px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     line-height: 1;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     background: rgba(255, 255, 255, 0.12);
     color: #fff;
     cursor: pointer;
@@ -167,7 +174,6 @@
     max-width: 100vw;
     max-height: 100dvh;
     object-fit: contain;
-    border-radius: 2px;
   }
 
   /* Mosaic: strong blur applied in the viewer (no tap-to-reveal). */
@@ -181,10 +187,12 @@
     transform: translateY(-50%);
     width: 2.5rem;
     height: 5rem;
-    font-size: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     line-height: 1;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
     cursor: pointer;
@@ -199,22 +207,22 @@
   }
 
   .viewer-prev {
-    left: 0.5rem;
+    left: 8px;
   }
   .viewer-next {
-    right: 0.5rem;
+    right: 8px;
   }
 
   .viewer-footer {
     position: absolute;
-    bottom: 0.75rem;
+    bottom: 12px;
     left: 50%;
     transform: translateX(-50%);
     color: rgba(255, 255, 255, 0.7);
-    font-size: 0.9rem;
+    font-size: 14px;
     background: rgba(0, 0, 0, 0.4);
-    padding: 0.2rem 0.6rem;
-    border-radius: 4px;
+    padding: 4px 12px;
+    border-radius: 6px;
     pointer-events: none;
   }
 </style>
