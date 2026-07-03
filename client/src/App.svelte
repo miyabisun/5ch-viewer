@@ -198,39 +198,43 @@
     --surface: #fafafa;
     --surface-raised: #ffffff;
     --on-surface: #222222;
-    --muted: #6f6f6f;
-    --border: #e6e6e3;
+    /* Chrome text pushed past AAA (7:1) for e-paper grayscale legibility. */
+    --muted: #4a4a4a;
+    /* Darker hairline so row dividers survive e-paper gray quantization. */
+    --border: #c9c9c4;
     --scrim: rgba(0, 0, 0, 0.4);
-    --accent: #9a6a00;
-    --accent-subtle: rgba(154, 106, 0, 0.12);
-    --link: #1f6f99;
-    --danger: #b3261e;
+    --accent: #7a5400;
+    --accent-subtle: rgba(122, 84, 0, 0.12);
+    --link: #14506e;
+    --danger: #8f1d16;
     --danger-subtle: #fdeeee;
     /* --- Functional data colors (project-domain, exempt from the one-accent rule) --- */
-    --name: #060;
+    --name: #005500;
     /* Star-rating glyph when lit (data viz, decoupled from the chrome accent). */
-    --star-on: #e0a000;
+    --star-on: #8a6000;
     /* Unread badge: dark-red pill with white text. */
     --badge-bg: #a01818;
     --badge-fg: #fff;
-    /* Rating color bar (★5..★1, 0=none). Tuned for the light theme. */
-    --rate-0: #bbb;
-    --rate-1: #29b6d8;
-    --rate-2: #3fae5a;
-    --rate-3: #e0c000;
-    --rate-4: #ef8c00;
-    --rate-5: #e23b3b;
+    /* Rating color bar (★5..★1, 0=none). Washi darkness ramp for e-paper:
+       lightness carries the level (monotonically darker), hue is secondary. */
+    --rate-0: #9a9a9a;
+    --rate-1: #1a8a9e;
+    --rate-2: #1f7a33;
+    --rate-3: #6e5a00;
+    --rate-4: #7a3c00;
+    --rate-5: #7a1414;
     /* NavBar height token: shared by NavBar layout and main PC height calc. */
     --navbar-h: 3.2rem;
-    /* Unread new-post indicator (orange). Separate from --danger (red) because unread is not an error. */
-    --unread: #ef8c00;
-    /* Own-post indicator (pink). Takes priority over unread when both would apply. */
-    --own: #e84d9e;
-    /* ID badge colours (light theme). l1=none (ID hidden), l2-l5=blue→red. */
-    --id-l2: #1a6fd8;
-    --id-l3: #8a4fd8;
-    --id-l4: #e84d9e;
-    --id-l5: #e23b3b;
+    /* Unread new-post indicator (burnt orange). Separate from --danger (red) because unread is not an error. */
+    --unread: #7a3c00;
+    /* Own-post indicator (magenta). Takes priority over unread when both would apply. */
+    --own: #8f1c5a;
+    /* ID badge colours (Washi). l1=none (ID hidden), l2-l5 = darkness ramp
+       (blue→purple→magenta→deep red), each ≥4.5:1 on white as text. */
+    --id-l2: #2a6fc0;
+    --id-l3: #7a3db4;
+    --id-l4: #8f1c5a;
+    --id-l5: #7a1414;
   }
   :global([data-theme='dark']) {
     color-scheme: dark;
@@ -380,6 +384,11 @@
     user-select: none;
     pointer-events: none;
     transition: height 0.05s linear;
+  }
+  /* Washi is the e-paper theme: minimize motion. Drop the height transition
+     (the spinner keyframes stay — a template-sanctioned exception). */
+  :global(:root:not([data-theme='dark']) .pull-refresh-panel) {
+    transition: none;
   }
   /* Highlight text when past the release threshold. */
   :global(.pull-refresh-panel.above-threshold) {
