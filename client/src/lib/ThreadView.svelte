@@ -1325,19 +1325,18 @@
   }
   /* .action styling comes from the shared .menu recipes in App.svelte. */
 
-  /* ID list modal content (same-ID reses in the current thread). */
-  .id-list {
-    min-width: min(32rem, 90vw);
-    max-width: 90vw;
+  /* ID list (same-ID reses in the current thread) + ID search result modal content.
+     width + max-width:100% (matches .menu) so they fill the modal's effective
+     content width on phones and stay a comfortable width on desktop. A
+     viewport-based min-width would overflow because it ignores the scrim +
+     modal padding (16px x2 each). */
+  .id-list,
+  .search-result {
+    width: 32rem;
+    max-width: 100%;
   }
   .id-list-res {
     font-size: 14px;
-  }
-
-  /* ID search result modal content. */
-  .search-result {
-    min-width: min(32rem, 90vw);
-    max-width: 90vw;
   }
   .search-thread-title {
     font-size: 14px;
@@ -1345,6 +1344,8 @@
     margin: 12px 0 4px;
     border-bottom: 1px solid var(--border);
     padding-bottom: 4px;
+    /* Long titles without break opportunities must wrap, not widen the modal. */
+    word-break: break-word;
   }
   .search-res {
     font-size: 14px;
@@ -1370,8 +1371,8 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    min-width: min(28rem, 90vw);
-    max-width: 90vw;
+    width: 28rem;
+    max-width: 100%;
   }
   /* Name + mail fields side by side to save vertical space. */
   .post-row {
