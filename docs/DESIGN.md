@@ -140,14 +140,25 @@ Domain components on top of the Sumi recipes:
   no extra spinner required). In the thread view the write action
   (pencil) sits at the left edge; the submit button inside the post
   modal is the screen's single primary (accent) button.
+- **Thread entry (ChMate model):** opening a thread paints the **saved
+  dat immediately, with zero fetch to 5ch** — no entry-time reload, no
+  background reload, and therefore **no loading chrome on entry** (no
+  spinner, no skeleton: the spinner recipe is reserved for real waits,
+  and entry has none by design). Fetching new posts happens in exactly
+  two places: the favorites list's bulk refresh and the thread footer's
+  refresh button. The refresh-error notice (non-blocking danger text
+  under the sticky title, saved posts still shown below) can therefore
+  appear only after a failed manual refresh — never on entry.
 - **Pull-to-refresh:** there is **no custom pull gesture anywhere** —
-  pull-to-refresh is delegated to the browser's native gesture (a full
-  page reload; the mount-time auto-refresh makes reload equivalent to an
-  in-app refresh). The former quiet-panel recipe is retired. Consequently
-  `overscroll-behavior` must **never** be set to `contain`/`none` on
-  html/body or on internal scroll containers (e.g. the thread view's
-  scrollable body): the scroll chain to the document has to stay open or
-  the native gesture cannot fire.
+  a pull is delegated to the browser's native gesture and is simply a
+  full page reload. Because thread entry renders the saved dat without
+  touching 5ch, a native pull is **not an update gesture**: it re-renders
+  saved data, and updating is exclusively the job of the refresh buttons
+  (list = bulk board refresh, thread footer = manual reload). The former
+  quiet-panel recipe is retired. Consequently `overscroll-behavior` must
+  **never** be set to `contain`/`none` on html/body or on internal scroll
+  containers (e.g. the thread view's scrollable body): the scroll chain
+  to the document has to stay open or the native gesture cannot fire.
 
 ## Do's and Don'ts
 
@@ -160,3 +171,6 @@ Domain components on top of the Sumi recipes:
   the e-paper theme; darkness carries the level, hue is a secondary cue.
 - Don't reintroduce custom pull-to-refresh UI or `overscroll-behavior`
   containment — native browser pull-to-refresh is the spec.
+- Don't put any network wait between thread entry and first paint, and
+  don't add loading chrome (spinner/skeleton) to entry — entry renders
+  the saved dat instantly; refresh affordances are the footer buttons.

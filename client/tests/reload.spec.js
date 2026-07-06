@@ -28,36 +28,37 @@ function datResponse(count) {
   }
 }
 
-// Opening a thread auto-refreshes: it runs the viewer reload (GET, never an
-// admin POST) and then renders the freshly-grown dat. There is no manual
-// 更新/戻る button anymore.
-test('opening a thread auto-refreshes via GET (no POST, no buttons)', async ({
+// Entry (ChMate model): opening a thread renders the stored dat only and never
+// touches 5ch. No reload request fires on open, and the render is not blocked on
+// any network round-trip — even a deliberately-delayed reload response cannot
+// gate the first paint because reload is not called at all.
+test('opening a thread renders stored dat with zero reload requests', async ({
   page,
 }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
   await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
 
-  // dat starts at 1 post; the auto reload grows it to 2.
-  let count = 1
+  // Stored dat has 1 post; entry must render exactly this, unchanged.
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse(count) }),
+    route.fulfill({ json: datResponse(1) }),
   )
 
-  let reloadMethod = null
-  await page.route(/\/api\/favorites\/.+\/reload$/, (route) => {
-    reloadMethod = route.request().method()
-    count = 2
-    route.fulfill({
-      json: { res_count: 2, read_res: 0, status: 'active', updated: true },
-    })
+  // Reload is registered but must not be hit on entry. If it ever fires, delaying
+  // it would expose an entry that blocks on the round-trip — here it should stay
+  // at zero. reloadCount lets us assert that.
+  let reloadCount = 0
+  await page.route(/\/api\/favorites\/.+\/reload$/, async (route) => {
+    reloadCount += 1
+    await new Promise((r) => setTimeout(r, 1000))
+    route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active', updated: true } })
   })
 
   await page.goto('/')
 
-  // Open the thread: the auto reload (GET) runs, so the latest (2 posts) shows.
+  // Open the thread: the stored dat (1 post) renders immediately, unblocked.
   await page.locator('.info').first().click()
-  await expect(page.getByText('本文2')).toBeVisible()
-  expect(reloadMethod).toBe('GET')
+  await expect(page.getByText('本文1')).toBeVisible()
+  expect(reloadCount).toBe(0)
 
   // The old manual back button is gone from the thread view (detail pane):
   // navigating back is a swipe gesture now. (The footer refresh button is a
@@ -67,10 +68,11 @@ test('opening a thread auto-refreshes via GET (no POST, no buttons)', async ({
   await expect(detailPane.getByRole('button', { name: /戻る/ })).toHaveCount(0)
 })
 
-// Regression (the "stuck at 111" bug): opening a thread must run the reload (GET)
-// and render the grown dat, not the stale stored copy. Here the stored dat starts
-// at 111 posts and the reload grows it to 117; the view must show 117.
-test('opening a thread shows the grown dat (111 -> 117) after reload', async ({
+// Regression (the "stuck at 111" bug), re-homed onto the footer refresh button:
+// entry shows the stored dat (111), and the manual 更新 button runs the reload
+// (GET) that grows the dat to 117 and re-renders it. The heal path moved from
+// entry to the footer button; the drift-heal coverage (111 -> 117) is preserved.
+test('footer refresh grows the drifted dat (111 -> 117) via GET reload', async ({
   page,
 }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
@@ -78,15 +80,13 @@ test('opening a thread shows the grown dat (111 -> 117) after reload', async ({
 
   // Stored dat is 111; the reload pulls the latest (117).
   let count = 111
-  let datRequests = 0
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) => {
-    datRequests += 1
     route.fulfill({ json: datResponse(count) })
   })
 
-  let reloadCalled = false
+  let reloadMethod = null
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) => {
-    reloadCalled = true
+    reloadMethod = route.request().method()
     count = 117 // the reload grew the dat
     route.fulfill({
       json: { res_count: 117, read_res: 0, status: 'active', updated: true },
@@ -96,11 +96,15 @@ test('opening a thread shows the grown dat (111 -> 117) after reload', async ({
   await page.goto('/')
   await page.locator('.info').first().click()
 
-  // The latest post (117) is rendered; the old ceiling (111) is no longer the last.
+  // Entry shows the stored 111 (no reload yet); 117 is not present.
+  await expect(page.getByText('本文111')).toBeVisible()
+  await expect(page.getByText('本文117')).toHaveCount(0)
+
+  // Press the footer 更新 button: reload (GET) fires and the grown dat (117) shows.
+  // Scope to the detail pane — the favorites list has its own 更新 button.
+  await page.locator('.detail-pane').getByRole('button', { name: '更新' }).click()
   await expect(page.getByText('本文117')).toBeVisible()
-  expect(reloadCalled).toBe(true)
-  // The dat is read after the reload (so the grown copy is what renders).
-  expect(datRequests).toBeGreaterThan(0)
+  expect(reloadMethod).toBe('GET')
 })
 
 // The NavBar お気に入り tab is the back path now (always visible, sticky).

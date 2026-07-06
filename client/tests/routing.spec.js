@@ -30,7 +30,8 @@ function mock(page) {
   page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({ json: datResponse() }),
   )
-  // Opening auto-refreshes (GET reload); mock it so the open path is deterministic.
+  // Entry renders stored dat only (no reload). Kept as a defensive mock in case
+  // the footer 更新 button is exercised; it never fires on open.
   page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 1, read_res: 0, status: 'active' } }),
   )

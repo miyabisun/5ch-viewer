@@ -46,12 +46,19 @@ test.beforeEach(async () => {
   await ctx.dispose()
 })
 
-// Regression (the "stuck at 111" bug), proven through the REAL backend:
+// Regression (the "stuck at 111" bug), proven through the REAL backend, re-homed
+// onto the footer refresh button (ChMate model: entry never touches 5ch):
 // the favorite's metadata res_count has drifted to 117 while the stored dat blob holds
-// only 111 posts. The mock 5ch reports a dat with 117 posts. Opening the thread runs
-// the viewer reload (GET): HEAD returns a larger Content-Length than stored, so the
-// dat is fetched, the blob is fully replaced, and the view renders all 117 posts.
-test('reload heals a drifted favorite (meta 117 / blob 111 -> 117 posts shown)', async ({
+// only 111 posts. The mock 5ch reports a dat with 117 posts. Pressing the footer 更新
+// button runs the viewer reload (GET): HEAD returns a larger Content-Length than stored,
+// so the dat is fetched, the blob is fully replaced, and the view renders all 117 posts.
+//
+// Note: entry itself does not touch 5ch (verified deterministically in the mock suite
+// tests/reload.spec.js). We do not assert the intermediate "111 only" state here because
+// the App-level list bulk-refresh (onMount) is a second, legitimate heal trigger that
+// races against the real backend; asserting its absence would be flaky. What this test
+// pins is the real fetch->DB-replace->getDat heal through the footer button.
+test('footer refresh heals a drifted favorite (meta 117 / blob 111 -> 117 posts shown)', async ({
   page,
   request,
 }) => {
@@ -61,10 +68,13 @@ test('reload heals a drifted favorite (meta 117 / blob 111 -> 117 posts shown)',
   await programMockThread(request, { res_count: 117, dat_posts: 117 })
 
   await page.goto('/')
-  // Open the thread (auto-refresh: GET reload, then render the grown dat).
+  // Open the thread from the list.
   await page.locator('.info').first().click()
 
-  // The latest post (117) is rendered through the real fetch->DB-replace->getDat flow.
+  // Press the footer 更新 button: GET reload runs through the real
+  // fetch->DB-replace->getDat flow and the grown dat (117) renders.
+  // Scope to the detail pane — the favorites list has its own 更新 button.
+  await page.locator('.detail-pane').getByRole('button', { name: '更新' }).click()
   await expect(page.getByText('本文117', { exact: true })).toBeVisible()
   // Sanity: post 112 (beyond the stale 111 ceiling) is also present.
   await expect(page.getByText('本文112', { exact: true })).toBeVisible()

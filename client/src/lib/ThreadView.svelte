@@ -13,8 +13,9 @@
   let { fav, onback, onprogress = () => {}, ngIds = new Set(), onngchange = () => {}, ngWacchoi = [], onngwacchoichange = () => {} } = $props()
 
   let data = $state(null)
-  // Surfaced when the auto-refresh (reload) fails. The stored dat is still shown
-  // below, so this is a non-blocking notice rather than a hard error.
+  // Surfaced when a manual refresh (footer button or post-write reload) fails.
+  // The stored dat is still shown below, so this is a non-blocking notice rather
+  // than a hard error. Entry never reloads, so it cannot set this on open.
   let refreshError = $state(null)
   // true while a manual refresh triggered by the footer button is in flight.
   // Used to prevent double-firing and to disable the button.
@@ -36,12 +37,20 @@
   let postError = $state(null)
   let postSubmitting = $state(false)
 
-  // Open = auto-refresh. Fetch the latest (GET reload: checks subject.txt's
-  // res_count and pulls new dat if it grew), then render the dat. The restore
-  // effect runs after this single load, so there is no double-fetch and the
-  // read-position restore happens against the up-to-date list (new posts land
-  // naturally below the restored position).
-  async function load() {
+  // Render the stored dat only (GET dat, no 5ch access). Used on entry (ChMate
+  // model: opening a thread never touches 5ch — the list bulk-refresh keeps the
+  // stored dat fresh) and as the second half of reloadAndFetch.
+  async function fetchDat() {
+    data = await api.getDat(fav.server, fav.board, fav.thread_id)
+    if (data.read_res > maxRead) maxRead = data.read_res
+    // Update the mosaic URL set from the server response.
+    mosaicUrls = new Set(data.mosaic_urls ?? [])
+  }
+
+  // Reload from 5ch (GET reload: checks subject.txt's res_count and pulls new dat
+  // if it grew), then render the updated dat. Only invoked by the footer refresh
+  // button and after a post write — never on entry.
+  async function reloadAndFetch() {
     try {
       await api.reload(fav.server, fav.board, fav.thread_id)
       refreshError = null
@@ -52,10 +61,7 @@
       refreshError = e.message
       console.error('[reload]', e)
     }
-    data = await api.getDat(fav.server, fav.board, fav.thread_id)
-    if (data.read_res > maxRead) maxRead = data.read_res
-    // Update the mosaic URL set from the server response.
-    mosaicUrls = new Set(data.mosaic_urls ?? [])
+    await fetchDat()
   }
 
   // Manual refresh triggered by the footer refresh button.
@@ -72,7 +78,7 @@
     readBaseline = Math.max(readBaseline, lastNum)
     maxRead = Math.max(maxRead, lastNum)
     try {
-      await load()
+      await reloadAndFetch()
     } finally {
       refreshing = false
     }
@@ -113,7 +119,10 @@
       postName = ''
       postMail = 'sage'
       postModalOpen = false
-      await load()
+      // Reload so the new res (marked own = pink) appears: post_message writes to
+      // 5ch and records own_posts but does not update the stored dat, so a plain
+      // fetchDat would not show the just-written post until a manual refresh.
+      await reloadAndFetch()
     } catch (e) {
       postError = e.message
     } finally {
@@ -121,9 +130,11 @@
     }
   }
 
-  // Initial load (auto-refresh on open).
+  // Entry (ChMate model): render the stored dat immediately with no 5ch access.
+  // The restore effect runs after this single fetch. Updates are delegated to the
+  // list bulk-refresh and the footer refresh button, never to entry.
   $effect(() => {
-    load()
+    fetchDat()
   })
 
   // Restore the saved read position by scrolling the last-read res into view.

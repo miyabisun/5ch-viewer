@@ -140,7 +140,7 @@ test('opening a thread restores the saved read position (auto-scroll)', async ({
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({ json: datResponse() }),
   )
-  // Opening auto-refreshes (GET reload); mock it so the open path is deterministic.
+  // Entry renders stored dat only (no reload); defensive mock, never fires on open.
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: COUNT, read_res: FAV.read_res, status: 'active' } }),
   )
