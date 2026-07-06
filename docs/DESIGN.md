@@ -139,9 +139,15 @@ Domain components on top of the Sumi recipes:
   disable while a refresh is in flight (disabled recipe: 50% opacity,
   no extra spinner required). In the thread view the write action
   (pencil) sits at the left edge; the submit button inside the post
-  modal is the screen's single primary (accent) button. Pull-to-refresh
-  exists only at the **top** of the favorites list (shared quiet-panel
-  recipe); there is no bottom pull gesture anywhere.
+  modal is the screen's single primary (accent) button.
+- **Pull-to-refresh:** there is **no custom pull gesture anywhere** —
+  pull-to-refresh is delegated to the browser's native gesture (a full
+  page reload; the mount-time auto-refresh makes reload equivalent to an
+  in-app refresh). The former quiet-panel recipe is retired. Consequently
+  `overscroll-behavior` must **never** be set to `contain`/`none` on
+  html/body or on internal scroll containers (e.g. the thread view's
+  scrollable body): the scroll chain to the document has to stay open or
+  the native gesture cannot fire.
 
 ## Do's and Don'ts
 
@@ -152,3 +158,5 @@ Domain components on top of the Sumi recipes:
   in components.
 - Don't brighten Washi data colors back toward the Sumi hues — Washi is
   the e-paper theme; darkness carries the level, hue is a secondary cue.
+- Don't reintroduce custom pull-to-refresh UI or `overscroll-behavior`
+  containment — native browser pull-to-refresh is the spec.

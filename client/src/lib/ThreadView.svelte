@@ -906,7 +906,7 @@
 {/snippet}
 
 <!-- Thread view: flex column filling the full height of .detail-pane (PC) or dvh (phone).
-     Structure: sticky header / scrollable body / pull-refresh panel / fixed footer. -->
+     Structure: sticky header / scrollable body / fixed footer. -->
 <div class="thread-view">
   <!-- Sticky title header. -->
   <h1 class="title" data-testid="thread-title">{data?.title || fav.title}</h1>
@@ -1190,8 +1190,6 @@
     flex: 1;
     overflow-y: auto;
     min-height: 0;
-    /* Prevent native overscroll bounce so pull-to-refresh can take over cleanly. */
-    overscroll-behavior-y: contain;
     padding: 4px 0;
   }
 

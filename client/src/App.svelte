@@ -368,53 +368,6 @@
     padding: 8px 12px;
     border-radius: 8px;
   }
-  /* Pull-to-refresh panel (FavoritesList top edge / ThreadView bottom edge;
-     the border side is set by each owner). Height is driven inline
-     (0 = hidden); overflow:hidden prevents content flash near zero. */
-  :global(.pull-refresh-panel) {
-    flex-shrink: 0;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    font-size: 14px;
-    background: var(--surface-raised);
-    color: var(--muted);
-    user-select: none;
-    pointer-events: none;
-    transition: height 0.05s linear;
-  }
-  /* Washi is the e-paper theme: minimize motion. Drop the height transition
-     (the spinner keyframes stay — a template-sanctioned exception). */
-  :global(:root:not([data-theme='dark']) .pull-refresh-panel) {
-    transition: none;
-  }
-  /* Highlight text when past the release threshold. */
-  :global(.pull-refresh-panel.above-threshold) {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  /* Spinner: 1.5px-stroke circle in accent (circle shape, not a control radius). */
-  :global(.pull-refresh-spinner) {
-    display: inline-block;
-    width: 1.1rem;
-    height: 1.1rem;
-    border: 1.5px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: pr-spin 0.7s linear infinite;
-  }
-  @keyframes -global-pr-spin {
-    to { transform: rotate(360deg); }
-  }
-
-  :global(html),
-  :global(body) {
-    /* Wall for mobile (window scroll): prevent native overscroll bounce at the
-       bottom so the pull-to-refresh gesture can take over cleanly. */
-    overscroll-behavior-y: contain;
-  }
   :global(body) {
     margin: 0;
     font-family: system-ui, sans-serif;

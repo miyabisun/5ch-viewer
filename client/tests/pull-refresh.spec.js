@@ -52,38 +52,6 @@ function mockRoutes(page, opts = {}) {
   }
 }
 
-// ─── overscroll-behavior tests ──────────────────────────────────────────────
-
-test.describe('overscroll-behavior: wall', () => {
-  test.use({ viewport: { width: 1024, height: 800 } })
-
-  test('PC thread-body has overscroll-behavior-y:contain', async ({ page }) => {
-    await mockRoutes(page)
-    await page.goto(THREAD_PATH)
-    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
-
-    // .thread-body is the scroll container; it carries overscroll-behavior-y:contain.
-    const value = await page.locator('.thread-body').evaluate((el) =>
-      getComputedStyle(el).overscrollBehaviorY,
-    )
-    expect(value).toBe('contain')
-  })
-
-  test('html/body has overscroll-behavior-y:contain (mobile wall)', async ({ page }) => {
-    await mockRoutes(page)
-    await page.goto(THREAD_PATH)
-
-    const htmlValue = await page.evaluate(() =>
-      getComputedStyle(document.documentElement).overscrollBehaviorY,
-    )
-    const bodyValue = await page.evaluate(() =>
-      getComputedStyle(document.body).overscrollBehaviorY,
-    )
-    expect(htmlValue).toBe('contain')
-    expect(bodyValue).toBe('contain')
-  })
-})
-
 // ─── Footer refresh button ──────────────────────────────────────────────────
 
 test.describe('footer refresh button', () => {

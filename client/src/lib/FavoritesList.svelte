@@ -3,7 +3,6 @@
   import ThreadRow from './ThreadRow.svelte'
   import ThreadMenu from './ThreadMenu.svelte'
   import Icon from './Icon.svelte'
-  import { topPullRefresh, PULL_THRESHOLD_PX } from './topPullRefresh.js'
 
   let { favorites, onopen, onchange, onrefresh = () => {} } = $props()
 
@@ -25,14 +24,6 @@
 
   // --- Refresh state ---
   let refreshing = $state(false)
-  let pullPx = $state(0)
-  // Above-threshold is purely derived from the current pull distance.
-  let aboveThreshold = $derived(pullPx >= PULL_THRESHOLD_PX)
-
-  // Touch device detection: pull-to-refresh is touch-only.
-  const isTouch =
-    typeof window !== 'undefined' &&
-    matchMedia('(hover: none) and (pointer: coarse)').matches
 
   async function triggerRefresh() {
     if (refreshing) return
@@ -70,33 +61,8 @@
 </script>
 
 <div class="favorites-view">
-  <!-- Top pull-to-refresh panel: height driven by pullPx (0 = hidden). -->
-  <div
-    class="pull-refresh-panel top"
-    class:above-threshold={aboveThreshold}
-    style="height: {refreshing ? '4rem' : pullPx > 0 ? pullPx + 'px' : '0'}"
-    data-testid="pull-refresh-top"
-  >
-    {#if refreshing}
-      <span class="pull-refresh-spinner"></span>
-      <span>更新中…</span>
-    {:else if aboveThreshold}
-      <span>離して更新</span>
-    {:else}
-      <span>引いて更新</span>
-    {/if}
-  </div>
-
   <!-- Main scrollable content -->
-  <div
-    class="favorites-body"
-    use:topPullRefresh={() => ({
-      enabled: isTouch && !refreshing,
-      isBlocked: () => menu != null,
-      onRefresh: triggerRefresh,
-      onDrag: (px) => (pullPx = px),
-    })}
-  >
+  <div class="favorites-body">
     {#each groups as [rating, threads] (rating)}
       <h2>{rating > 0 ? '★'.repeat(rating) : '☆ 未分類'}</h2>
       {#each threads as f (f.server + f.board + f.thread_id)}
@@ -159,12 +125,6 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-  }
-
-  /* Top pull-to-refresh panel (shared recipe in App.svelte): grows from the
-     top as the user drags down, so the border sits on the bottom edge. */
-  .pull-refresh-panel.top {
-    border-bottom: 1px solid var(--border);
   }
 
   .favorites-body {
