@@ -1,7 +1,7 @@
 // topPullRefresh: Svelte action that detects a top pull-to-refresh gesture.
 //
-// Unlike pullRefresh.js (bottom, for ThreadView), this watches the window
-// scroll and fires when the user drags DOWN from the very top of the page.
+// Watches the window scroll and fires when the user drags DOWN from the very
+// top of the page.
 // Designed for the FavoritesList (window-scroll context).
 //
 // Gesture phases:

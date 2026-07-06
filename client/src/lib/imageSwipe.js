@@ -1,7 +1,7 @@
 // imageSwipe: Svelte action for left/right swipe navigation in ImageViewer.
 //
 // Touch-only. Horizontal 60px threshold triggers prev/next; vertical 100px closes.
-// Direction is locked after the first 5px of travel (mirrors backSwipe / pullRefresh).
+// Direction is locked after the first 5px of travel (mirrors backSwipe).
 //
 // opts (getter function or plain object):
 //   onPrev    — () => void: called on right swipe (dx > 0 → go to previous image)

@@ -59,11 +59,11 @@ test('opening a thread auto-refreshes via GET (no POST, no buttons)', async ({
   await expect(page.getByText('本文2')).toBeVisible()
   expect(reloadMethod).toBe('GET')
 
-  // The old back/update buttons are gone from the thread view (detail pane).
-  // (The FavoritesList footer has a 更新 button in the list pane, so we scope
-  // the assertion to the detail pane only.)
+  // The old manual back button is gone from the thread view (detail pane):
+  // navigating back is a swipe gesture now. (The footer refresh button is a
+  // deliberate replacement for the retired bottom pull-to-refresh gesture, so
+  // a 更新 button is expected to exist here.)
   const detailPane = page.locator('.detail-pane')
-  await expect(detailPane.getByRole('button', { name: /更新/ })).toHaveCount(0)
   await expect(detailPane.getByRole('button', { name: /戻る/ })).toHaveCount(0)
 })
 

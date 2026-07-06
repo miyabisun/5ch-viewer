@@ -30,7 +30,9 @@ test('footer refresh button is visible on the favorites list', async ({ page }) 
 
   const btn = page.getByTestId('favorites-refresh-btn')
   await expect(btn).toBeVisible()
-  await expect(btn).toContainText('更新')
+  // Icon-only button: no text, just an inline SVG icon.
+  await expect(btn.locator('svg')).toBeVisible()
+  expect((await btn.textContent()).trim()).toBe('')
 })
 
 test('pressing the refresh button calls POST /api/favorites/refresh', async ({ page }) => {

@@ -52,46 +52,6 @@ function mockRoutes(page, opts = {}) {
   }
 }
 
-// Dispatches a synthetic touch swipe on the element at `selector`.
-// dx/dy are the total displacement from start to end.
-// Intermediate moves are injected so direction-lock code can compute |dx| vs |dy|.
-// The start point is clamped to the visible viewport so events are always dispatched
-// on a rendered pixel (getBoundingClientRect can return negative top when scrolled).
-async function swipe(page, selector, { dx = 0, dy = 0 }) {
-  await page.evaluate(
-    ({ selector, dx, dy }) => {
-      const el = document.querySelector(selector)
-      // Start in the centre of the viewport (always visible) so that touch events
-      // land on a rendered pixel even when the element itself is partly off-screen.
-      const x0 = window.innerWidth / 2
-      const y0 = window.innerHeight / 2
-      const mk = (type, x, y, active) => {
-        const t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y })
-        el.dispatchEvent(
-          new TouchEvent(type, {
-            bubbles: true,
-            cancelable: true,
-            touches: active ? [t] : [],
-            targetTouches: active ? [t] : [],
-            changedTouches: [t],
-          }),
-        )
-      }
-      mk('touchstart', x0, y0, true)
-      mk('touchmove', x0 + dx * 0.3, y0 + dy * 0.3, true)
-      mk('touchmove', x0 + dx * 0.7, y0 + dy * 0.7, true)
-      mk('touchend', x0 + dx, y0 + dy, false)
-    },
-    { selector, dx, dy },
-  )
-}
-
-// Programmatically scroll the appropriate scroll container to its bottom.
-// Both PC and phone now use .thread-body as the sole scroll container.
-async function scrollToBottom(page) {
-  await page.locator('.thread-body').evaluate((el) => el.scrollTo(0, el.scrollHeight))
-}
-
 // ─── overscroll-behavior tests ──────────────────────────────────────────────
 
 test.describe('overscroll-behavior: wall', () => {
@@ -102,7 +62,7 @@ test.describe('overscroll-behavior: wall', () => {
     await page.goto(THREAD_PATH)
     await expect(page.getByText('本文1', { exact: true })).toBeVisible()
 
-    // .thread-body is now the scroll container; it carries overscroll-behavior-y:contain.
+    // .thread-body is the scroll container; it carries overscroll-behavior-y:contain.
     const value = await page.locator('.thread-body').evaluate((el) =>
       getComputedStyle(el).overscrollBehaviorY,
     )
@@ -124,235 +84,35 @@ test.describe('overscroll-behavior: wall', () => {
   })
 })
 
-// ─── Pull-to-refresh gesture tests (touch-only) ─────────────────────────────
+// ─── Footer refresh button ──────────────────────────────────────────────────
 
-test.describe('pull-to-refresh (touch)', () => {
-  test.use({ hasTouch: true, viewport: { width: 390, height: 700 } })
+test.describe('footer refresh button', () => {
+  test.use({ viewport: { width: 390, height: 700 } })
 
-  test('pull-refresh panel is present in DOM when data is loaded', async ({ page }) => {
+  test('write button is at the left end and refresh at the right end', async ({ page }) => {
     await mockRoutes(page)
     await page.goto(THREAD_PATH)
     await expect(page.getByText('本文1', { exact: true })).toBeVisible()
-    // Panel exists (hidden below viewport via transform, but in DOM).
-    await expect(page.getByTestId('pull-refresh')).toBeAttached()
+
+    const write = await page.getByRole('button', { name: '書き込む' }).boundingBox()
+    const refresh = await page.getByRole('button', { name: '更新' }).boundingBox()
+    expect(write.x).toBeLessThan(refresh.x)
   })
 
-  test('upward swipe at bottom immediately after arriving does NOT trigger refresh (0.5 s lock)', async ({
-    page,
-  }) => {
-    let reloadCount = 0
-    await mockRoutes(page, {
-      reloadHandler: (route) => {
-        reloadCount++
-        route.fulfill({ json: { res_count: 40, read_res: 0, status: 'active' } })
-      },
-    })
-    await page.goto(THREAD_PATH)
-    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
-
-    // Reset count after initial auto-load.
-    const countBefore = reloadCount
-
-    // Scroll to the very bottom so isAtBottom() returns true.
-    await scrollToBottom(page)
-
-    // Immediately swipe up (dy < 0) WITHOUT waiting 500 ms — should be blocked.
-    await swipe(page, '.thread-body', { dy: -120 })
-
-    // Small wait to ensure any async reload would have fired.
-    await page.waitForTimeout(100)
-    expect(reloadCount).toBe(countBefore)
-  })
-
-  test('upward swipe at bottom after 0.5 s unlock triggers reload', async ({ page }) => {
-    let reloadCount = 0
-    await mockRoutes(page, {
-      reloadHandler: (route) => {
-        reloadCount++
-        route.fulfill({ json: { res_count: 40, read_res: 0, status: 'active' } })
-      },
-    })
-    await page.goto(THREAD_PATH)
-    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
-
-    // Scroll to the bottom to arm the unlock timer.
-    await scrollToBottom(page)
-
-    // Wait for the 0.5 s lock to expire.
-    await page.waitForTimeout(600)
-
-    const countBefore = reloadCount
-
-    // Swipe up past the PULL_THRESHOLD_PX (80 px).
-    await swipe(page, '.thread-body', { dy: -120 })
-
-    // Reload should have fired.
-    await page.waitForTimeout(200)
-    expect(reloadCount).toBeGreaterThan(countBefore)
-  })
-
-  test('short threads (fits in one screen) never arm the gesture', async ({ page }) => {
-    let reloadCount = 0
-    // Only 1 res → thread fits in one viewport height, never scrollable.
-    await mockRoutes(page, {
-      datCount: 1,
-      reloadHandler: (route) => {
-        reloadCount++
-        route.fulfill({ json: { res_count: 1, read_res: 0, status: 'active' } })
-      },
-    })
-    await page.goto(THREAD_PATH)
-    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
-
-    const countBefore = reloadCount
-
-    // Wait well past unlock time.
-    await page.waitForTimeout(700)
-
-    // Swipe up — should not trigger because scrollHeight <= clientHeight.
-    await swipe(page, '.thread-body', { dy: -120 })
-    await page.waitForTimeout(200)
-    expect(reloadCount).toBe(countBefore)
-  })
-
-  test('horizontal swipe at bottom does not trigger pull-to-refresh', async ({ page }) => {
-    let reloadCount = 0
-    await mockRoutes(page, {
-      reloadHandler: (route) => {
-        reloadCount++
-        route.fulfill({ json: { res_count: 40, read_res: 0, status: 'active' } })
-      },
-    })
-    await page.goto(THREAD_PATH)
-    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
-
-    await scrollToBottom(page)
-    await page.waitForTimeout(600)
-
-    const countBefore = reloadCount
-
-    // Clear horizontal swipe (dx >> dy).
-    await swipe(page, '.thread-body', { dx: 150, dy: -5 })
-    await page.waitForTimeout(200)
-    expect(reloadCount).toBe(countBefore)
-  })
-
-  test('no double-fire: second gesture while refreshing is ignored', async ({ page }) => {
-    let reloadCount = 0
-    // Make reload take 800 ms so we can fire a second gesture while it is still in flight.
-    await mockRoutes(page, {
-      reloadHandler: async (route) => {
-        reloadCount++
-        await new Promise((r) => setTimeout(r, 800))
-        route.fulfill({ json: { res_count: 40, read_res: 0, status: 'active' } })
-      },
-    })
-    await page.goto(THREAD_PATH)
-    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
-
-    await scrollToBottom(page)
-    await page.waitForTimeout(600)
-
-    const countBefore = reloadCount
-
-    // Fire first gesture — starts refresh (800 ms in flight).
-    await swipe(page, '.thread-body', { dy: -120 })
-    // Wait just a moment (much less than 800 ms) so refreshing=true is set.
-    await page.waitForTimeout(50)
-
-    // Fire second gesture immediately while first is still in flight.
-    // scrollToBottom + 600 ms still < 800 ms total, so refresh is still running.
-    await scrollToBottom(page)
-    await page.waitForTimeout(100)  // short — refresh is still running
-    await swipe(page, '.thread-body', { dy: -120 })
-
-    // Wait for both to settle (> 800 ms total from first swipe).
-    await page.waitForTimeout(900)
-    // Only one extra reload should have been triggered.
-    expect(reloadCount - countBefore).toBe(1)
-  })
-
-  test('pull-refresh panel stays visible in viewport while refreshing', async ({ page }) => {
-    // Regression: previously onEnd reset pullPx to 0 before refreshing completed,
-    // causing translateY(100%) while refreshing=true → panel fully hidden below viewport.
-    // Fix: transform uses translateY(0) while refreshing regardless of pullPx.
-
-    // Make reload slow enough (600 ms) so we can measure panel position mid-flight.
-    await mockRoutes(page, {
-      reloadHandler: async (route) => {
-        await new Promise((r) => setTimeout(r, 600))
-        route.fulfill({ json: { res_count: 40, read_res: 0, status: 'active' } })
-      },
-    })
-    await page.goto(THREAD_PATH)
-    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
-
-    await scrollToBottom(page)
-    // Wait for the 0.5 s lock to expire.
-    await page.waitForTimeout(600)
-
-    // Trigger pull-to-refresh gesture (dy=-120 > PULL_THRESHOLD_PX=80).
-    await swipe(page, '.thread-body', { dy: -120 })
-
-    // Wait briefly so refreshing=true is set but the slow reload has not finished.
-    await page.waitForTimeout(100)
-
-    // Panel must be visible (height > 0) while refresh is in flight.
-    // In the new layout the panel sits in normal flow and uses height (not transform)
-    // to show/hide. When refreshing=true its height is set to 4rem (>0).
-    const panel = page.getByTestId('pull-refresh')
-    const heightDuring = await panel.evaluate((el) => el.getBoundingClientRect().height)
-    expect(heightDuring).toBeGreaterThan(0)
-
-    // After reload finishes, the panel should fold back (near 0 height; ≤1 to account
-    // for border-top: 1px which does not disappear when height:0).
-    await page.waitForTimeout(700)
-    const heightAfter = await panel.evaluate((el) => el.getBoundingClientRect().height)
-    expect(heightAfter).toBeLessThanOrEqual(1)
-  })
-
-  test('after pull-to-refresh: old reses have no .unread bar, new reses do', async ({ page }) => {
-    // Initial dat: 40 reses, all unread (read_res=0). Must be long enough to scroll.
+  test('refresh button click fires a GET reload and marks only new reses unread', async ({ page }) => {
     const INITIAL_COUNT = 40
-    const ADDED_COUNT = 2 // 2 new reses added after refresh
+    const ADDED_COUNT = 2
 
     let reloadCallCount = 0
-    const initialDat = {
-      title: FAV.title,
-      res_count: INITIAL_COUNT,
-      read_res: 0,
-      status: 'active',
-      res: Array.from({ length: INITIAL_COUNT }, (_, i) => ({
-        num: i + 1,
-        name: '名無し',
-        mail: '',
-        date: `2025 ID:x${i}`,
-        body: `本文${i + 1}`,
-      })),
-    }
-    const refreshedDat = {
-      title: FAV.title,
-      res_count: INITIAL_COUNT + ADDED_COUNT,
-      read_res: 0,
-      status: 'active',
-      res: Array.from({ length: INITIAL_COUNT + ADDED_COUNT }, (_, i) => ({
-        num: i + 1,
-        name: '名無し',
-        mail: '',
-        date: `2025 ID:x${i}`,
-        body: `本文${i + 1}`,
-      })),
-    }
-
     page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
     page.route('**/api/favorites/refresh', (route) =>
       route.fulfill({ json: { ok: true, boards: 0 } }),
     )
-    // First dat call returns initial dat; after reload it returns refreshed dat.
+    // First dat call returns initial dat; after reload it returns the grown dat.
     let datCallCount = 0
     page.route(/\/api\/favorites\/.+\/dat$/, (route) => {
       datCallCount++
-      route.fulfill({ json: datCallCount === 1 ? initialDat : refreshedDat })
+      route.fulfill({ json: datCallCount === 1 ? datResponse(INITIAL_COUNT) : datResponse(INITIAL_COUNT + ADDED_COUNT) })
     })
     page.route(/\/api\/favorites\/.+\/reload$/, (route) => {
       reloadCallCount++
@@ -367,31 +127,53 @@ test.describe('pull-to-refresh (touch)', () => {
     })
 
     await page.goto(THREAD_PATH)
-    // Wait for initial reses to render.
     await expect(page.getByText(`本文${INITIAL_COUNT}`, { exact: true })).toBeVisible()
-
-    // Scroll to the bottom to arm the pull-to-refresh gesture.
-    await scrollToBottom(page)
-    // Wait for the 0.5 s unlock.
-    await page.waitForTimeout(600)
 
     const reloadsBefore = reloadCallCount
 
-    // Trigger pull-to-refresh.
-    await swipe(page, '.thread-body', { dy: -120 })
+    // Press the footer refresh button.
+    await page.getByRole('button', { name: '更新' }).click()
 
     // Wait for the refresh to complete (new reses appear).
     await expect(page.getByText(`本文${INITIAL_COUNT + ADDED_COUNT}`, { exact: true })).toBeVisible()
-    expect(reloadCallCount).toBeGreaterThan(reloadsBefore)
+    expect(reloadCallCount).toBe(reloadsBefore + 1)
 
     // Old reses (num 1..INITIAL_COUNT) must NOT have the .unread class.
     for (let i = 1; i <= INITIAL_COUNT; i++) {
       await expect(page.locator(`.res[data-res="${i}"]`)).not.toHaveClass(/unread/)
     }
-    // New reses (num INITIAL_COUNT+1..INITIAL_COUNT+ADDED_COUNT) MUST have .unread.
+    // New reses (num INITIAL_COUNT+1..) MUST have .unread.
     for (let i = INITIAL_COUNT + 1; i <= INITIAL_COUNT + ADDED_COUNT; i++) {
       await expect(page.locator(`.res[data-res="${i}"]`)).toHaveClass(/unread/)
     }
+  })
+
+  test('no double-fire: clicking refresh again while in flight is ignored', async ({ page }) => {
+    let reloadCount = 0
+    // Make reload take 800 ms so a second click lands while the first is still in flight.
+    await mockRoutes(page, {
+      reloadHandler: async (route) => {
+        reloadCount++
+        await new Promise((r) => setTimeout(r, 800))
+        route.fulfill({ json: { res_count: 40, read_res: 0, status: 'active' } })
+      },
+    })
+    await page.goto(THREAD_PATH)
+    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
+
+    const countBefore = reloadCount
+    const btn = page.getByRole('button', { name: '更新' })
+
+    // First click starts the refresh; button becomes disabled while in flight.
+    await btn.click()
+    await expect(btn).toBeDisabled()
+
+    // A forced second click while disabled must not start a second reload.
+    await btn.click({ force: true })
+
+    // Wait for the in-flight reload to settle.
+    await page.waitForTimeout(1000)
+    expect(reloadCount - countBefore).toBe(1)
   })
 
   test('opening a thread without scrolling shows unread bar on unread reses (regression)', async ({ page }) => {
@@ -422,52 +204,5 @@ test.describe('pull-to-refresh (touch)', () => {
     for (let i = 1; i <= COUNT; i++) {
       await expect(page.locator(`.res[data-res="${i}"]`)).toHaveClass(/unread/)
     }
-  })
-
-  test('modal open: pull-to-refresh gesture is suppressed', async ({ page }) => {
-    let reloadCount = 0
-    const dat = {
-      title: FAV.title,
-      res_count: 40,
-      read_res: 0,
-      status: 'active',
-      res: [
-        ...Array.from({ length: 38 }, (_, i) => ({
-          num: i + 1,
-          name: '名無し',
-          mail: '',
-          date: `2025 ID:x${i}`,
-          body: `本文${i + 1}`,
-        })),
-        { num: 39, name: '名無し', mail: '', date: '2025 ID:xa', body: '&gt;&gt;1 アンカー' },
-        { num: 40, name: '名無し', mail: '', date: '2025 ID:xb', body: '本文40' },
-      ],
-    }
-    page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-    page.route('**/api/favorites/refresh', (route) =>
-      route.fulfill({ json: { ok: true, boards: 0 } }),
-    )
-    page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: dat }))
-    page.route(/\/api\/favorites\/.+\/reload$/, (route) => {
-      reloadCount++
-      route.fulfill({ json: { res_count: 40, read_res: 0, status: 'active' } })
-    })
-
-    await page.goto(THREAD_PATH)
-    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
-
-    // Open the anchor modal.
-    await page.locator('.anchor[data-anchor="1"]').first().click()
-    await expect(page.locator('.modal')).toBeVisible()
-
-    await scrollToBottom(page)
-    await page.waitForTimeout(600)
-
-    const countBefore = reloadCount
-
-    // Swipe up with modal open — should be suppressed.
-    await swipe(page, '.thread-body', { dy: -120 })
-    await page.waitForTimeout(200)
-    expect(reloadCount).toBe(countBefore)
   })
 })

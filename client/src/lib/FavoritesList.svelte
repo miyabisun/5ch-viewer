@@ -145,14 +145,12 @@
   <!-- Sticky footer with refresh button -->
   <div class="favorites-footer">
     <button
-      class="refresh-btn btn"
+      class="btn icon-btn"
       data-testid="favorites-refresh-btn"
       disabled={refreshing}
       onclick={triggerRefresh}
       aria-label="更新"
-    >
-      <Icon name="refresh-cw" /> 更新
-    </button>
+    ><Icon name="refresh-cw" size="18" /></button>
   </div>
 </div>
 
@@ -214,11 +212,5 @@
     position: sticky;
     bottom: 0;
     z-index: 5;
-  }
-  /* .btn with an inline icon before the label. */
-  .refresh-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
   }
 </style>

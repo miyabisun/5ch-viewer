@@ -9,7 +9,6 @@
   import Modal from './Modal.svelte'
   import ImageViewer from './ImageViewer.svelte'
   import Icon from './Icon.svelte'
-  import { pullRefresh, PULL_THRESHOLD_PX } from './pullRefresh.js'
 
   let { fav, onback, onprogress = () => {}, ngIds = new Set(), onngchange = () => {}, ngWacchoi = [], onngwacchoichange = () => {} } = $props()
 
@@ -17,13 +16,9 @@
   // Surfaced when the auto-refresh (reload) fails. The stored dat is still shown
   // below, so this is a non-blocking notice rather than a hard error.
   let refreshError = $state(null)
-  // Pull-to-refresh: true while a manual refresh triggered by the gesture is in flight.
-  // Used to prevent double-firing and to show the loading panel.
+  // true while a manual refresh triggered by the footer button is in flight.
+  // Used to prevent double-firing and to disable the button.
   let refreshing = $state(false)
-  // Current pull-panel offset in px (0 = hidden). Updated by the pullRefresh action callback.
-  let pullPx = $state(0)
-  // Whether the panel shows 'dragging' hint (above threshold = 'release to refresh').
-  let pullPhase = $state('idle') // 'idle' | 'dragging'
   // Read position (max res number that has passed through the viewport). Initialized from the saved read_res (only on first mount).
   let maxRead = $state(untrack(() => fav.read_res))
   // Unread-bar baseline: reses with num > readBaseline show the unread left-border.
@@ -63,7 +58,7 @@
     mosaicUrls = new Set(data.mosaic_urls ?? [])
   }
 
-  // Manual refresh triggered by the pull-to-refresh gesture.
+  // Manual refresh triggered by the footer refresh button.
   // Guards against double-fire via the `refreshing` flag.
   // Before loading, advance readBaseline (and maxRead) to the last visible res
   // number so that all currently-shown reses lose their unread bar and only
@@ -71,8 +66,8 @@
   async function triggerRefresh() {
     if (refreshing) return
     refreshing = true
-    // Advance baseline to the last res currently in data (user reached the bottom
-    // to trigger this gesture, so those reses are considered read).
+    // Advance baseline to the last res currently in data (everything already
+    // fetched is considered read).
     const lastNum = data?.res?.length ? data.res[data.res.length - 1].num : maxRead
     readBaseline = Math.max(readBaseline, lastNum)
     maxRead = Math.max(maxRead, lastNum)
@@ -83,7 +78,7 @@
     }
   }
 
-  // Returns true when any modal/overlay is open. Used by both backSwipe and pullRefresh
+  // Returns true when any modal/overlay is open. Used by backSwipe
   // to suppress gestures while overlays are in front.
   function isAnyModalOpen() {
     return (
@@ -923,12 +918,7 @@
   {/if}
 
   <!-- Scrollable body: flex:1 so it fills remaining space between header and footer. -->
-  <div class="thread-body" use:backSwipe use:pullRefresh={() => ({
-    enabled: !refreshing,
-    isBlocked: isAnyModalOpen,
-    onRefresh: triggerRefresh,
-    onDrag: (px, phase) => { pullPx = px; pullPhase = phase },
-  })}>
+  <div class="thread-body" use:backSwipe>
     {#if data}
       {#each data.res as r (r.num)}
         <!-- own takes priority over unread: when r.own is true, unread class is not added -->
@@ -939,33 +929,21 @@
     {/if}
   </div>
 
-  <!-- Pull-to-refresh panel: sits between body and footer in normal flow.
-       Height is driven by pullPx; starts at 0 (hidden), grows as the user over-pulls. -->
-  <div
-    class="pull-refresh-panel"
-    class:above-threshold={pullPx >= PULL_THRESHOLD_PX}
-    data-testid="pull-refresh"
-    style="height: {refreshing ? '4rem' : pullPx > 0 ? Math.min(pullPx, 4 * 16) + 'px' : '0'}"
-    aria-hidden={pullPx === 0 && !refreshing}
-  >
-    {#if refreshing}
-      <span class="pull-refresh-spinner" aria-label="更新中"></span>
-      <span>更新中…</span>
-    {:else if pullPhase === 'dragging' && pullPx >= PULL_THRESHOLD_PX}
-      <span>離して更新</span>
-    {:else if pullPx > 0}
-      <span>更新する</span>
-    {/if}
-  </div>
-
-  <!-- Fixed footer: pencil button to open the post modal. -->
+  <!-- Fixed footer: write (left) and refresh (right) icon buttons.
+       Refresh is higher-frequency, so it takes the easier-to-reach right end. -->
   <div class="thread-footer">
-    <!-- Icon button (36×36, 6px radius) — circular FABs are not used (DESIGN.md Shapes). -->
+    <!-- Icon buttons (36×36, 6px radius) — circular FABs are not used (DESIGN.md Shapes). -->
     <button
       class="btn icon-btn"
       aria-label="書き込む"
       onclick={() => { postModalOpen = true; postError = null }}
     ><Icon name="pencil" size="18" /></button>
+    <button
+      class="btn icon-btn"
+      aria-label="更新"
+      disabled={refreshing}
+      onclick={triggerRefresh}
+    ><Icon name="refresh-cw" size="18" /></button>
   </div>
 </div>
 
@@ -1375,18 +1353,13 @@
     color: var(--muted);
   }
 
-  /* Pull-to-refresh panel (shared recipe in App.svelte): sits between
-     .thread-body and .thread-footer, so the border sits on the top edge. */
-  .pull-refresh-panel {
-    border-top: 1px solid var(--border);
-  }
-
-  /* Fixed footer: stays at the bottom of .thread-view. */
+  /* Fixed footer: stays at the bottom of .thread-view.
+     space-between splits the two icon buttons to the left/right ends. */
   .thread-footer {
     flex-shrink: 0;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
     padding: 8px 12px;
     background: var(--surface);
     border-top: 1px solid var(--border);

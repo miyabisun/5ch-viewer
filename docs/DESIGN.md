@@ -131,9 +131,17 @@ Domain components on top of the Sumi recipes:
   blur (40px in the full-screen viewer). The viewer itself uses a
   near-black backdrop with white quiet controls (template-sanctioned
   exception to the token rule).
-- **Post FAB:** the write action is a Sumi icon button (pencil SVG) in the
-  sticky thread footer; the submit button inside the post modal is the
-  screen's single primary (accent) button.
+- **Sticky footer actions:** footer actions are Sumi icon buttons
+  (36×36, default variant, 18px monochrome SVG, always `aria-label`) —
+  never text+icon composites, never circular FABs. **Refresh
+  (`refresh-cw`) always sits at the right edge** — it is the most
+  frequent action, so it gets the thumb-reach position; refresh buttons
+  disable while a refresh is in flight (disabled recipe: 50% opacity,
+  no extra spinner required). In the thread view the write action
+  (pencil) sits at the left edge; the submit button inside the post
+  modal is the screen's single primary (accent) button. Pull-to-refresh
+  exists only at the **top** of the favorites list (shared quiet-panel
+  recipe); there is no bottom pull gesture anywhere.
 
 ## Do's and Don'ts
 
