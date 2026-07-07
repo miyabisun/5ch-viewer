@@ -64,6 +64,10 @@ export const api = {
     request('GET', `/api/boards/${s}/${b}/wacchoi-search?suffix=${encodeURIComponent(suffix)}`),
   post: (s, b, t, body) =>
     request('POST', `/api/favorites/${s}/${b}/${t}/post`, body),
+  // Manual next-thread rescue: reads the board's subject.txt once and registers the
+  // successor thread if it exists. Returns { found, thread_id, title } or { found: false }.
+  findNext: (s, b, t) =>
+    request('POST', `/api/favorites/${s}/${b}/${t}/find-next`, {}, { cache: 'no-store' }),
   setImageMosaic: (url) => request('POST', '/api/images/mosaic', { url }),
   unsetImageMosaic: (url) => request('DELETE', '/api/images/mosaic', { url }),
 }

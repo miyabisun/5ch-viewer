@@ -6,6 +6,13 @@ use std::sync::LazyLock;
 
 static NUMBER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d+").unwrap());
 
+/// Removes all whitespace (half-width space, full-width U+3000, tabs, …) from a string.
+/// Context matching is done on whitespace-stripped forms so a thread starter's spacing
+/// wobble (e.g. `★503 【転載禁止】` vs `★504【転載禁止】`) does not break next-thread detection.
+fn strip_ws(s: &str) -> String {
+    s.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
 /// A number within the title and its position (byte offset).
 struct NumberPos {
     raw: String,
@@ -55,31 +62,36 @@ pub fn find_next_thread<'a>(
             .collect();
         let suffix_frag: String = suffix.chars().take(6).collect();
 
+        // Compare on whitespace-stripped forms (spacing wobble tolerance). The 6-char
+        // slicing above stays char-based for UTF-8 safety; only the comparison drops spaces.
+        let prefix_frag = strip_ws(&prefix_frag);
+        let suffix_frag = strip_ws(&suffix_frag);
+
         // Skip if the title is digits only (no surrounding context).
         if prefix_frag.is_empty() && suffix_frag.is_empty() {
             continue;
         }
 
-        let matches_context = |candidate: &str| {
-            (prefix_frag.is_empty() || candidate.contains(&prefix_frag))
-                && (suffix_frag.is_empty() || candidate.contains(&suffix_frag))
+        // A candidate matches if its whitespace-stripped title satisfies the surrounding
+        // context and contains the target digits. next_str / padded are pure digits.
+        let find_matching = |needle: &str| {
+            entries.iter().find(|e| {
+                let cand = strip_ws(&e.title);
+                (prefix_frag.is_empty() || cand.contains(&prefix_frag))
+                    && (suffix_frag.is_empty() || cand.contains(&suffix_frag))
+                    && cand.contains(needle)
+            })
         };
 
         let next_str = (pos.num + 1).to_string();
-        if let Some(found) = entries
-            .iter()
-            .find(|e| matches_context(&e.title) && e.title.contains(&next_str))
-        {
+        if let Some(found) = find_matching(&next_str) {
             return Some(found);
         }
 
         // Also try the zero-padded form (e.g. Part008 -> Part009).
         let padded = format!("{:0>width$}", next_str, width = pos.raw.len());
         if padded != next_str {
-            if let Some(found) = entries
-                .iter()
-                .find(|e| matches_context(&e.title) && e.title.contains(&padded))
-            {
+            if let Some(found) = find_matching(&padded) {
                 return Some(found);
             }
         }
@@ -177,6 +189,39 @@ mod tests {
         // It should match "11スレ目", which has the suffix context "スレ目".
         let result = find_next_thread("10スレ目", &entries);
         assert_eq!(result, Some(&entries[1]));
+    }
+
+    /// Production incident regression: the current thread has a space after 503
+    /// ("★503 【転載禁止】") but the next thread does not ("★504【転載禁止】").
+    /// Whitespace-insensitive context matching must still find ★504.
+    #[test]
+    fn finds_next_thread_across_space_wobble() {
+        let entries = vec![
+            entry("1770000000", "なんJBLAC(ブルアカ)部★503 【転載禁止】", 1002),
+            entry("1770100000", "なんJBLAC(ブルアカ)部★504【転載禁止】", 34),
+        ];
+        let result = find_next_thread("なんJBLAC(ブルアカ)部★503 【転載禁止】", &entries);
+        assert_eq!(result, Some(&entries[1]));
+    }
+
+    /// Full-width space (U+3000) wobble must also be tolerated.
+    #[test]
+    fn finds_next_thread_across_fullwidth_space_wobble() {
+        let entries = vec![
+            entry("1770000000", "なんJBLAC(ブルアカ)部★503　【転載禁止】", 1002),
+            entry("1770100000", "なんJBLAC(ブルアカ)部★504【転載禁止】", 34),
+        ];
+        let result = find_next_thread("なんJBLAC(ブルアカ)部★503　【転載禁止】", &entries);
+        assert_eq!(result, Some(&entries[1]));
+    }
+
+    /// Negative case: an unrelated thread whose number happens to be +1 must not match,
+    /// because the surrounding context differs entirely.
+    #[test]
+    fn does_not_false_match_unrelated_plus_one() {
+        let entries = vec![entry("1770100000", "全く別の板の雑談スレ★504", 5)];
+        let result = find_next_thread("なんJBLAC(ブルアカ)部★503 【転載禁止】", &entries);
+        assert_eq!(result, None);
     }
 
     #[test]

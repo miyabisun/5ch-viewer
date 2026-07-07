@@ -352,6 +352,14 @@
   :global(.menu .action:hover) {
     background: var(--border);
   }
+  /* Disabled action (e.g. find-next in flight): dim, no hover, default cursor. */
+  :global(.menu .action:disabled) {
+    opacity: 0.5;
+    cursor: default;
+  }
+  :global(.menu .action:disabled:hover) {
+    background: var(--surface-raised);
+  }
   :global(.menu .action.danger) {
     color: var(--danger);
     margin-top: 8px;

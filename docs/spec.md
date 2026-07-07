@@ -221,7 +221,16 @@ CREATE TABLE IF NOT EXISTS dat_blobs (
 バックグラウンドで `tokio::time::interval`（60 秒）により:
 1. favorites を板単位にグループ化、板ごとに subject.txt を 1 回取得（共有）。
 2. 各スレの res_count を更新、閾値で warned/dead 遷移。
-3. dead になったら subject から次スレを検出し、見つかれば rating 継承で自動追加。
+3. warned/dead で subject から次スレを検出し、見つかれば rating 継承で自動追加。
+
+dead 化したスレも「次スレ探索のみ」を最終更新から 7 日間だけ継続する（dead 化の tick
+より後に次スレが立つ取りこぼしレース対策）。この探索は read-only で dead 行の
+res_count/status/updated_at を書き換えない（updated_at を触ると 7 日窓が無限延長するため）。
+次スレが登録されれば新スレ（active）が板を監視対象に保ち、dead 元スレは 7 日で自然に脱落、
+アーカイブ（archived=1）でも対象外になる。
+
+手動救済として `POST …/{…}/find-next` を用意（ユーザー操作起点、subject 1 回取得）。
+dead/archived でも呼べる。
 
 監視は subject.txt のみ取得（dat 本体はユーザーが開いた時だけ）。
 
@@ -229,7 +238,8 @@ CREATE TABLE IF NOT EXISTS dat_blobs (
 1. タイトル中の数字を位置付きで全抽出。
 2. **右端の数字**から +1 を試す。
 3. その数字の前後最大6文字を文脈とし、候補が文脈と +1 後の数値の両方を含むかで判定
-   （誤爆防止）。
+   （誤爆防止）。照合は空白非依存（候補・文脈の全空白を除去して比較）で、スレ建て主の
+   空白ゆらぎ（例: `★503 【転載禁止】` vs `★504【転載禁止】`）に強い。
 4. ゼロパディング（Part09→Part10）も試す。
 
 移植元のテストケースも移植済み。
@@ -250,6 +260,7 @@ CREATE TABLE IF NOT EXISTS dat_blobs (
 | POST | `…/{…}/reload` | Range 差分取得を実行 |
 | PATCH | `…/{…}/progress` | 既読位置 `read_res` 更新 |
 | PATCH | `…/{…}/rating` | 星評価更新 |
+| POST | `…/{…}/find-next` | 次スレを手動検索（subject 1 回取得、見つかれば rating 継承で登録） |
 | GET | `/api/search?q={keyword}` | スレタイ検索（ff5ch.syoboi.jp ラップ） |
 
 ## 11. 非機能要件

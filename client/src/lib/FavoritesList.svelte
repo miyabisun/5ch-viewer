@@ -58,6 +58,17 @@
     closeMenu()
     onchange()
   }
+
+  // Manual next-thread rescue. On success reload the list so the new active thread appears;
+  // returns an inline status message shown inside the menu (menu stays open on not-found).
+  async function findNext(f) {
+    const res = await api.findNext(f.server, f.board, f.thread_id)
+    if (res.found) {
+      onchange()
+      return '次スレを追加しました'
+    }
+    return '次スレは見つかりませんでした'
+  }
 </script>
 
 <div class="favorites-view">
@@ -78,7 +89,7 @@
     {/each}
 
     {#if menu}
-      <ThreadMenu {menu} onclose={closeMenu} onremoved={onchange} onarchive={archive}>
+      <ThreadMenu {menu} onclose={closeMenu} onremoved={onchange} onarchive={archive} onfindnext={findNext}>
         {#snippet actions(f)}
           <div class="section-label">お気に入りレベル</div>
           <!--

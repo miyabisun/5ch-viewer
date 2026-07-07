@@ -7,7 +7,25 @@
   import { api } from './api.js'
   import Modal from './Modal.svelte'
 
-  let { menu, onclose, onremoved, actions, onarchive } = $props()
+  let { menu, onclose, onremoved, actions, onarchive, onfindnext } = $props()
+
+  // Inline feedback for the "次スレを検索" action (no toast infra in this app).
+  // onfindnext(menu) is expected to resolve to a message string to show here.
+  let finding = $state(false)
+  let findStatus = $state('')
+
+  async function runFindNext() {
+    if (finding) return
+    finding = true
+    findStatus = ''
+    try {
+      findStatus = await onfindnext(menu)
+    } catch (e) {
+      findStatus = e.message || '次スレの検索に失敗しました'
+    } finally {
+      finding = false
+    }
+  }
 
   // 5ch thread URL (docs/5ch-spec.md): https://{server}.5ch.io/test/read.cgi/{board}/{thread_id}/
   function threadUrl(f) {
@@ -49,6 +67,14 @@
       タイトル+URL をコピー
     </button>
 
+    {#if onfindnext}
+      <div class="section-label">次スレ</div>
+      <button class="action" disabled={finding} onclick={runFindNext}>次スレを検索</button>
+      {#if findStatus}
+        <div class="find-status" data-testid="find-next-status">{findStatus}</div>
+      {/if}
+    {/if}
+
     <div class="section-label">整理</div>
     {#if onarchive}
       <button class="action" onclick={() => onarchive(menu)}>アーカイブ</button>
@@ -69,6 +95,11 @@
     color: var(--muted);
     word-break: break-all;
     margin-top: 4px;
+  }
+  .find-status {
+    font-size: 14px;
+    color: var(--muted);
+    padding: 2px 4px;
   }
   /* .action / .section-label styling comes from the shared .menu recipes in App.svelte. */
 </style>

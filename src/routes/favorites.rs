@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use crate::fivech::http;
 use crate::fivech::images::extract_image_urls;
+use crate::fivech::next_thread::find_next_thread;
 use crate::fivech::post;
 use crate::fivech::refresh::{self, read_blob_posts};
 use crate::fivech::url::{parse_thread_url, validate_ref};
@@ -41,6 +42,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/favorites/{server}/{board}/{thread_id}/post",
             post(post_message),
+        )
+        .route(
+            "/api/favorites/{server}/{board}/{thread_id}/find-next",
+            post(find_next),
         )
 }
 
@@ -445,6 +450,61 @@ async fn post_message(
     state.jar.save(&state.config.cookies_path);
 
     Ok(Json(json!({ "ok": true, "res_num": result.res_num })))
+}
+
+/// Manual "find next thread" rescue: fetches the board's subject.txt once and, if the next
+/// thread (Part number +1) is present, registers it (INSERT OR IGNORE) inheriting the source
+/// thread's rating and board_name. This is the user-initiated counterpart to the background
+/// sync auto-add; it exists because a thread can go dead before its successor is posted, after
+/// which background polling stops. dead/archived source threads are eligible (that is the
+/// whole point of the rescue), so status/archived are not filtered here.
+///
+/// 5ch access: user-initiated, one subject.txt fetch per action (dat body is never fetched) —
+/// within the access-reduction policy.
+async fn find_next(
+    State(state): State<AppState>,
+    Path((server, board, thread_id)): ThreadPath,
+) -> Result<Json<Value>, AppError> {
+    validate_ref(&server, &board, &thread_id)?;
+
+    // Source favorite: title drives the search; rating/board_name are inherited on insert.
+    let (title, rating, board_name): (String, i64, String) = {
+        let conn = state.db.lock().unwrap();
+        conn.query_row(
+            "SELECT title, rating, board_name FROM favorites
+             WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![server, board, thread_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("favorite not found".into()))?
+    };
+
+    let entries =
+        http::fetch_subject(&state.http, &state.config.fivech_base_url, &server, &board).await?;
+
+    let next = match find_next_thread(&title, &entries) {
+        Some(n) => n.clone(),
+        None => return Ok(Json(json!({ "found": false }))),
+    };
+
+    {
+        let conn = state.db.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO favorites
+             (server, board, thread_id, board_name, title, res_count, rating)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![server, board, next.thread_id, board_name, next.title, next.res_count, rating],
+        )?;
+    }
+
+    Ok(Json(json!({
+        "found": true,
+        "server": server,
+        "board": board,
+        "thread_id": next.thread_id,
+        "title": next.title,
+    })))
 }
 
 /// Reads the raw dat text and returns URLs whose mosaic flag is set to 1.

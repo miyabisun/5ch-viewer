@@ -12,11 +12,19 @@ use std::time::Duration;
 
 const INTERVAL: Duration = Duration::from_secs(60);
 
-/// Watch query shared by run_once() and its tests: active/warned favorites only
-/// (dead and archived threads are excluded from polling).
+/// Watch query shared by run_once() and its tests.
+///
+/// Non-archived favorites only. active/warned are always watched. dead threads keep being
+/// watched — but for next-thread search ONLY (see try_add_next_thread) — for a bounded 7-day
+/// window (604800s) after their last real update. This closes the "next thread posted after
+/// the current thread went dead" race without polling dead-only boards forever (5ch access
+/// policy). Once the next thread is registered it enters as an active row and keeps the board
+/// live; the dead row falls off after 7 days; archiving (archived=1) also removes it.
 const WATCH_QUERY: &str =
-    "SELECT server, board, thread_id, title, rating
-     FROM favorites WHERE status != 'dead' AND archived = 0";
+    "SELECT server, board, thread_id, title, rating, status
+     FROM favorites
+     WHERE archived = 0
+       AND (status != 'dead' OR updated_at >= strftime('%s','now') - 604800)";
 
 pub fn start_sync(state: AppState) {
     tokio::spawn(async move {
@@ -36,6 +44,7 @@ struct Watch {
     thread_id: String,
     title: String,
     rating: i64,
+    status: String,
 }
 
 async fn run_once(state: &AppState) -> Result<(), AppError> {
@@ -50,6 +59,7 @@ async fn run_once(state: &AppState) -> Result<(), AppError> {
                     thread_id: r.get(2)?,
                     title: r.get(3)?,
                     rating: r.get(4)?,
+                    status: r.get(5)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -72,7 +82,13 @@ async fn run_once(state: &AppState) -> Result<(), AppError> {
         match http::fetch_subject(&state.http, &state.config.fivech_base_url, &server, &board).await {
             Ok(entries) => {
                 for w in &threads {
-                    process_thread(state, &server, &board, w, &entries);
+                    // dead rows are read-only: search for the next thread but never write back
+                    // to the dead row (touching updated_at would extend the 7-day window forever).
+                    if w.status == "dead" {
+                        try_add_next_thread(state, &server, &board, w, &entries);
+                    } else {
+                        process_thread(state, &server, &board, w, &entries);
+                    }
                 }
             }
             Err(e) => tracing::warn!("[sync] subject {server}/{board}: {e}"),
@@ -122,18 +138,32 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
     }
 
     // In the danger zone: look for the next thread in subject.
-    // Prefer the known title from the DB; fall back to what subject reports.
+    try_add_next_thread(state, server, board, w, entries);
+}
+
+/// Finds and (if new) registers the next thread for `w` from the already-fetched subject
+/// entries. Shared by process_thread (active/warned) and the dead read-only path in run_once.
+/// Does a pure string match — no additional 5ch HTTP requests. None = next thread not yet
+/// posted; skip. Only writes the newly-inserted next-thread row; never mutates the `w` row
+/// (so the dead path stays read-only and never touches updated_at, keeping the 7-day window
+/// bounded per the 5ch access policy).
+///
+/// The search title prefers the DB-stored title, falling back to what subject.txt reports
+/// for this thread (if still listed).
+fn try_add_next_thread(state: &AppState, server: &str, board: &str, w: &Watch, entries: &[SubjectEntry]) {
     let title = if !w.title.is_empty() {
         w.title.clone()
     } else {
-        found.map(|e| e.title.clone()).unwrap_or_default()
+        entries
+            .iter()
+            .find(|e| e.thread_id == w.thread_id)
+            .map(|e| e.title.clone())
+            .unwrap_or_default()
     };
     if title.is_empty() {
         return;
     }
 
-    // find_next_thread does a pure string match against the already-fetched subject entries —
-    // no additional 5ch HTTP requests. None = next thread not yet posted; skip silently.
     if let Some(next) = find_next_thread(&title, entries) {
         let conn = state.db.lock().unwrap();
         let board_name: String = conn
@@ -217,15 +247,27 @@ mod tests {
         .unwrap();
     }
 
-    /// WATCH_QUERY (the exact query run_once() prepares) must exclude dead and archived
-    /// favorites, keeping only active/warned non-archived ones.
+    /// WATCH_QUERY semantics: non-archived active/warned are always watched; a recently-dead
+    /// (updated within 7 days) non-archived thread is ALSO watched (for next-thread search);
+    /// a stale dead thread (updated >7 days ago) and any archived thread are excluded.
     #[test]
-    fn watch_query_excludes_dead_and_archived() {
+    fn watch_query_includes_recent_dead_excludes_stale_and_archived() {
         let conn = setup();
         insert_favorite(&conn, "1001", "スレA", "active", 0);
         insert_favorite(&conn, "1002", "スレB", "warned", 0);
+        // Freshly inserted dead row: updated_at defaults to now -> within the 7-day window.
         insert_favorite(&conn, "1003", "スレC", "dead", 0);
+        // Archived (even though active) -> excluded.
         insert_favorite(&conn, "1004", "アーカイブスレ", "active", 1);
+        // Dead + archived -> excluded (archived filter wins).
+        insert_favorite(&conn, "1005", "アーカイブ済み死亡スレ", "dead", 1);
+        // Stale dead: last updated 8 days ago -> outside the 7-day window -> excluded.
+        insert_favorite(&conn, "1006", "古い死亡スレ", "dead", 0);
+        conn.execute(
+            "UPDATE favorites SET updated_at = strftime('%s','now') - 8*86400 WHERE thread_id='1006'",
+            [],
+        )
+        .unwrap();
 
         let mut stmt = conn.prepare(super::WATCH_QUERY).unwrap();
         let mut ids: Vec<String> = stmt
@@ -235,8 +277,8 @@ mod tests {
             .unwrap();
         ids.sort();
 
-        // Only 1001 (active) and 1002 (warned) pass: dead and archived are excluded.
-        assert_eq!(ids, vec!["1001", "1002"]);
+        // active, warned, and the recently-dead 1003 pass; archived and stale-dead are excluded.
+        assert_eq!(ids, vec!["1001", "1002", "1003"]);
     }
 
     /// Archived threads that become dead must not trigger next-thread insertion.
@@ -284,6 +326,7 @@ mod tests {
             thread_id: "1001".to_string(),
             title: "アクティブ".to_string(),
             rating: 0,
+            status: "active".to_string(),
         };
         // res_count=42 is below the warned threshold (980), so no next-thread search runs.
         let entries = vec![subject_entry("1001", "アクティブ", 42)];
@@ -334,6 +377,7 @@ mod tests {
             thread_id: "1000000001".to_string(),
             title: "ブルアカ Part5862".to_string(),
             rating: 3,
+            status: "active".to_string(),
         };
         let entries = vec![
             subject_entry("1000000001", "ブルアカ Part5862", 980),
@@ -371,6 +415,7 @@ mod tests {
             thread_id: "1000000001".to_string(),
             title: "ブルアカ Part5862".to_string(),
             rating: 5,
+            status: "active".to_string(),
         };
         let entries = vec![
             subject_entry("1000000001", "ブルアカ Part5862", 995),
@@ -410,6 +455,7 @@ mod tests {
             thread_id: "1000000001".to_string(),
             title: "ブルアカ Part5862".to_string(),
             rating: 3,
+            status: "active".to_string(),
         };
         let entries = vec![
             subject_entry("1000000001", "ブルアカ Part5862", 990),
@@ -438,6 +484,7 @@ mod tests {
             thread_id: "1000000001".to_string(),
             title: "ブルアカ Part5862".to_string(),
             rating: 2,
+            status: "active".to_string(),
         };
         // Subject only contains the current thread; no Part5863 yet.
         let entries = vec![subject_entry("1000000001", "ブルアカ Part5862", 985)];
@@ -464,6 +511,7 @@ mod tests {
             thread_id: "1000000001".to_string(),
             title: "ブルアカ Part5862".to_string(),
             rating: 0,
+            status: "active".to_string(),
         };
         let entries = vec![
             subject_entry("1000000001", "ブルアカ Part5862", 500), // active: below 980
@@ -479,4 +527,90 @@ mod tests {
         assert_eq!(count, 1, "next thread must NOT be registered when current thread is active");
     }
 
+    // --- try_add_next_thread on a dead row (read-only) tests ---
+
+    /// try_add_next_thread must register the next thread (rating inherited) WITHOUT mutating the
+    /// dead source row's res_count / status / updated_at (read-only invariant; touching
+    /// updated_at would extend the 7-day watch window indefinitely).
+    #[test]
+    fn dead_row_search_adds_next_and_leaves_dead_row_untouched() {
+        let conn = setup();
+        insert_fav_with_rating(&conn, "1000000001", "ブルアカ Part5862", "dead", 4);
+        // Pin a known res_count and a stable-but-recent updated_at so we can assert immutability.
+        conn.execute(
+            "UPDATE favorites SET res_count=1002, updated_at=1700000000 WHERE thread_id='1000000001'",
+            [],
+        )
+        .unwrap();
+
+        let state = make_state(conn);
+        let w = super::Watch {
+            server: "egg".to_string(),
+            board: "applism".to_string(),
+            thread_id: "1000000001".to_string(),
+            title: "ブルアカ Part5862".to_string(),
+            rating: 4,
+            status: "dead".to_string(),
+        };
+        let entries = vec![
+            subject_entry("1000000001", "ブルアカ Part5862", 1002),
+            subject_entry("1000000002", "ブルアカ Part5863", 7),
+        ];
+
+        super::try_add_next_thread(&state, "egg", "applism", &w, &entries);
+
+        let conn = state.db.lock().unwrap();
+        // Next thread registered with inherited rating.
+        let (title, rating): (String, i64) = conn
+            .query_row(
+                "SELECT title, rating FROM favorites WHERE thread_id='1000000002'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "ブルアカ Part5863");
+        assert_eq!(rating, 4, "next thread must inherit rating from the dead source thread");
+
+        // Dead source row is untouched: res_count / status / updated_at unchanged.
+        let (res_count, status, updated_at): (i64, String, i64) = conn
+            .query_row(
+                "SELECT res_count, status, updated_at FROM favorites WHERE thread_id='1000000001'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(res_count, 1002, "dead row res_count must not change");
+        assert_eq!(status, "dead", "dead row status must not change");
+        assert_eq!(updated_at, 1700000000, "dead row updated_at must not change");
+    }
+
+    /// The dead-row search must not duplicate an already-registered next thread (INSERT OR IGNORE).
+    #[test]
+    fn dead_row_search_does_not_duplicate_already_registered_next() {
+        let conn = setup();
+        insert_fav_with_rating(&conn, "1000000001", "ブルアカ Part5862", "dead", 3);
+        insert_fav_with_rating(&conn, "1000000002", "ブルアカ Part5863", "active", 0);
+
+        let state = make_state(conn);
+        let w = super::Watch {
+            server: "egg".to_string(),
+            board: "applism".to_string(),
+            thread_id: "1000000001".to_string(),
+            title: "ブルアカ Part5862".to_string(),
+            rating: 3,
+            status: "dead".to_string(),
+        };
+        let entries = vec![
+            subject_entry("1000000001", "ブルアカ Part5862", 1002),
+            subject_entry("1000000002", "ブルアカ Part5863", 10),
+        ];
+
+        super::try_add_next_thread(&state, "egg", "applism", &w, &entries);
+
+        let conn = state.db.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "already-registered next thread must not be duplicated");
+    }
 }

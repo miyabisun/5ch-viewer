@@ -75,6 +75,13 @@
     closeMenu()
     await load()
   }
+
+  // Manual next-thread rescue from the archive list. The successor is registered as an active
+  // (archived=0) favorite, so it won't show in this archive list — just show inline feedback.
+  async function findNext(f) {
+    const res = await api.findNext(f.server, f.board, f.thread_id)
+    return res.found ? 'お気に入りに追加しました' : '次スレは見つかりませんでした'
+  }
 </script>
 
 {#if error}
@@ -110,7 +117,7 @@
 {/each}
 
 {#if menu}
-  <ThreadMenu {menu} onclose={closeMenu} onremoved={load}>
+  <ThreadMenu {menu} onclose={closeMenu} onremoved={load} onfindnext={findNext}>
     {#snippet actions(f)}
       <button class="action" onclick={() => unarchive(f)}>アーカイブ解除</button>
     {/snippet}
