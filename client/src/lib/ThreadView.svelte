@@ -348,6 +348,13 @@
 
   // Body click (shared by list and modal). Follow the anchor or open wacchoi list when tapped.
   function onBodyClick(e) {
+    // After a long-press opened the reply menu, swallow the trailing click so it
+    // does not follow an anchor / open a list on top of the menu.
+    if (bodyLongPressed) {
+      bodyLongPressed = false
+      e.stopPropagation()
+      return
+    }
     const w = e.target.closest('.wacchoi-badge')
     if (w) {
       // If a long-press already opened the wacchoi menu, swallow this click to avoid
@@ -716,13 +723,52 @@
   // The res number the reply menu is open for, or null (closed).
   let replyMenuResNum = $state(null)
 
+  // True when a body menu (right-click or long-press) should open for this event:
+  // the res number is known and the target is plain body, not an anchor or wacchoi
+  // badge (those have their own menus).
+  function isBodyMenuTarget(e, resNum) {
+    if (resNum == null) return false
+    return !e.target.closest('.anchor') && !e.target.closest('.wacchoi-badge')
+  }
+
   // Right-click on the .body div: open the reply menu for the clicked res.
-  // Skip if the target is an anchor or wacchoi badge (those have their own menus).
   function onBodyContextMenu(e, resNum) {
-    if (e.target.closest('.anchor') || e.target.closest('.wacchoi-badge')) return
-    if (resNum == null) return
+    if (!isBodyMenuTarget(e, resNum)) return
     e.preventDefault()
     replyMenuResNum = resNum
+  }
+
+  // Long-press detection for the res body (touch devices, 500ms, same pattern as
+  // the ID/wacchoi/thumbnail long-press). Required because suppressing selection
+  // via CSS prevents `contextmenu` from firing on some touch browsers, so the
+  // native right-click path (onBodyContextMenu) cannot cover touch.
+  let bodyPressTimer
+  let bodyLongPressed = false
+  function onBodyPointerDown(e, resNum) {
+    if (e.pointerType !== 'touch') return
+    if (!isBodyMenuTarget(e, resNum)) return
+    bodyLongPressed = false
+    bodyPressTimer = setTimeout(() => {
+      bodyLongPressed = true
+      replyMenuResNum = resNum
+    }, 500)
+  }
+  function cancelBodyPress() {
+    clearTimeout(bodyPressTimer)
+  }
+
+  // Copy the res body as plain text to the clipboard, then close the reply menu.
+  // Compensates for the touch selection loss caused by the selection-suppress CSS.
+  // The body is sanitized HTML with only <a>/<br>; convert <br> to newlines first
+  // (textContent alone would drop line breaks), then read textContent to decode
+  // entities and strip tags while preserving newlines.
+  async function copyBody(num) {
+    const r = resOf(num)
+    const html = (r?.body ?? '').replace(/<br\s*\/?>/gi, '\n')
+    const el = document.createElement('div')
+    el.innerHTML = html
+    await copyText(el.textContent ?? '')
+    replyMenuResNum = null
   }
 
   // Open the post modal pre-filled with >>num on line 1, cursor on line 2.
@@ -778,6 +824,10 @@
   <div class="body" role="presentation"
     onclick={onBodyClick}
     oncontextmenu={(e) => onBodyContextMenu(e, resNum)}
+    onpointerdown={(e) => onBodyPointerDown(e, resNum)}
+    onpointerup={cancelBodyPress}
+    onpointerleave={cancelBodyPress}
+    onpointercancel={cancelBodyPress}
   >{@html linkify(html)}</div>
   {#if images.length > 0}
     <div class="thumb-strip">
@@ -1128,6 +1178,7 @@
     {/snippet}
     <div class="menu" data-testid="reply-menu">
       <button class="action" onclick={() => startReply(replyMenuResNum)}>返信する</button>
+      <button class="action" onclick={() => copyBody(replyMenuResNum)}>本文をコピー</button>
     </div>
   </Modal>
 {/if}
@@ -1237,6 +1288,18 @@
     margin-top: 4px;
     white-space: pre-wrap;
     word-break: break-word;
+    /* Prefer the custom long-press reply menu over the native selection callout.
+       -webkit-touch-callout is a no-op on desktop, so it is applied unconditionally. */
+    -webkit-touch-callout: none;
+  }
+  /* Suppress text selection only on touch devices: on PC the body is a reading
+     surface and drag-select (partial copy) must be preserved. Touch loses
+     selection but the reply menu's "本文をコピー" compensates in all environments. */
+  @media (hover: none) and (pointer: coarse) {
+    .body {
+      user-select: none;
+      -webkit-user-select: none;
+    }
   }
   :global(.anchor) {
     color: var(--link);

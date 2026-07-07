@@ -123,6 +123,17 @@ Domain components on top of the Sumi recipes:
 - **Res card (thread view):** Sumi card; unread/own state shown by the 3px
   left border (see Colors). NG posts (NG ID / NG wacchoi) render the
   header struck-through in muted with the body hidden entirely.
+  **Res body context menu:** right-click (PC) or 500ms touch long-press
+  on the body opens the reply menu — a standard Sumi context menu
+  (modal, full-width default `.action` buttons) with 返信する and
+  本文をコピー. To keep the long-press reliable, body text selection is
+  suppressed **on coarse-pointer touch devices only**
+  (`-webkit-touch-callout: none` unconditionally; `user-select: none`
+  inside `@media (hover: none) and (pointer: coarse)`). PC drag-selection
+  of the reading surface is never suppressed — the body is Sumi's
+  reading surface — and the menu's copy-body action compensates for the
+  lost touch selection. The suppression applies uniformly to every res
+  body rendering (main list, anchor tree, ID/wacchoi search modals).
 - **Anchor tree modal:** depth-indented nodes with a 2px border-left guide;
   the pivot res is highlighted with an accent left border.
 - **ID / wacchoi badges:** caption-size, clickable (list modal), long-press
@@ -174,3 +185,7 @@ Domain components on top of the Sumi recipes:
 - Don't put any network wait between thread entry and first paint, and
   don't add loading chrome (spinner/skeleton) to entry — entry renders
   the saved dat instantly; refresh affordances are the footer buttons.
+- Don't suppress text selection of res bodies on fine-pointer (PC)
+  environments — the body is the reading surface; selection suppression
+  is a touch-only concession to the long-press menu, always paired with
+  a copy action in that menu.
