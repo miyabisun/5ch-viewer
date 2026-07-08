@@ -105,7 +105,13 @@ hue remains only as a secondary cue. The Sumi side keeps the vivid hues.
   the id-l4 value in both themes.
 - **Unread badge (badge-bg/badge-fg):** Dark-red pill with white bold count
   on list rows. Hidden when zero (not rendered). Already ink-dark
-  (white-on-badge ~8:1), unchanged for e-paper.
+  (white-on-badge ~8:1), unchanged for e-paper. The count is
+  **dat-backed**: `res_count` reflects only the locally saved dat (blob
+  post count), never subject.txt alone — a visible count is a promise
+  that tapping the row shows those posts instantly, with zero fetch.
+  Rows whose dat has not yet been fetched (e.g. a freshly registered
+  next thread) render no badge until the background sync or a manual
+  refresh lands the dat.
 - **ID heat id-l2..l5 (blue → purple → magenta → deep red):** ID badge
   color by post count of the same ID in a thread; l5 additionally bold.
   A single-occurrence ID (level 1) renders muted with no color. On Washi
@@ -151,25 +157,29 @@ Domain components on top of the Sumi recipes:
   no extra spinner required). In the thread view the write action
   (pencil) sits at the left edge; the submit button inside the post
   modal is the screen's single primary (accent) button.
-- **Thread entry (ChMate model):** opening a thread paints the **saved
-  dat immediately, with zero fetch to 5ch** — no entry-time reload, no
-  background reload, and therefore **no loading chrome on entry** (no
-  spinner, no skeleton: the spinner recipe is reserved for real waits,
-  and entry has none by design). Fetching new posts happens in exactly
-  two places: the favorites list's bulk refresh and the thread footer's
-  refresh button. The refresh-error notice (non-blocking danger text
-  under the sticky title, saved posts still shown below) can therefore
-  appear only after a failed manual refresh — never on entry.
+- **Zero-fetch entry (ChMate model):** entering a screen — the favorites
+  list on mount **or** a thread — paints from SQLite immediately, with
+  **zero fetch to 5ch**: no mount-time auto-refresh, no entry-time
+  reload, no background warm-up, and therefore **no loading chrome on
+  entry** (no spinner, no skeleton: the spinner recipe is reserved for
+  real waits, and entry has none by design). Fetching new posts happens
+  in exactly two UI places — the favorites footer's bulk refresh button
+  and the thread footer's refresh button; the server-side background
+  sync also fetches, but it is invisible to the UI and never adds
+  chrome. The refresh-error notice (non-blocking danger text under the
+  sticky title, saved posts still shown below) can therefore appear only
+  after a failed manual refresh — never on entry.
 - **Pull-to-refresh:** there is **no custom pull gesture anywhere** —
   a pull is delegated to the browser's native gesture and is simply a
-  full page reload. Because thread entry renders the saved dat without
-  touching 5ch, a native pull is **not an update gesture**: it re-renders
-  saved data, and updating is exclusively the job of the refresh buttons
-  (list = bulk board refresh, thread footer = manual reload). The former
-  quiet-panel recipe is retired. Consequently `overscroll-behavior` must
-  **never** be set to `contain`/`none` on html/body or on internal scroll
-  containers (e.g. the thread view's scrollable body): the scroll chain
-  to the document has to stay open or the native gesture cannot fire.
+  full page reload. Because entry (list and thread alike) renders saved
+  data without touching 5ch, a native pull is **not an update gesture**:
+  it re-renders saved data, and updating is exclusively the job of the
+  refresh buttons (list = bulk board refresh, thread footer = manual
+  reload). The former quiet-panel recipe is retired. Consequently
+  `overscroll-behavior` must **never** be set to `contain`/`none` on
+  html/body or on internal scroll containers (e.g. the thread view's
+  scrollable body): the scroll chain to the document has to stay open
+  or the native gesture cannot fire.
 
 ## Do's and Don'ts
 
@@ -182,9 +192,12 @@ Domain components on top of the Sumi recipes:
   the e-paper theme; darkness carries the level, hue is a secondary cue.
 - Don't reintroduce custom pull-to-refresh UI or `overscroll-behavior`
   containment — native browser pull-to-refresh is the spec.
-- Don't put any network wait between thread entry and first paint, and
-  don't add loading chrome (spinner/skeleton) to entry — entry renders
-  the saved dat instantly; refresh affordances are the footer buttons.
+- Don't put any network wait between entry (favorites list mount or
+  thread open) and first paint, and don't add loading chrome
+  (spinner/skeleton) to entry — entry renders saved SQLite data
+  instantly; refresh affordances are the footer buttons.
+- Don't show an unread count that the saved dat cannot honor — the badge
+  is dat-backed; subject.txt growth alone must never move it.
 - Don't suppress text selection of res bodies on fine-pointer (PC)
   environments — the body is the reading surface; selection suppression
   is a touch-only concession to the long-press menu, always paired with

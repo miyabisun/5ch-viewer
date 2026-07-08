@@ -1,16 +1,23 @@
-//! Background monitoring. Polls only subject.txt per board to update
-//! res_count, determine end-of-thread, and auto-add the next thread (does not fetch the dat body).
+//! Background monitoring. Per board it runs the SAME board-refresh path as the manual refresh
+//! button (one subject.txt read + a dat DL for every thread that grew past its stored blob),
+//! then uses the fetched subject entries to determine end-of-thread and auto-add the next
+//! thread. res_count is written only by persist_fetch (blob-derived); this poller never writes
+//! res_count from subject.txt — see the invariant note on process_thread.
 
 use crate::error::AppError;
-use crate::fivech::http;
 use crate::fivech::next_thread::find_next_thread;
-use crate::fivech::refresh::compute_status;
+use crate::fivech::refresh::{self, compute_status};
 use crate::fivech::subject::SubjectEntry;
 use crate::state::AppState;
 use std::collections::HashMap;
 use std::time::Duration;
 
-const INTERVAL: Duration = Duration::from_secs(60);
+// 3 minutes. Each tick now downloads dat bodies (not just subject.txt), so it costs more than
+// the old subject-only poll; but mount-time auto-refresh was removed (visits hit only SQLite),
+// so total 5ch access is lower. 3 min keeps unread-reflection latency practical while bounding
+// per-board subject reads. tokio's interval fires the first tick immediately, so a poll runs at
+// startup and dats are already warm by the first visit.
+const INTERVAL: Duration = Duration::from_secs(180);
 
 /// Watch query shared by run_once() and its tests.
 ///
@@ -79,19 +86,22 @@ async fn run_once(state: &AppState) -> Result<(), AppError> {
     }
 
     for ((server, board), threads) in by_board {
-        match http::fetch_subject(&state.http, &state.config.fivech_base_url, &server, &board).await {
-            Ok(entries) => {
-                for w in &threads {
-                    // dead rows are read-only: search for the next thread but never write back
-                    // to the dead row (touching updated_at would extend the 7-day window forever).
-                    if w.status == "dead" {
-                        try_add_next_thread(state, &server, &board, w, &entries);
-                    } else {
-                        process_thread(state, &server, &board, w, &entries);
-                    }
-                }
+        // Shared with the manual refresh button: one subject read + a dat DL for every grown
+        // thread (persist_fetch writes res_count/status/title from the blob). None = the board
+        // could not be refreshed (already logged); skip its state transitions this tick.
+        let Some((entries, _fetched)) =
+            refresh::refresh_board_with_subject(state, &server, &board).await
+        else {
+            continue;
+        };
+        for w in &threads {
+            // dead rows are read-only: search for the next thread but never write back
+            // to the dead row (touching updated_at would extend the 7-day window forever).
+            if w.status == "dead" {
+                try_add_next_thread(state, &server, &board, w, &entries);
+            } else {
+                process_thread(state, &server, &board, w, &entries);
             }
-            Err(e) => tracing::warn!("[sync] subject {server}/{board}: {e}"),
         }
     }
     Ok(())
@@ -100,23 +110,20 @@ async fn run_once(state: &AppState) -> Result<(), AppError> {
 fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entries: &[SubjectEntry]) {
     let found = entries.iter().find(|e| e.thread_id == w.thread_id);
 
-    // Reflect the state from subject. If absent from subject, treat as dropped (dead).
-    // in_danger = true when status is warned or dead (res>=980) OR the thread has vanished
-    // from subject.txt. At this point we start looking for the next thread in subject.
+    // Decide whether we entered the danger zone (start next-thread search). If absent from
+    // subject, treat as dropped (dead). in_danger = true when the subject res_count is at
+    // warned/dead (>=980) OR the thread has vanished from subject.txt.
     // (Matches sentinel's behaviour: warned branch at res>=980 triggers findNextThread.)
+    //
+    // INVARIANT: subject's res_count is used ONLY to detect the danger zone here. It is NEVER
+    // written to favorites — res_count reflects the stored blob's real post count, and its only
+    // writer is persist_fetch (called by refresh_board_with_subject when the dat is downloaded
+    // just above). Because a growing subject count means the blob grows too, the grown dat is
+    // fetched and persist_fetch stamps the blob-derived res_count/status/title. This is what
+    // kills the "res_count drifts from the blob" class of bug by construction.
     let in_danger = match found {
         Some(e) => {
             let status = compute_status(e.res_count);
-            let conn = state.db.lock().unwrap();
-            if let Err(err) = conn.execute(
-                "UPDATE favorites SET res_count=?4,
-                 title = CASE WHEN title='' THEN ?5 ELSE title END,
-                 status=?6, updated_at=strftime('%s','now')
-                 WHERE server=?1 AND board=?2 AND thread_id=?3",
-                rusqlite::params![server, board, w.thread_id, e.res_count, e.title, status],
-            ) {
-                tracing::error!("[sync] update {server}/{board}/{}: {err}", w.thread_id);
-            }
             // Enter danger zone at warned (res>=980), not only at dead.
             status == "warned" || status == "dead"
         }
@@ -176,13 +183,15 @@ fn try_add_next_thread(state: &AppState, server: &str, board: &str, w: &Watch, e
         // INSERT OR IGNORE prevents duplicates structurally; the affected-row count tells us
         // whether this was a new registration (rating inherited from the current thread,
         // viewer-specific) or an already-registered next thread (skipped, no log noise).
+        // res_count is intentionally omitted (schema DEFAULT 0): the next thread enters with
+        // res_count=0 and only gains a real count once the poll downloads its dat and
+        // persist_fetch writes the blob count. Seeding subject's count here would violate the
+        // "res_count == blob post count" invariant.
         match conn.execute(
             "INSERT OR IGNORE INTO favorites
-             (server, board, thread_id, board_name, title, res_count, rating)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![
-                server, board, next.thread_id, board_name, next.title, next.res_count, w.rating
-            ],
+             (server, board, thread_id, board_name, title, rating)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![server, board, next.thread_id, board_name, next.title, w.rating],
         ) {
             Err(err) => {
                 tracing::error!("[sync] auto-add next {server}/{board}/{}: {err}", next.thread_id);
@@ -312,12 +321,18 @@ mod tests {
         assert_eq!(count_after, 1, "no next thread should be auto-added for archived threads");
     }
 
-    /// process_thread updates res_count (and status) for an active, non-archived thread
-    /// still present in subject.txt below the warned threshold.
+    /// INVARIANT: process_thread must NOT write res_count from subject.txt. res_count reflects
+    /// the stored blob's real post count (persist_fetch is its only writer). A subject entry
+    /// showing more posts than the blob must not, on its own, move favorites.res_count — the dat
+    /// download + persist_fetch is what moves it. This is the design that kills the res_count/blob
+    /// drift class of bug (the old stuck-at-111 bug).
     #[test]
-    fn process_thread_updates_res_count_for_active_non_archived() {
+    fn process_thread_does_not_write_res_count_from_subject() {
         let conn = setup();
         insert_fav_with_rating(&conn, "1001", "アクティブ", "active", 0);
+        // The blob-derived baseline: 10 posts.
+        conn.execute("UPDATE favorites SET res_count=10 WHERE thread_id='1001'", [])
+            .unwrap();
 
         let state = make_state(conn);
         let w = super::Watch {
@@ -328,7 +343,8 @@ mod tests {
             rating: 0,
             status: "active".to_string(),
         };
-        // res_count=42 is below the warned threshold (980), so no next-thread search runs.
+        // subject claims 42, but the blob still holds 10 and no dat was downloaded: res_count
+        // must stay 10.
         let entries = vec![subject_entry("1001", "アクティブ", 42)];
 
         super::process_thread(&state, "egg", "applism", &w, &entries);
@@ -341,7 +357,43 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(res_count, 42);
+        assert_eq!(res_count, 10, "subject count alone must not move res_count");
+    }
+
+    /// INVARIANT: an auto-added next thread is registered with res_count=0 (schema default),
+    /// NOT the subject's reported count. Its res_count only becomes non-zero once the poll
+    /// downloads its dat and persist_fetch writes the blob count.
+    #[test]
+    fn process_thread_registers_next_thread_with_zero_res_count() {
+        let conn = setup();
+        insert_fav_with_rating(&conn, "1000000001", "ブルアカ Part5862", "active", 3);
+
+        let state = make_state(conn);
+        let w = super::Watch {
+            server: "egg".to_string(),
+            board: "applism".to_string(),
+            thread_id: "1000000001".to_string(),
+            title: "ブルアカ Part5862".to_string(),
+            rating: 3,
+            status: "active".to_string(),
+        };
+        // Current thread warned (995); next thread present in subject with a non-zero count (777).
+        let entries = vec![
+            subject_entry("1000000001", "ブルアカ Part5862", 995),
+            subject_entry("1000000002", "ブルアカ Part5863", 777),
+        ];
+
+        super::process_thread(&state, "egg", "applism", &w, &entries);
+
+        let conn = state.db.lock().unwrap();
+        let res_count: i64 = conn
+            .query_row(
+                "SELECT res_count FROM favorites WHERE thread_id='1000000002'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(res_count, 0, "next thread must register with res_count=0, not subject's 777");
     }
 
     // --- process_thread warned-trigger tests ---

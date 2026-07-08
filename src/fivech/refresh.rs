@@ -14,6 +14,7 @@
 use crate::error::AppError;
 use crate::fivech::dat::{count_dat_posts, parse_dat, title_from_dat};
 use crate::fivech::http::{self, DatFetch};
+use crate::fivech::subject::SubjectEntry;
 use crate::state::AppState;
 use rusqlite::{params, OptionalExtension};
 use std::collections::HashMap;
@@ -44,20 +45,39 @@ struct BoardThread {
 
 /// Refreshes every non-dead favorite on `board` using one subject.txt read.
 ///
-/// Returns the number of dats actually fetched (for diagnostics/tests). Failures are logged,
-/// never silently swallowed: a subject failure aborts the board (we cannot prove what grew),
-/// and a per-thread dat failure is logged and skipped (other threads still refresh).
+/// Returns the number of dats actually fetched (for diagnostics/tests). Thin wrapper over
+/// [`refresh_board_with_subject`], which owns the shared subject-read + bulk-dat-DL logic
+/// (also used by background sync so the two paths never disagree).
 pub async fn refresh_board(state: &AppState, server: &str, board: &str) -> usize {
+    refresh_board_with_subject(state, server, board)
+        .await
+        .map_or(0, |(_entries, fetched)| fetched)
+}
+
+/// Board refresh core: one subject.txt read, then a dat DL for every thread that grew past
+/// the count held in its blob. Returns the fetched subject entries (so the background sync
+/// state machine can drive next-thread search from the same read) and the number of dats
+/// actually downloaded. Returns `None` when the board could not be refreshed (db error or a
+/// subject fetch failure — we cannot prove what grew).
+///
+/// The subject is always fetched, even when no non-dead thread needs refreshing, because sync
+/// still needs the entries to search for the successors of recently-dead threads. `refresh_all`
+/// only ever calls this for boards that have a live favorite, so no wasted subject reads there.
+///
+/// Failures are logged, never silently swallowed: a subject failure aborts the board, and a
+/// per-thread dat failure is logged and skipped (other threads still refresh).
+pub async fn refresh_board_with_subject(
+    state: &AppState,
+    server: &str,
+    board: &str,
+) -> Option<(Vec<SubjectEntry>, usize)> {
     let threads = match collect_board_threads(state, server, board) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("[refresh] db {server}/{board}: {e}");
-            return 0;
+            return None;
         }
     };
-    if threads.is_empty() {
-        return 0;
-    }
 
     // One subject.txt read covers the whole board.
     let entries = match http::fetch_subject(&state.http, &state.config.fivech_base_url, server, board)
@@ -66,7 +86,7 @@ pub async fn refresh_board(state: &AppState, server: &str, board: &str) -> usize
         Ok(e) => e,
         Err(e) => {
             tracing::warn!("[refresh] subject {server}/{board}: {e}");
-            return 0;
+            return None;
         }
     };
     let subject: HashMap<&str, i64> =
@@ -82,7 +102,7 @@ pub async fn refresh_board(state: &AppState, server: &str, board: &str) -> usize
             fetched += 1;
         }
     }
-    fetched
+    Some((entries, fetched))
 }
 
 /// Fetches and persists one thread's dat (full GET + blob replace, or mark dead on 404).
@@ -372,6 +392,36 @@ mod tests {
             threads.is_empty(),
             "all-archived board must yield empty list so no 5ch request is made"
         );
+    }
+
+    /// Invariant (the stuck-at-111 class of bug, killed by design): persist_fetch is the
+    /// single writer of favorites.res_count, and it writes the real post count parsed from the
+    /// freshly downloaded blob — never a stale value. A pre-existing res_count (here 111) must
+    /// be overwritten with the blob's actual count.
+    #[test]
+    fn persist_fetch_sets_res_count_to_blob_post_count() {
+        let conn = setup();
+        insert_fav(&conn, "1001", "active", 0);
+        // Seed a stale/drifted res_count to prove persist_fetch overwrites it with the blob count.
+        conn.execute("UPDATE favorites SET res_count=111 WHERE thread_id='1001'", [])
+            .unwrap();
+        let state = make_state(conn);
+
+        // 3-post dat (ASCII bytes: decode_shift_jis is a no-op on ASCII; no image URLs so no
+        // background spawn is triggered). parse_dat counts exactly 3 posts.
+        let bytes = b"name<>mail<>date ID:a<>body1<>title\n\
+                      name<>mail<>date ID:b<>body2<>\n\
+                      name<>mail<>date ID:c<>body3<>\n"
+            .to_vec();
+        let updated =
+            persist_fetch(&state, "egg", "applism", "1001", DatFetch::Replace { bytes }).unwrap();
+        assert!(updated, "a non-empty Replace must report an update");
+
+        let conn = state.db.lock().unwrap();
+        let res_count: i64 = conn
+            .query_row("SELECT res_count FROM favorites WHERE thread_id='1001'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(res_count, 3, "res_count must equal the blob's real post count, not the stale 111");
     }
 
     // --- compute_status threshold tests (sentinel parity) ---

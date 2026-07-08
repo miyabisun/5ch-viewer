@@ -125,9 +125,12 @@ novel-server を踏襲し、**1 つの Rust バイナリ**でフロント配信�
 | スレを開く / 下に引っ張ってリロード | 該当スレの dat を Range 差分取得 |
 | お気に入り登録 | 板の SETTING.TXT を 1 回（board_name 取得） |
 | スレタイ検索 | ff5ch.syoboi.jp をラップ（第三者） |
-| バックグラウンド監視 | 板の subject.txt（板単位で 1 回・共有） |
+| 更新ボタン（一括更新） | 板ごとに subject.txt を 1 回 + 伸びたスレの dat のみ DL |
+| バックグラウンド監視 | 更新ボタンと同じ経路（板 subject.txt 1 回 + 伸びた dat DL） |
 
-ページを開いただけで全お気に入りを一括更新するような無人ポーリングはしない。
+一覧ページを開いただけでは 5ch へ一切アクセスしない（SQLite の内容だけで即描画）。
+一括チェック（subject + 伸びた dat）が走るのは更新ボタン押下時とバックグラウンド巡回のみ。
+ブラウザ標準の引っ張り更新はページ再読み込み＝再描画（GET /api/favorites のみ）になる。
 
 ### 6.3 dat の Range 差分取得と整合性（4層防御）
 
@@ -218,10 +221,19 @@ CREATE TABLE IF NOT EXISTS dat_blobs (
   分解。登録時に SETTING.TXT で board_name を取得。
 
 ### 8.3 スレッド監視・次スレ自動取得（sentinel 移植）
-バックグラウンドで `tokio::time::interval`（60 秒）により:
+バックグラウンドで `tokio::time::interval`（180 秒）により、更新ボタンと同じ板更新経路
+（`refresh_board_with_subject`）を板ごとに実行:
 1. favorites を板単位にグループ化、板ごとに subject.txt を 1 回取得（共有）。
-2. 各スレの res_count を更新、閾値で warned/dead 遷移。
-3. warned/dead で subject から次スレを検出し、見つかれば rating 継承で自動追加。
+2. subject 件数 > 保存 blob 件数のスレのみ dat を DL し、blob を置換。
+3. `persist_fetch` が blob の実レス数から res_count/status/title を更新（唯一の書き手）。
+4. warned/dead で subject から次スレを検出し、見つかれば rating 継承で自動追加。
+
+**不変条件**: `favorites.res_count` は保存済み dat（blob）の実レス数のみを反映する。
+subject.txt の数字だけで res_count を動かすことはない（`persist_fetch` が唯一の書き手）。
+これにより「res_count と blob の乖離」（過去の stuck-at-111 系バグ）が設計上発生しない。
+subject 由来の res_count は needs_fetch ゲート・warned/dead 判定・次スレ探索の参照専用。
+次スレ・find-next で新規登録するスレの res_count は初期値 0（DEFAULT）で入り、巡回が dat を
+落とした時に blob 件数へ更新される。
 
 dead 化したスレも「次スレ探索のみ」を最終更新から 7 日間だけ継続する（dead 化の tick
 より後に次スレが立つ取りこぼしレース対策）。この探索は read-only で dead 行の
@@ -232,7 +244,9 @@ res_count/status/updated_at を書き換えない（updated_at を触ると 7 �
 手動救済として `POST …/{…}/find-next` を用意（ユーザー操作起点、subject 1 回取得）。
 dead/archived でも呼べる。
 
-監視は subject.txt のみ取得（dat 本体はユーザーが開いた時だけ）。
+巡回間隔 180 秒: dat 本体まで落とすため 1 tick のコストは上がるが、一覧マウント時の
+自動更新を廃止した（訪問時アクセス 0）ぶん総アクセスは減る。interval の初回 tick は
+即発火するので起動直後に 1 回巡回が走り、初回訪問時点で dat がウォームになる。
 
 ### 8.4 次スレ判定（`find-next-thread` 移植）
 1. タイトル中の数字を位置付きで全抽出。

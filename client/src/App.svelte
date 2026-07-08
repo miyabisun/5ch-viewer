@@ -46,14 +46,15 @@
   }
 
   // Board-level prefetch then re-list so freshly downloaded counts surface.
+  // Triggered ONLY by the footer refresh button (never on mount) — visiting the
+  // list makes no 5ch access; see onMount.
   //
   // The server returns from /refresh *immediately* and does the heavy work
   // (subject.txt per board + bulk dat DL) in the background, so re-listing the
   // instant /refresh resolves would race the DL and still show stale counts.
   // We therefore re-list after a short delay to let the background DL land in the
   // DB. This is best-effort surfacing, not a correctness guarantee: very slow DLs
-  // may not be reflected until the next manual list refresh (e.g. reopening the
-  // list), which is acceptable for a warm-on-open hint.
+  // may not be reflected until the next re-list, which is acceptable.
   //
   // Fire-and-forget: a refresh failure must not block the list (the stored
   // favorites still render). The timer is cleared on unmount.
@@ -96,11 +97,10 @@
     // apply the initial route. Use replaceState to normalize the entry.
     const route = parseLocation()
     replace(route)
-    load().then(() => {
-      applyRoute(route)
-      // Warm favorites in the background (board-level subject + bulk dat).
-      refreshAndReload()
-    })
+    // Visiting the list makes NO 5ch access: render straight from SQLite (GET /api/favorites).
+    // The bulk check (subject + grown dat) is triggered only by the footer refresh button or
+    // the background poll — never on mount. A browser pull-to-refresh just re-renders this way.
+    load().then(() => applyRoute(route))
     loadNgIds()
     loadNgWacchoi()
 

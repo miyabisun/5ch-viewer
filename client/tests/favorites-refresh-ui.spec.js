@@ -35,7 +35,9 @@ test('footer refresh button is visible on the favorites list', async ({ page }) 
   expect((await btn.textContent()).trim()).toBe('')
 })
 
-test('pressing the refresh button calls POST /api/favorites/refresh', async ({ page }) => {
+// Invariant: visiting the list makes NO 5ch access. Mounting must fire GET /api/favorites
+// only — never POST /api/favorites/refresh. The bulk check is the footer button's job.
+test('mount fires no refresh; the button triggers exactly one refresh', async ({ page }) => {
   let refreshCount = 0
   await page.route('**/api/favorites', (route) => route.fulfill({ json: FAVS }))
   await page.route('**/api/favorites/refresh', (route) => {
@@ -44,12 +46,32 @@ test('pressing the refresh button calls POST /api/favorites/refresh', async ({ p
   })
   await page.goto('/')
 
-  // Wait for the initial auto-refresh (fired on mount) to complete.
-  await expect.poll(() => refreshCount).toBeGreaterThanOrEqual(1)
-  const countBefore = refreshCount
+  // Mount rendered the list, but no refresh was issued.
+  await expect(page.getByTestId('favorites-refresh-btn')).toBeVisible()
+  await page.waitForTimeout(300)
+  expect(refreshCount).toBe(0)
 
+  // Pressing the footer button issues exactly one refresh.
   await page.getByTestId('favorites-refresh-btn').click()
-  await expect.poll(() => refreshCount).toBeGreaterThan(countBefore)
+  await expect.poll(() => refreshCount).toBe(1)
+})
+
+// Invariant: the unread badge reflects only the SQLite res_count (blob-derived). On mount no
+// refresh runs, so a thread whose subject grew but whose dat is not yet downloaded shows the
+// stored unread count, not the subject count.
+test('mount shows unread from stored res_count without fetching the subject', async ({ page }) => {
+  let refreshCount = 0
+  // Stored res_count=10, read_res=5 -> unread 5. (Subject may say 20 upstream, but until the
+  // dat is downloaded res_count stays 10, so the badge must read 5 — never 15.)
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: FAVS }))
+  await page.route('**/api/favorites/refresh', (route) => {
+    refreshCount++
+    route.fulfill({ json: { ok: true, boards: 0 } })
+  })
+  await page.goto('/')
+
+  await expect(page.locator('.unread')).toHaveText('5')
+  expect(refreshCount).toBe(0)
 })
 
 test('refresh button is disabled while refreshing', async ({ page }) => {
@@ -61,9 +83,8 @@ test('refresh button is disabled while refreshing', async ({ page }) => {
 
   const btn = page.getByTestId('favorites-refresh-btn')
   await expect(btn).toBeVisible()
-
-  // Wait for auto-refresh on mount to complete so it doesn't interfere.
-  await expect(btn).toBeEnabled({ timeout: 6000 })
+  // No mount auto-refresh: the button is enabled immediately.
+  await expect(btn).toBeEnabled()
 
   // Click — button should become disabled immediately.
   await btn.click()
@@ -85,7 +106,7 @@ test('after refresh, GET /api/favorites is called again', async ({ page }) => {
   )
   await page.goto('/')
 
-  // Wait for initial load + warm refresh on mount.
+  // Only the initial mount load has run (no auto-refresh re-list).
   await expect(page.getByTestId('favorites-refresh-btn')).toBeVisible()
   await page.waitForTimeout(200)
   const countBefore = listCount

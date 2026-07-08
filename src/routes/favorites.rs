@@ -4,6 +4,7 @@ use crate::fivech::images::extract_image_urls;
 use crate::fivech::next_thread::find_next_thread;
 use crate::fivech::post;
 use crate::fivech::refresh::{self, read_blob_posts};
+use crate::fivech::subject::SubjectEntry;
 use crate::fivech::url::{parse_thread_url, validate_ref};
 use crate::models::{
     AddRequest, ArchivedRequest, DatResponse, Favorite, PostRequest, ProgressRequest,
@@ -483,20 +484,13 @@ async fn find_next(
     let entries =
         http::fetch_subject(&state.http, &state.config.fivech_base_url, &server, &board).await?;
 
-    let next = match find_next_thread(&title, &entries) {
-        Some(n) => n.clone(),
-        None => return Ok(Json(json!({ "found": false }))),
-    };
-
-    {
+    let next = {
         let conn = state.db.lock().unwrap();
-        conn.execute(
-            "INSERT OR IGNORE INTO favorites
-             (server, board, thread_id, board_name, title, res_count, rating)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![server, board, next.thread_id, board_name, next.title, next.res_count, rating],
-        )?;
-    }
+        match register_next_thread(&conn, &server, &board, &board_name, rating, &title, &entries)? {
+            Some(n) => n,
+            None => return Ok(Json(json!({ "found": false }))),
+        }
+    };
 
     Ok(Json(json!({
         "found": true,
@@ -505,6 +499,36 @@ async fn find_next(
         "thread_id": next.thread_id,
         "title": next.title,
     })))
+}
+
+/// Registers the successor of `source_title` (Part number +1) if it is present in `entries`,
+/// inheriting `rating` and `board_name` (INSERT OR IGNORE — no duplicates). Returns the matched
+/// next thread, or None when the successor is not yet posted.
+///
+/// res_count is intentionally omitted from the INSERT (schema DEFAULT 0): favorites.res_count
+/// only ever reflects the stored blob's real post count, so the next thread enters at 0 and
+/// gains a real count once the poll downloads its dat and persist_fetch writes the blob count.
+/// Seeding subject's count here would violate that invariant.
+fn register_next_thread(
+    conn: &rusqlite::Connection,
+    server: &str,
+    board: &str,
+    board_name: &str,
+    rating: i64,
+    source_title: &str,
+    entries: &[SubjectEntry],
+) -> Result<Option<SubjectEntry>, AppError> {
+    let next = match find_next_thread(source_title, entries) {
+        Some(n) => n.clone(),
+        None => return Ok(None),
+    };
+    conn.execute(
+        "INSERT OR IGNORE INTO favorites
+         (server, board, thread_id, board_name, title, rating)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![server, board, next.thread_id, board_name, next.title, rating],
+    )?;
+    Ok(Some(next))
 }
 
 /// Reads the raw dat text and returns URLs whose mosaic flag is set to 1.
@@ -635,6 +659,44 @@ mod tests {
         assert_eq!(res.len(), 2);
         assert_eq!(res[0].body, "本文1");
         assert_eq!(res[1].body, "本文2");
+    }
+
+    /// INVARIANT: register_next_thread (the "find next thread" rescue's insert) registers the
+    /// next thread with res_count=0 (schema default), NOT the subject's reported count. res_count
+    /// only ever reflects the stored blob; the poll downloads the dat and persist_fetch writes
+    /// the real count later.
+    #[test]
+    fn register_next_thread_uses_zero_res_count() {
+        use crate::fivech::subject::SubjectEntry;
+        let conn = setup();
+        // Source favorite is the fixture (THREAD, title ''); give it a searchable title.
+        conn.execute(
+            "UPDATE favorites SET title='ブルアカ Part5862' WHERE thread_id=?1",
+            params![THREAD],
+        )
+        .unwrap();
+
+        // subject lists the successor with a non-zero count (777) that must NOT be copied.
+        let entries = vec![
+            SubjectEntry { thread_id: "1000000002".into(), title: "ブルアカ Part5862".into(), res_count: 995 },
+            SubjectEntry { thread_id: "1000000003".into(), title: "ブルアカ Part5863".into(), res_count: 777 },
+        ];
+
+        let next = super::register_next_thread(
+            &conn, SERVER, BOARD, "板", 4, "ブルアカ Part5862", &entries,
+        )
+        .unwrap();
+        assert!(next.is_some(), "successor Part5863 must be found in subject");
+
+        let (res_count, rating): (i64, i64) = conn
+            .query_row(
+                "SELECT res_count, rating FROM favorites WHERE thread_id='1000000003'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(res_count, 0, "next thread must register with res_count=0, not subject's 777");
+        assert_eq!(rating, 4, "next thread must inherit the source rating");
     }
 
     /// Reads the stored status of the fixture favorite.
