@@ -459,6 +459,23 @@ async fn ctl_seed(State(app): State<AppState>, Json(c): Json<SeedCtl>) -> Json<b
     Json(true)
 }
 
+#[derive(Deserialize)]
+struct RefreshBoardCtl {
+    server: String,
+    board: String,
+}
+
+/// Test-only trigger for the board-level bulk refresh (`refresh::refresh_board`). Returns
+/// immediately and runs the subject + bulk-dat download in a spawned task, mirroring the old
+/// `POST /api/favorites/refresh` behavior so tests can poll the store for the result.
+async fn ctl_refresh_board(State(app): State<AppState>, Json(c): Json<RefreshBoardCtl>) -> Json<bool> {
+    tokio::spawn(async move {
+        let n = viewer_of_5ch::fivech::refresh::refresh_board(&app, &c.server, &c.board).await;
+        tracing::info!("[refresh] {}/{}: {n} dat(s) updated", c.server, c.board);
+    });
+    Json(true)
+}
+
 /// Wipes all seeded data so each test starts clean (the :memory: DB persists for the process).
 async fn ctl_reset(State(app): State<AppState>) -> Json<bool> {
     let conn = app.db.lock().unwrap();
@@ -561,6 +578,7 @@ async fn main() {
         .route("/_control/seed-favorite", post(ctl_seed))
         .route("/_control/seed-image", post(ctl_seed_image))
         .route("/_control/reset", post(ctl_reset))
+        .route("/_control/refresh-board", post(ctl_refresh_board))
         .with_state(app_state.clone());
     let app = control.merge(routes::build_router(app_state));
 

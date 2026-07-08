@@ -60,9 +60,9 @@ pub async fn refresh_board(state: &AppState, server: &str, board: &str) -> usize
 /// actually downloaded. Returns `None` when the board could not be refreshed (db error or a
 /// subject fetch failure — we cannot prove what grew).
 ///
-/// The subject is always fetched, even when no non-dead thread needs refreshing, because sync
-/// still needs the entries to search for the successors of recently-dead threads. `refresh_all`
-/// only ever calls this for boards that have a live favorite, so no wasted subject reads there.
+/// The subject is always fetched, even when no non-dead thread needs refreshing, because the
+/// background sync watch loop still needs the entries to search for the successors of
+/// recently-dead threads.
 ///
 /// Failures are logged, never silently swallowed: a subject failure aborts the board, and a
 /// per-thread dat failure is logged and skipped (other threads still refresh).

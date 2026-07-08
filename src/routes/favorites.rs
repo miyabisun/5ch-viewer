@@ -23,7 +23,6 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/favorites", get(list).post(add))
         .route("/api/archives", get(list_archives))
-        .route("/api/favorites/refresh", post(refresh_all))
         .route("/api/favorites/{server}/{board}/{thread_id}", delete(remove))
         .route("/api/favorites/{server}/{board}/{thread_id}/dat", get(get_dat))
         .route("/api/favorites/{server}/{board}/{thread_id}/reload", get(reload))
@@ -111,36 +110,6 @@ async fn add(
     Ok(Json(json!({
         "ok": true, "server": server, "board": board, "thread_id": thread_id,
     })))
-}
-
-/// Refreshes all favorites with one subject.txt read per board, downloading every grown
-/// dat in the background. Returns immediately so the list display is never blocked: the
-/// heavy work (subject + bulk dat) runs in a spawned task. Failures are logged inside
-/// `refresh_board` (never silently swallowed).
-async fn refresh_all(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
-    // Distinct (server, board) pairs that have at least one non-dead, non-archived favorite.
-    let boards: Vec<(String, String)> = {
-        let conn = state.db.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT server, board FROM favorites
-             WHERE status != 'dead' AND archived = 0",
-        )?;
-        let boards = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<Result<Vec<_>, _>>()?;
-        boards
-    };
-
-    let count = boards.len();
-    tokio::spawn(async move {
-        for (server, board) in boards {
-            let n = refresh::refresh_board(&state, &server, &board).await;
-            tracing::info!("[refresh] {server}/{board}: {n} dat(s) updated");
-        }
-    });
-
-    // The board count is informational; the work continues in the background.
-    Ok(Json(json!({ "ok": true, "boards": count })))
 }
 
 fn resolve_ref(req: &AddRequest) -> Result<(String, String, String), AppError> {

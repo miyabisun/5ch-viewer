@@ -48,10 +48,11 @@ test.beforeEach(async () => {
   await ctx.dispose()
 })
 
-// Board-level bulk prefetch through the REAL backend: three favorites on one board are all
-// behind 5ch (blob 100 / subject 130). One /api/favorites/refresh must fetch ALL three grown
-// dats and replace their blobs — with subject.txt read EXACTLY ONCE for the board (not per
-// thread).
+// Board-level bulk refresh (refresh_board) through the REAL backend: three favorites on one
+// board are all behind 5ch (blob 100 / subject 130). One refresh_board must fetch ALL three
+// grown dats and replace their blobs — with subject.txt read EXACTLY ONCE for the board (not
+// per thread). refresh_board is the auto-crawl's workhorse; the manual refresh UI is gone, so
+// the test drives it via the itest-only control endpoint /_control/refresh-board.
 test('refresh bulk-downloads every grown thread on a board with one subject read', async ({
   request,
 }) => {
@@ -61,7 +62,9 @@ test('refresh bulk-downloads every grown thread on a board with one subject read
   }
 
   // Trigger the board-level refresh (returns immediately; downloads run in the background).
-  const r = await request.post(`${APP_URL}/api/favorites/refresh`, { data: {} })
+  const r = await request.post(`${APP_URL}/_control/refresh-board`, {
+    data: { server: SERVER, board: BOARD },
+  })
   expect(r.ok()).toBeTruthy()
 
   // Every thread's stored dat must catch up to 130 (proves all grown dats were fetched).
@@ -77,7 +80,9 @@ test('refresh skips threads whose subject count did not grow', async ({ request 
   // subject matches the blob -> no growth. Mock would serve 999 IF asked.
   await programMockThread(request, THREADS[0], { res_count: 100, dat_posts: 999 })
 
-  const r = await request.post(`${APP_URL}/api/favorites/refresh`, { data: {} })
+  const r = await request.post(`${APP_URL}/_control/refresh-board`, {
+    data: { server: SERVER, board: BOARD },
+  })
   expect(r.ok()).toBeTruthy()
 
   // Give the background task time to run, then confirm the dat was NOT replaced.
@@ -90,5 +95,6 @@ test('refresh skips threads whose subject count did not grow', async ({ request 
 // Note: the open-time board prefetch (spawn_board_prefetch) was removed when the reload
 // endpoint was changed to use a HEAD gate instead of subject.txt. The reload endpoint no
 // longer reads subject.txt at all, so it has no basis to kick off a board-level prefetch.
-// Board-level bulk prefetch is now exclusively triggered by the explicit refresh button
-// (POST /api/favorites/refresh), tested in the two tests above.
+// Board-level bulk refresh (refresh_board) is now driven only by the background auto-crawl
+// (src/sync.rs); the two tests above cover it via the itest-only /_control/refresh-board
+// trigger, since the manual refresh UI and its POST /api/favorites/refresh route are gone.

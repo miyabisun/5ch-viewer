@@ -45,37 +45,6 @@
     }
   }
 
-  // Board-level prefetch then re-list so freshly downloaded counts surface.
-  // Triggered ONLY by the footer refresh button (never on mount) — visiting the
-  // list makes no 5ch access; see onMount.
-  //
-  // The server returns from /refresh *immediately* and does the heavy work
-  // (subject.txt per board + bulk dat DL) in the background, so re-listing the
-  // instant /refresh resolves would race the DL and still show stale counts.
-  // We therefore re-list after a short delay to let the background DL land in the
-  // DB. This is best-effort surfacing, not a correctness guarantee: very slow DLs
-  // may not be reflected until the next re-list, which is acceptable.
-  //
-  // Fire-and-forget: a refresh failure must not block the list (the stored
-  // favorites still render). The timer is cleared on unmount.
-  const REFRESH_RELIST_DELAY_MS = 1500
-  let relistTimer = null
-  function refreshAndReload() {
-    return api
-      .refreshFavorites()
-      .then(
-        () =>
-          new Promise((resolve) => {
-            relistTimer = setTimeout(() => {
-              load().finally(resolve)
-            }, REFRESH_RELIST_DELAY_MS)
-          }),
-      )
-      .catch((e) => {
-        console.error('[refresh]', e)
-      })
-  }
-
   // Find the matching favorite for a thread descriptor, or build a minimal
   // fav so a thread URL still opens even when it is not in the list.
   function favFor({ server, board, thread_id }) {
@@ -98,8 +67,8 @@
     const route = parseLocation()
     replace(route)
     // Visiting the list makes NO 5ch access: render straight from SQLite (GET /api/favorites).
-    // The bulk check (subject + grown dat) is triggered only by the footer refresh button or
-    // the background poll — never on mount. A browser pull-to-refresh just re-renders this way.
+    // There is no manual refresh UI; subject.txt/dat updates are the background auto-crawl's
+    // job (src/sync.rs). A browser pull-to-refresh just re-renders this way.
     load().then(() => applyRoute(route))
     loadNgIds()
     loadNgWacchoi()
@@ -108,7 +77,6 @@
     window.addEventListener('popstate', onpop)
     return () => {
       window.removeEventListener('popstate', onpop)
-      if (relistTimer) clearTimeout(relistTimer)
     }
   })
 
@@ -174,7 +142,7 @@
     {:else if page === 'archive'}
       <ArchiveList onopen={open} />
     {:else}
-      <FavoritesList {favorites} onopen={open} onchange={load} onrefresh={refreshAndReload} />
+      <FavoritesList {favorites} onopen={open} onchange={load} />
     {/if}
   </section>
 

@@ -110,8 +110,8 @@ hue remains only as a secondary cue. The Sumi side keeps the vivid hues.
   post count), never subject.txt alone — a visible count is a promise
   that tapping the row shows those posts instantly, with zero fetch.
   Rows whose dat has not yet been fetched (e.g. a freshly registered
-  next thread) render no badge until the background sync or a manual
-  refresh lands the dat.
+  next thread) render no badge until the background sync (or a manual
+  reload inside the opened thread) lands the dat.
 - **ID heat id-l2..l5 (blue → purple → magenta → deep red):** ID badge
   color by post count of the same ID in a thread; l5 additionally bold.
   A single-occurrence ID (level 1) renders muted with no color. On Washi
@@ -148,38 +148,44 @@ Domain components on top of the Sumi recipes:
   blur (40px in the full-screen viewer). The viewer itself uses a
   near-black backdrop with white quiet controls (template-sanctioned
   exception to the token rule).
-- **Sticky footer actions:** footer actions are Sumi icon buttons
+- **Sticky footer actions (thread view only):** the thread view is the
+  only screen with a sticky footer; **the favorites list has no footer
+  and no refresh affordance** — it is display-only, kept fresh by the
+  server-side background sync (`src/sync.rs`), so a manual bulk-refresh
+  button would only add 5ch load. Footer actions are Sumi icon buttons
   (36×36, default variant, 18px monochrome SVG, always `aria-label`) —
   never text+icon composites, never circular FABs. **Refresh
   (`refresh-cw`) always sits at the right edge** — it is the most
-  frequent action, so it gets the thumb-reach position; refresh buttons
-  disable while a refresh is in flight (disabled recipe: 50% opacity,
-  no extra spinner required). In the thread view the write action
-  (pencil) sits at the left edge; the submit button inside the post
-  modal is the screen's single primary (accent) button.
+  frequent action, so it gets the thumb-reach position; the refresh
+  button disables while a refresh is in flight (disabled recipe: 50%
+  opacity, no extra spinner required). The write action (pencil) sits
+  at the left edge; the submit button inside the post modal is the
+  screen's single primary (accent) button.
 - **Zero-fetch entry (ChMate model):** entering a screen — the favorites
   list on mount **or** a thread — paints from SQLite immediately, with
   **zero fetch to 5ch**: no mount-time auto-refresh, no entry-time
   reload, no background warm-up, and therefore **no loading chrome on
   entry** (no spinner, no skeleton: the spinner recipe is reserved for
   real waits, and entry has none by design). Fetching new posts happens
-  in exactly two UI places — the favorites footer's bulk refresh button
-  and the thread footer's refresh button; the server-side background
+  in exactly one UI place — the thread footer's refresh button (plus
+  the automatic reload right after posting); the server-side background
   sync also fetches, but it is invisible to the UI and never adds
   chrome. The refresh-error notice (non-blocking danger text under the
   sticky title, saved posts still shown below) can therefore appear only
-  after a failed manual refresh — never on entry.
+  after a failed manual refresh in the thread view — never on entry,
+  and never on the favorites list (which has no fetch to fail).
 - **Pull-to-refresh:** there is **no custom pull gesture anywhere** —
   a pull is delegated to the browser's native gesture and is simply a
   full page reload. Because entry (list and thread alike) renders saved
   data without touching 5ch, a native pull is **not an update gesture**:
-  it re-renders saved data, and updating is exclusively the job of the
-  refresh buttons (list = bulk board refresh, thread footer = manual
-  reload). The former quiet-panel recipe is retired. Consequently
-  `overscroll-behavior` must **never** be set to `contain`/`none` on
-  html/body or on internal scroll containers (e.g. the thread view's
-  scrollable body): the scroll chain to the document has to stay open
-  or the native gesture cannot fire.
+  it re-renders saved data. Updating is exclusively the job of the
+  thread footer's refresh button; the favorites list has no manual
+  update path at all — the background sync keeps it fresh. The former
+  quiet-panel recipe is retired. Consequently `overscroll-behavior`
+  must **never** be set to `contain`/`none` on html/body or on internal
+  scroll containers (e.g. the thread view's scrollable body): the
+  scroll chain to the document has to stay open or the native gesture
+  cannot fire.
 
 ## Do's and Don'ts
 
@@ -195,7 +201,10 @@ Domain components on top of the Sumi recipes:
 - Don't put any network wait between entry (favorites list mount or
   thread open) and first paint, and don't add loading chrome
   (spinner/skeleton) to entry — entry renders saved SQLite data
-  instantly; refresh affordances are the footer buttons.
+  instantly; the only refresh affordance is the thread footer's button.
+- Don't reintroduce a manual bulk-refresh UI (footer, button, or gesture)
+  on the favorites list — list freshness is the background sync's job;
+  a manual path only adds 5ch load and violates the display-only list.
 - Don't show an unread count that the saved dat cannot honor — the badge
   is dat-backed; subject.txt growth alone must never move it.
 - Don't suppress text selection of res bodies on fine-pointer (PC)

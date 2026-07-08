@@ -22,11 +22,6 @@ async function request(method, path, body, opts = {}) {
 
 export const api = {
   listFavorites: () => request('GET', '/api/favorites'),
-  // Board-level prefetch: one subject.txt per board, bulk-DL the grown dats. The server
-  // returns immediately and does the heavy work in the background, so this never blocks
-  // the list. Fire-and-forget from the UI.
-  refreshFavorites: () =>
-    request('POST', '/api/favorites/refresh', {}, { cache: 'no-store' }),
   addFavorite: (body) => request('POST', '/api/favorites', body),
   removeFavorite: (s, b, t) => request('DELETE', `/api/favorites/${s}/${b}/${t}`),
   getDat: (s, b, t) => request('GET', `/api/favorites/${s}/${b}/${t}/dat`),
