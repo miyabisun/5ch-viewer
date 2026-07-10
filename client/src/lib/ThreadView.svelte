@@ -1292,15 +1292,6 @@
        -webkit-touch-callout is a no-op on desktop, so it is applied unconditionally. */
     -webkit-touch-callout: none;
   }
-  /* Suppress text selection only on touch devices: on PC the body is a reading
-     surface and drag-select (partial copy) must be preserved. Touch loses
-     selection but the reply menu's "本文をコピー" compensates in all environments. */
-  @media (hover: none) and (pointer: coarse) {
-    .body {
-      user-select: none;
-      -webkit-user-select: none;
-    }
-  }
   :global(.anchor) {
     color: var(--link);
     cursor: pointer;
@@ -1318,7 +1309,7 @@
   }
   /* Inline wacchoi badge: inherits colour from .name so that per-res colour
      classes (id-l2..l5) applied to .name propagate without extra wrappers.
-     Clickable-badge affordance (cursor/non-selectable) is shared with .resid below. */
+     Clickable-badge affordance (cursor) is shared with .resid below. */
   :global(.wacchoi-badge) {
     color: inherit;
   }
@@ -1368,12 +1359,11 @@
   .id-l4 { color: var(--id-l4); }
   .id-l5 { color: var(--id-l5); font-weight: bold; }
 
-  /* Clickable badge affordance, shared by the ID badge and the wacchoi badge. */
+  /* Clickable-badge affordance, shared by the ID badge and the wacchoi badge.
+     Selection suppression is handled app-wide (DESIGN.md Touch text-selection policy). */
   .resid,
   :global(.wacchoi-badge) {
     cursor: pointer;
-    -webkit-touch-callout: none;
-    user-select: none;
   }
 
   /* NG post: header is struck-through + muted; body is not rendered. */

@@ -71,9 +71,9 @@
     border-radius: 8px;
     margin-bottom: 4px;
     cursor: pointer;
-    /* Disable the browser's long-press text selection / callout on touch. */
+    /* Prefer the custom long-press menu over the native callout (no-op on desktop).
+       Selection suppression is handled app-wide (DESIGN.md Touch text-selection policy). */
     -webkit-touch-callout: none;
-    user-select: none;
   }
   .thread.dead {
     opacity: 0.5;

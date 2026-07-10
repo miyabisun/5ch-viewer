@@ -113,14 +113,4 @@
   .modal-content::-webkit-scrollbar {
     display: none;
   }
-  /* On touch devices the modal often appears under a still-pressed finger
-     (long-press menus): without this the native selection latches onto the
-     button labels. PC keeps selection for copyable modal content. */
-  @media (hover: none) and (pointer: coarse) {
-    .modal {
-      user-select: none;
-      -webkit-user-select: none;
-      -webkit-touch-callout: none;
-    }
-  }
 </style>

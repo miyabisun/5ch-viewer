@@ -352,6 +352,24 @@
     background: var(--surface);
     color: var(--on-surface);
   }
+  /* Touch devices: suppress selection app-wide; only explicit text-entry fields
+     opt back in (DESIGN.md Touch text-selection policy). Modal/ImageViewer render
+     inline under <body>, so the body inheritance covers the whole app.
+     -webkit-user-select: text is required on iOS Safari (ancestor `none` otherwise
+     breaks selection inside inputs). */
+  @media (hover: none) and (pointer: coarse) {
+    :global(body) {
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    :global(input),
+    :global(textarea),
+    :global([contenteditable]:not([contenteditable='false'])) {
+      user-select: text;
+      -webkit-user-select: text;
+    }
+  }
   main {
     max-width: 720px;
     margin: 0 auto;

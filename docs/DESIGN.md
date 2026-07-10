@@ -124,30 +124,54 @@ hue remains only as a secondary cue. The Sumi side keeps the vivid hues.
 
 Domain components on top of the Sumi recipes:
 
+- **Touch text-selection policy (app-wide):** on coarse-pointer touch
+  devices — `@media (hover: none) and (pointer: coarse)` — the entire
+  app is non-selectable, from **one** global rule on `body` in
+  `client/src/App.svelte` (`user-select: none` +
+  `-webkit-user-select: none` + `-webkit-touch-callout: none`). It
+  covers everything by inheritance, including modals and the image
+  viewer (both render inline in the app DOM; no portals). The **only
+  exceptions are explicit text-entry fields** — `input`, `textarea`,
+  and enabled `contenteditable` — which restore
+  `user-select: text` / `-webkit-user-select: text` so typing, caret
+  placement, range selection and copy/paste work normally. Fine-pointer
+  (PC) environments are untouched: the media query never matches, so
+  drag selection of res bodies and modal text stays default. Components
+  must **not** re-declare touch `user-select` locally — the app-wide
+  rule is the single owner. Custom long-press targets (res body, thread
+  row) additionally keep an **unconditional element-level**
+  `-webkit-touch-callout: none` (a desktop no-op) so the custom menu
+  reliably beats the native callout regardless of inheritance quirks.
+  Every copy path lost to the touch suppression must be compensated by
+  an explicit menu copy action (本文をコピー, URL をコピー, ID コピー).
 - **Thread row (favorites/archive list):** Sumi list row + 4px left bar in
-  `rate-{n}`; dead threads at 50% opacity; unread pill trailing.
+  `rate-{n}`; dead threads at 50% opacity; unread pill trailing. The row
+  is a long-press-menu target: it keeps the unconditional
+  `-webkit-touch-callout: none` per the touch policy above.
 - **Res card (thread view):** Sumi card; unread/own state shown by the 3px
   left border (see Colors). NG posts (NG ID / NG wacchoi) render the
   header struck-through in muted with the body hidden entirely.
   **Res body context menu:** right-click (PC) or 500ms touch long-press
   on the body opens the reply menu — a standard Sumi context menu
   (modal, full-width default `.action` buttons) with 返信する and
-  本文をコピー. To keep the long-press reliable, body text selection is
-  suppressed **on coarse-pointer touch devices only**
-  (`-webkit-touch-callout: none` unconditionally; `user-select: none`
-  inside `@media (hover: none) and (pointer: coarse)`). PC drag-selection
-  of the reading surface is never suppressed — the body is Sumi's
-  reading surface — and the menu's copy-body action compensates for the
-  lost touch selection. The suppression applies uniformly to every res
-  body rendering (main list, anchor tree, ID/wacchoi search modals).
+  本文をコピー. The body keeps its unconditional element-level
+  `-webkit-touch-callout: none`; touch selection suppression comes from
+  the app-wide policy above. PC drag-selection is never suppressed —
+  the body is Sumi's reading surface — and the menu's copy-body action
+  compensates on touch. This applies uniformly to every res body
+  rendering (main list, anchor tree, ID/wacchoi search modals).
 - **Anchor tree modal:** depth-indented nodes with a 2px border-left guide;
   the pivot res is highlighted with an accent left border.
 - **ID / wacchoi badges:** caption-size, clickable (list modal), long-press
   or right-click opens the NG/copy/search menu. Color from the heat scale.
+  Clickable affordance is `cursor: pointer` only; non-selectability comes
+  from the app-wide touch policy.
 - **Image thumbnails:** 96×96 cover crop, 4px radius; mosaic state = 20px
   blur (40px in the full-screen viewer). The viewer itself uses a
   near-black backdrop with white quiet controls (template-sanctioned
-  exception to the token rule).
+  exception to the token rule). The viewer overlay stays
+  `user-select: none` unconditionally (both pointer types): it is a
+  lightbox, not a reading surface, and its counter text is chrome.
 - **Sticky footer actions (thread view only):** the thread view is the
   only screen with a sticky footer; **the favorites list has no footer
   and no refresh affordance** — it is display-only, kept fresh by the
@@ -207,7 +231,13 @@ Domain components on top of the Sumi recipes:
   a manual path only adds 5ch load and violates the display-only list.
 - Don't show an unread count that the saved dat cannot honor — the badge
   is dat-backed; subject.txt growth alone must never move it.
-- Don't suppress text selection of res bodies on fine-pointer (PC)
-  environments — the body is the reading surface; selection suppression
-  is a touch-only concession to the long-press menu, always paired with
-  a copy action in that menu.
+- Don't suppress text selection on fine-pointer (PC) environments — the
+  res body is the reading surface and modal text stays copyable there;
+  suppression is the app-wide **touch-only** policy (see Components),
+  always compensated by menu copy actions.
+- Don't scatter per-component `user-select` rules for touch — the
+  app-wide rule in `App.svelte` is the single owner. The only sanctioned
+  element-level declarations are `user-select: text` on text-entry
+  fields, the unconditional `-webkit-touch-callout: none` on custom
+  long-press targets, and the image viewer's unconditional
+  `user-select: none`.
