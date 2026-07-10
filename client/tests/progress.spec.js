@@ -156,11 +156,11 @@ test('opening a thread restores the saved read position (auto-scroll)', async ({
   await page.goto(THREAD_PATH)
   await expect(page.getByText('本文1', { exact: true })).toBeVisible()
 
-  // The page auto-scrolls to the saved read position (res 28), so it is visible
-  // and .thread-body is scrolled away from the top (new layout: thread-body is the
-  // sole scroll container on both PC and phone).
-  const target = page.locator('.res[data-res="28"]')
-  await expect(target).toBeInViewport()
+  // The page auto-scrolls so the "ここまで読んだ" boundary bar sits at the viewport
+  // top and the first unread res (29) starts reading just below it. read_res=28 (res28)
+  // is scrolled above the fold, so the anchor is the first unread res, not res28.
+  await expect(page.locator('[data-testid="read-boundary"]')).toBeAttached()
+  await expect(page.locator('.res[data-res="29"]')).toBeInViewport()
   await expect
     .poll(() => page.locator('.thread-body').evaluate((el) => el.scrollTop))
     .toBeGreaterThan(0)

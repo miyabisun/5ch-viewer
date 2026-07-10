@@ -160,6 +160,29 @@ Domain components on top of the Sumi recipes:
   the body is Sumi's reading surface — and the menu's copy-body action
   compensates on touch. This applies uniformly to every res body
   rendering (main list, anchor tree, ID/wacchoi search modals).
+- **Read-position dividers (thread view, ChMate model):** two hr-style
+  ruled lines rendered between res cards in the main list only — the
+  **read boundary** (label 「ここまで読んだ」) at the entry-time read
+  position, and the **thread end** (label 「おわり」) after the last res.
+  Both share one recipe: a full-width flex row of two 1px hairlines in
+  `border` with a centered caption-size (12px) `muted` label, 8px gap
+  between line and label, 8px vertical margin (4px scale), transparent
+  background. **They must read as a ruled line on the paper, never as a
+  res card**: no `surface-raised` background, no border-radius, no card
+  padding, no 3px left color bar, no data colors. They are static,
+  non-interactive chrome (not a reading surface, not a button, no focus
+  ring, no animation — Washi minimizes motion) and are **never**
+  read-tracking targets (no `.res` class, no IntersectionObserver
+  registration). Placement semantics: the boundary divider is frozen at
+  the entry baseline — it does not move while reading (scroll advancing
+  maxRead never moves it); a manual refresh may re-baseline it. It is
+  hidden when nothing is read yet (baseline 0) and omitted when
+  everything is read, leaving the thread-end divider alone — the two
+  dividers never render at the same position. The thread-end divider is
+  always present at the list tail whenever the dat has rendered. On
+  entry the viewport starts with the boundary divider at the top edge
+  (unread posts begin immediately below); with no unread, at the bottom
+  (thread-end visible); with nothing read, at the top of the thread.
 - **Anchor tree modal:** depth-indented nodes with a 2px border-left guide;
   the pivot res is highlighted with an accent left border.
 - **ID / wacchoi badges:** caption-size, clickable (list modal), long-press
@@ -231,6 +254,9 @@ Domain components on top of the Sumi recipes:
   a manual path only adds 5ch load and violates the display-only list.
 - Don't show an unread count that the saved dat cannot honor — the badge
   is dat-backed; subject.txt growth alone must never move it.
+- Don't style the read-position dividers as cards or give them data
+  colors — they are quiet ruled lines (`border` line, `muted` caption
+  label) and must never be mistaken for a res.
 - Don't suppress text selection on fine-pointer (PC) environments — the
   res body is the reading surface and modal text stays copyable there;
   suppression is the app-wide **touch-only** policy (see Components),

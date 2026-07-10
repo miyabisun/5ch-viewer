@@ -169,15 +169,29 @@ async fn post_progress(
 ) -> Result<Json<Value>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
     let conn = state.db.lock().unwrap();
-    let n = conn.execute(
-        "UPDATE favorites SET read_res=?4, updated_at=strftime('%s','now')
-         WHERE server=?1 AND board=?2 AND thread_id=?3",
-        params![server, board, thread_id, req.read_res],
-    )?;
+    let n = save_progress(&conn, &server, &board, &thread_id, req.read_res)?;
     if n == 0 {
         return Err(AppError::NotFound("favorite not found".into()));
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Saves the read position, monotonically. read_res is the max res number the viewer
+/// has read; MAX() guards against stale writes from another device (an open tab that
+/// debounces/beacons a lower value) rolling the position backward. Returns the number
+/// of updated rows (0 = not found).
+fn save_progress(
+    conn: &rusqlite::Connection,
+    server: &str,
+    board: &str,
+    thread_id: &str,
+    read_res: i64,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE favorites SET read_res=MAX(read_res, ?4), updated_at=strftime('%s','now')
+         WHERE server=?1 AND board=?2 AND thread_id=?3",
+        params![server, board, thread_id, read_res],
+    )
 }
 
 async fn patch_rating(
@@ -666,6 +680,44 @@ mod tests {
             .unwrap();
         assert_eq!(res_count, 0, "next thread must register with res_count=0, not subject's 777");
         assert_eq!(rating, 4, "next thread must inherit the source rating");
+    }
+
+    /// Reads the stored read_res of the fixture favorite.
+    fn read_read_res(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT read_res FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
+            params![SERVER, BOARD, THREAD],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    /// save_progress is monotonic: a stale, lower read_res (e.g. from another device's
+    /// open tab) must NOT roll the saved position backward.
+    #[test]
+    fn save_progress_does_not_regress() {
+        let conn = setup();
+        // Advance to 28.
+        let n = save_progress(&conn, SERVER, BOARD, THREAD, 28).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(read_read_res(&conn), 28);
+
+        // A stale lower write must be ignored (MAX guard).
+        save_progress(&conn, SERVER, BOARD, THREAD, 10).unwrap();
+        assert_eq!(read_read_res(&conn), 28, "read_res must not regress to 10");
+
+        // A higher write advances.
+        save_progress(&conn, SERVER, BOARD, THREAD, 40).unwrap();
+        assert_eq!(read_read_res(&conn), 40);
+    }
+
+    /// From the initial state (read_res=0) save_progress advances normally.
+    #[test]
+    fn save_progress_advances_from_zero() {
+        let conn = setup();
+        assert_eq!(read_read_res(&conn), 0, "fixture starts at read_res=0");
+        save_progress(&conn, SERVER, BOARD, THREAD, 15).unwrap();
+        assert_eq!(read_read_res(&conn), 15);
     }
 
     /// Reads the stored status of the fixture favorite.

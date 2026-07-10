@@ -29,6 +29,16 @@
   // Restore-on-open guard: scroll to the saved read position only after the first
   // successful load, never after a manual reload.
   let restored = $state(false)
+
+  // First unread res (num > readBaseline), or null when everything is read (or all
+  // unread: readBaseline 0). This is also the "ここまで読んだ" boundary anchor — null
+  // means no boundary bar (all read shows only the "おわり" bar; all unread none).
+  // readBaseline is the entry-time authority and does not move as maxRead advances,
+  // so the boundary bar stays anchored while scrolling (ChMate behaviour).
+  const firstUnreadNum = $derived.by(() => {
+    if (!data?.res || readBaseline < 1) return null
+    return data.res.find((r) => r.num > readBaseline)?.num ?? null
+  })
   // Post modal: open/close and form state.
   let postModalOpen = $state(false)
   let postMessage = $state('')
@@ -144,16 +154,19 @@
   $effect(() => {
     if (!data || restored) return
     restored = true
-    const target = Math.max(data.read_res, fav.read_res)
-    if (target < 1) return
+    // read_res=0 (all unread): stay at the top.
+    if (readBaseline < 1) return
     requestAnimationFrame(() => {
-      const node = document.querySelector(`.res[data-res="${target}"]`)
-      if (node) {
-        // scrollIntoView uses the nearest scrollable ancestor (.thread-body in the new layout).
-        node.scrollIntoView({ block: 'end' })
+      // Anchor the "ここまで読んだ" bar to the viewport top, so the bar is just visible
+      // and unread posts start reading right below it. The bar renders iff there is an
+      // unread res, so its absence means everything is read.
+      const boundary = document.querySelector('[data-testid="read-boundary"]')
+      if (boundary) {
+        // scrollIntoView uses the nearest scrollable ancestor (.thread-body).
+        boundary.scrollIntoView({ block: 'start' })
         return
       }
-      // Fallback: scroll .thread-body to the bottom.
+      // No unread (all read): scroll .thread-body to the bottom (the "おわり" bar shows).
       const body = document.querySelector('.thread-body')
       if (body) body.scrollTop = body.scrollHeight
     })
@@ -982,11 +995,22 @@
   <div class="thread-body" use:backSwipe>
     {#if data}
       {#each data.res as r (r.num)}
+        <!-- "ここまで読んだ" boundary bar: inserted before the first unread res.
+             Not a .res, so it stays off the IntersectionObserver / progress path. -->
+        {#if r.num === firstUnreadNum}
+          <div class="read-bar" data-testid="read-boundary" aria-hidden="true">
+            <span class="read-bar-label">ここまで読んだ</span>
+          </div>
+        {/if}
         <!-- own takes priority over unread: when r.own is true, unread class is not added -->
         <div class="res" use:track={r.num} class:unread={r.num > readBaseline && !r.own} class:own={r.own}>
           {@render resBody(r)}
         </div>
       {/each}
+      <!-- "おわり" bar: always at the tail of the loaded dat. -->
+      <div class="read-bar" data-testid="thread-end" aria-hidden="true">
+        <span class="read-bar-label">おわり</span>
+      </div>
     {/if}
   </div>
 
@@ -1253,6 +1277,28 @@
     overflow-y: auto;
     min-height: 0;
     padding: 4px 0;
+  }
+
+  /* Read boundary / end bar: a hr-like horizontal rule with a centred muted label.
+     Deliberately unlike a .res card (no surface bg, no radius, no left border) so it
+     never reads as a post. The label sits centred over the line. */
+  .read-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 4px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .read-bar::before,
+  .read-bar::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .read-bar-label {
+    flex-shrink: 0;
   }
 
   /* Res card: 8px radius (list-row scale), surface-raised on surface. */
