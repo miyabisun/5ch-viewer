@@ -128,6 +128,21 @@ fn post_result_from(resp: &Response) -> Option<PostResult> {
     })
 }
 
+/// Extracts the `ERROR: ...` reason line from a bbs.cgi error page body.
+/// Error pages carry the real reason as body text (e.g. `<b>ERROR: 余所でやってください。</b>`)
+/// while the `<title>` is just "ERROR!!" — so the body line is what must be surfaced.
+/// Searches for "ERROR:" (with colon) to skip the reason-less title text.
+/// Returns None when no such marker is present (not an error page).
+fn extract_error_reason(html: &str) -> Option<String> {
+    let start = html.find("ERROR:")?;
+    let rest = &html[start..];
+    // The reason line ends at the next tag; both "ERROR:" and '<' are ASCII so
+    // byte offsets always fall on char boundaries.
+    let end = rest.find('<').unwrap_or(rest.len());
+    let reason = rest[..end].trim();
+    (!reason.is_empty()).then(|| reason.to_string())
+}
+
 /// Determines whether the response is a confirmation page.
 fn is_confirmation(x_chx_error: Option<&str>, title: &str) -> bool {
     x_chx_error.is_some_and(|v| v.contains("0000") && v.contains("Confirmation"))
@@ -204,7 +219,8 @@ pub async fn post_message(
     let title1 = extract_title(&html1);
 
     if !is_confirmation(chx1.as_deref(), &title1) {
-        return Err(AppError::Upstream(format!("bbs.cgi: {title1}")));
+        let reason = extract_error_reason(&html1).unwrap_or(title1);
+        return Err(AppError::Upstream(format!("bbs.cgi: {reason}")));
     }
 
     // --- Confirmation page: extract feature and re-send ---
@@ -230,8 +246,8 @@ pub async fn post_message(
     // Neither attempt succeeded — read the second response body for a diagnostic message.
     let bytes2 = resp2.bytes().await.map_err(|e| AppError::Upstream(e.to_string()))?;
     let (html2, _, _) = encoding_rs::SHIFT_JIS.decode(&bytes2);
-    let title2 = extract_title(&html2);
-    Err(AppError::Upstream(format!("bbs.cgi (after confirmation): {title2}")))
+    let reason = extract_error_reason(&html2).unwrap_or_else(|| extract_title(&html2));
+    Err(AppError::Upstream(format!("bbs.cgi (after confirmation): {reason}")))
 }
 
 #[cfg(test)]
@@ -355,6 +371,33 @@ mod tests {
             title.contains("書きこみました"),
             "extract_title must not produce garbled text: got {title:?}"
         );
+    }
+
+    // --- extract_error_reason ---
+
+    /// Real bbs.cgi error pages put the reason in a body line; the title is just
+    /// "ERROR!!" (no colon) and must be skipped in favour of the body line.
+    #[test]
+    fn extract_error_reason_finds_body_line() {
+        let html = r##"<html><head><title>ERROR!!</title></head>
+<body bgcolor="#EFEFEF"><!-- _X:error -->
+<font size="+1" color="#FF0000"><b>ERROR: 本文がありません！</b></font>
+<ul>問い合わせID：<b> egg/a19e997e2cc1d3d9</b></ul></body></html>"##;
+        assert_eq!(
+            extract_error_reason(html),
+            Some("ERROR: 本文がありません！".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_error_reason_none_when_absent() {
+        assert_eq!(extract_error_reason("<html><body>ok</body></html>"), None);
+    }
+
+    #[test]
+    fn extract_error_reason_stops_at_next_tag() {
+        let html = "<b>ERROR: Rock54</b><p>rest</p>";
+        assert_eq!(extract_error_reason(html), Some("ERROR: Rock54".to_string()));
     }
 
     // --- is_confirmation ---
