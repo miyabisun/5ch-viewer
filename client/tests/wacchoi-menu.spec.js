@@ -99,6 +99,38 @@ test('right-click on wacchoi badge opens wacchoi-menu modal', async ({ page }) =
   // Right-click opens the wacchoi menu.
   await badge.click({ button: 'right' })
   await expect(page.locator('[data-testid="wacchoi-menu"]')).toBeVisible()
+  await expect(page.locator('[data-testid="reply-menu"]')).toHaveCount(0)
+})
+
+test('long-press on wacchoi badge opens only the wacchoi menu', async ({ page }) => {
+  await setupRoutes(page)
+  await page.goto(THREAD_PATH)
+  await expect(page.getByText('本文1')).toBeVisible()
+
+  const badge = page.locator('.wacchoi-badge').first()
+  await badge.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+  await page.waitForTimeout(550)
+  await badge.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+
+  await expect(page.locator('[data-testid="wacchoi-menu"]')).toBeVisible()
+  await expect(page.locator('[data-testid="reply-menu"]')).toHaveCount(0)
+})
+
+test('wacchoi tap still works after closing a reply menu opened from the res header', async ({ page }) => {
+  await setupRoutes(page)
+  await page.goto(THREAD_PATH)
+  await expect(page.getByText('本文1')).toBeVisible()
+
+  const num = page.locator('.res .num').first()
+  await num.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+  await page.waitForTimeout(550)
+  await num.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+  await num.dispatchEvent('click')
+  await expect(page.locator('[data-testid="reply-menu"]')).toBeVisible()
+  await page.getByRole('button', { name: '閉じる' }).click()
+
+  await page.locator('.wacchoi-badge').first().click()
+  await expect(page.locator('[data-testid="wacchoi-list"]')).toBeVisible()
 })
 
 test('wacchoi-menu modal header shows the wacchoi token', async ({ page }) => {

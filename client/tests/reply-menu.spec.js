@@ -23,8 +23,8 @@ function datResponse() {
     read_res: 0,
     status: 'active',
     res: [
-      { num: 1, name: '名無し', mail: '', date: '2025/01/01(水) 00:00:00.00', body: '一行目<br>二行目', id: null },
-      { num: 2, name: '名無し', mail: '', date: '2025/01/01(水) 00:01:00.00', body: '本文2', id: null },
+      { num: 1, name: '名無し', mail: '', date: '2025/01/01(水) 00:00:00.00', body: '一行目<br>二行目', id: 'TESTID1' },
+      { num: 2, name: '名無し', mail: '', date: '2025/01/01(水) 00:01:00.00', body: '短文<br>https://example.com/test.jpg', id: null },
     ],
   }
 }
@@ -47,6 +47,7 @@ async function setupRoutes(page) {
   await page.route('**/api/ng-wacchoi', (route) =>
     route.fulfill({ json: route.request().method() === 'GET' ? [] : { ok: true } }),
   )
+  await page.route('**/api/images/**', (route) => route.fulfill({ status: 200, body: '' }))
 }
 
 // --- Desktop context (default fine pointer): selection is preserved ---
@@ -70,6 +71,34 @@ test('desktop: right-click on .body opens the reply menu', async ({ page }) => {
 
   await page.locator('.body').first().click({ button: 'right' })
   await expect(page.locator('[data-testid="reply-menu"]')).toBeVisible()
+})
+
+test('desktop: right-click on the res header opens the reply menu', async ({ page }) => {
+  await setupRoutes(page)
+  await page.goto(THREAD_PATH)
+  await expect(page.getByText('二行目')).toBeVisible()
+
+  await page.locator('.res .num').first().click({ button: 'right' })
+  await expect(page.locator('[data-testid="reply-menu"]')).toBeVisible()
+})
+
+test('desktop: right-click on image-strip whitespace opens the reply menu', async ({ page }) => {
+  await setupRoutes(page)
+  await page.goto(THREAD_PATH)
+  await expect(page.locator('.thumb-strip')).toBeVisible()
+
+  await page.locator('.thumb-strip').dispatchEvent('contextmenu')
+  await expect(page.locator('[data-testid="reply-menu"]')).toBeVisible()
+})
+
+test('desktop: an image context menu does not bubble into the res menu', async ({ page }) => {
+  await setupRoutes(page)
+  await page.goto(THREAD_PATH)
+  await expect(page.locator('.thumb-btn')).toBeVisible()
+
+  await page.locator('.thumb-btn').click({ button: 'right' })
+  await expect(page.locator('[data-testid="image-menu"]')).toBeVisible()
+  await expect(page.locator('[data-testid="reply-menu"]')).toHaveCount(0)
 })
 
 test('reply menu keeps the 返信する action and opens the post modal', async ({ page }) => {
@@ -122,11 +151,65 @@ test.describe('mobile (touch)', () => {
     expect(userSelect).toBe('none')
   })
 
+  test('long-press on the res header opens the reply menu', async ({ page }) => {
+    await setupRoutes(page)
+    await page.goto(THREAD_PATH)
+    await expect(page.getByText('二行目')).toBeVisible()
+
+    const num = page.locator('.res .num').first()
+    await num.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+    await page.waitForTimeout(550)
+    await num.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+
+    await expect(page.locator('[data-testid="reply-menu"]')).toBeVisible()
+  })
+
+  test('long-press on image-strip whitespace opens the reply menu', async ({ page }) => {
+    await setupRoutes(page)
+    await page.goto(THREAD_PATH)
+    await expect(page.locator('.thumb-strip')).toBeVisible()
+
+    const strip = page.locator('.thumb-strip')
+    await strip.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+    await page.waitForTimeout(550)
+    await strip.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+
+    await expect(page.locator('[data-testid="reply-menu"]')).toBeVisible()
+  })
+
+  test('long-press on an image opens only the image menu', async ({ page }) => {
+    await setupRoutes(page)
+    await page.goto(THREAD_PATH)
+    await expect(page.locator('.thumb-btn')).toBeVisible()
+
+    const thumb = page.locator('.thumb-btn')
+    await thumb.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+    await page.waitForTimeout(550)
+    await thumb.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+
+    await expect(page.locator('[data-testid="image-menu"]')).toBeVisible()
+    await expect(page.locator('[data-testid="reply-menu"]')).toHaveCount(0)
+  })
+
+  test('long-press on an ID opens only the ID menu', async ({ page }) => {
+    await setupRoutes(page)
+    await page.goto(THREAD_PATH)
+    await expect(page.locator('.id-badge').first()).toBeVisible()
+
+    const badge = page.locator('.id-badge').first()
+    await badge.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+    await page.waitForTimeout(550)
+    await badge.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+
+    await expect(page.locator('[data-testid="id-menu"]')).toBeVisible()
+    await expect(page.locator('[data-testid="reply-menu"]')).toHaveCount(0)
+  })
+
   // Chromium drops -webkit-touch-callout entirely (unknown non-WebKit property):
   // it is absent from both getComputedStyle and the parsed CSSOM. The only
   // Chromium-observable proof is the raw built stylesheet source, so we fetch it
-  // and confirm the .body rule ships -webkit-touch-callout: none.
-  test('.body ships -webkit-touch-callout: none in the built CSS', async ({ page }) => {
+  // and confirm the .res rule ships -webkit-touch-callout: none.
+  test('.res ships -webkit-touch-callout: none in the built CSS', async ({ page }) => {
     await setupRoutes(page)
     await page.goto(THREAD_PATH)
     await expect(page.getByText('二行目')).toBeVisible()
@@ -136,7 +219,7 @@ test.describe('mobile (touch)', () => {
       const texts = await Promise.all(hrefs.map((h) => fetch(h).then((r) => r.text())))
       return texts.join('\n')
     })
-    // The scoped .body rule (any Svelte hash) must declare the callout suppression.
-    expect(css).toMatch(/\.body[^{}]*\{[^}]*-webkit-touch-callout:\s*none/)
+    // The scoped .res rule (any Svelte hash) must declare the callout suppression.
+    expect(css).toMatch(/\.res[^{}]*\{[^}]*-webkit-touch-callout:\s*none/)
   })
 })

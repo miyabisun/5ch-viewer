@@ -361,10 +361,10 @@
 
   // Body click (shared by list and modal). Follow the anchor or open wacchoi list when tapped.
   function onBodyClick(e) {
-    // After a long-press opened the reply menu, swallow the trailing click so it
+    // After a card long-press opened the reply menu, swallow the trailing click so it
     // does not follow an anchor / open a list on top of the menu.
-    if (bodyLongPressed) {
-      bodyLongPressed = false
+    if (cardLongPressed) {
+      cardLongPressed = false
       e.stopPropagation()
       return
     }
@@ -480,6 +480,7 @@
   let imagePressTimer
   let imageLongPressed = false
   function onThumbPointerDown(e, url) {
+    e.stopPropagation()
     if (e.pointerType !== 'touch') return
     imageLongPressed = false
     imagePressTimer = setTimeout(() => {
@@ -572,6 +573,7 @@
     const badge = e.target.closest('.wacchoi-badge')
     if (!badge) return
     e.preventDefault()
+    e.stopPropagation()
     const date = resDateFromTarget(badge)
     openWacchoiMenu(badge.dataset.wacchoi, date)
   }
@@ -580,9 +582,10 @@
   let wacchoiPressTimer
   let wacchoiLongPressed = false
   function onWacchoiPointerDown(e) {
-    if (e.pointerType !== 'touch') return
     const badge = e.target.closest('.wacchoi-badge')
     if (!badge) return
+    e.stopPropagation()
+    if (e.pointerType !== 'touch') return
     wacchoiLongPressed = false
     wacchoiPressTimer = setTimeout(() => {
       wacchoiLongPressed = true
@@ -689,6 +692,7 @@
   let idPressTimer
   let idLongPressed = false
   function onIdPointerDown(e, id) {
+    e.stopPropagation()
     if (e.pointerType !== 'touch') return
     idLongPressed = false
     idPressTimer = setTimeout(() => {
@@ -736,38 +740,36 @@
   // The res number the reply menu is open for, or null (closed).
   let replyMenuResNum = $state(null)
 
-  // True when a body menu (right-click or long-press) should open for this event:
-  // the res number is known and the target is plain body, not an anchor or wacchoi
-  // badge (those have their own menus).
-  function isBodyMenuTarget(e, resNum) {
-    if (resNum == null) return false
-    return !e.target.closest('.anchor') && !e.target.closest('.wacchoi-badge')
-  }
-
-  // Right-click on the .body div: open the reply menu for the clicked res.
-  function onBodyContextMenu(e, resNum) {
-    if (!isBodyMenuTarget(e, resNum)) return
+  // Right-click anywhere on a res card opens its reply menu. Controls with a
+  // dedicated context menu stop propagation before this card-level handler.
+  function onCardContextMenu(e, resNum) {
+    if (resNum == null) return
     e.preventDefault()
     replyMenuResNum = resNum
   }
 
-  // Long-press detection for the res body (touch devices, 500ms, same pattern as
+  // Long-press detection for the whole res card (touch devices, 500ms, same pattern as
   // the ID/wacchoi/thumbnail long-press). Required because suppressing selection
   // via CSS prevents `contextmenu` from firing on some touch browsers, so the
-  // native right-click path (onBodyContextMenu) cannot cover touch.
-  let bodyPressTimer
-  let bodyLongPressed = false
-  function onBodyPointerDown(e, resNum) {
+  // native right-click path (onCardContextMenu) cannot cover touch.
+  let cardPressTimer
+  let cardLongPressed = false
+  function onCardPointerDown(e, resNum) {
     if (e.pointerType !== 'touch') return
-    if (!isBodyMenuTarget(e, resNum)) return
-    bodyLongPressed = false
-    bodyPressTimer = setTimeout(() => {
-      bodyLongPressed = true
+    if (resNum == null) return
+    cardLongPressed = false
+    cardPressTimer = setTimeout(() => {
+      cardLongPressed = true
       replyMenuResNum = resNum
     }, 500)
   }
-  function cancelBodyPress() {
-    clearTimeout(bodyPressTimer)
+  function cancelCardPress() {
+    clearTimeout(cardPressTimer)
+  }
+
+  function closeReplyMenu() {
+    replyMenuResNum = null
+    cardLongPressed = false
   }
 
   // Copy the res body as plain text to the clipboard, then close the reply menu.
@@ -781,12 +783,12 @@
     const el = document.createElement('div')
     el.innerHTML = html
     await copyText(el.textContent ?? '')
-    replyMenuResNum = null
+    closeReplyMenu()
   }
 
   // Open the post modal pre-filled with >>num on line 1, cursor on line 2.
   function startReply(num) {
-    replyMenuResNum = null
+    closeReplyMenu()
     postMessage = `>>${num}\n`
     postMail = postMail || 'sage'
     postError = null
@@ -831,16 +833,11 @@
 </script>
 
 <!-- body is already sanitized on the server. linkify makes anchors clickable and URLs into links. -->
-<!-- resNum is passed so right-click can open the reply menu for the correct res. -->
+<!-- resNum is used by the surrounding card's reply-menu handlers. -->
 {#snippet body(html, resNum)}
   {@const images = extractImageUrls(html)}
   <div class="body" role="presentation"
     onclick={onBodyClick}
-    oncontextmenu={(e) => onBodyContextMenu(e, resNum)}
-    onpointerdown={(e) => onBodyPointerDown(e, resNum)}
-    onpointerup={cancelBodyPress}
-    onpointerleave={cancelBodyPress}
-    onpointercancel={cancelBodyPress}
   >{@html linkify(html)}</div>
   {#if images.length > 0}
     <div class="thumb-strip">
@@ -852,7 +849,7 @@
             if (imageLongPressed) { imageLongPressed = false; e.stopPropagation(); return }
             openImageViewer(resNum, indexInRes)
           }}
-          oncontextmenu={(e) => { e.preventDefault(); imageMenu = { url: img.url, mosaic: isMosaic } }}
+          oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); imageMenu = { url: img.url, mosaic: isMosaic } }}
           onpointerdown={(e) => onThumbPointerDown(e, img.url)}
           onpointerup={cancelThumbPress}
           onpointerleave={cancelThumbPress}
@@ -930,7 +927,7 @@
       role="button"
       tabindex="0"
       data-id={resolvedId}
-      oncontextmenu={(e) => { e.preventDefault(); openIdMenu(resolvedId) }}
+      oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); openIdMenu(resolvedId) }}
       onpointerdown={(e) => onIdPointerDown(e, resolvedId)}
       onpointerup={cancelIdPress}
       onpointerleave={cancelIdPress}
@@ -972,7 +969,13 @@
       <div class="res missing">レス {num} は未取得です</div>
     {:else}
       <!-- Uses resHeadAndBody so NG posts are hidden even inside the anchor tree. -->
-      <div class="res" class:anchor-self={highlight}>
+      <div class="res" class:anchor-self={highlight} role="group" aria-label="レス {r.num}"
+        oncontextmenu={(e) => onCardContextMenu(e, r.num)}
+        onpointerdown={(e) => onCardPointerDown(e, r.num)}
+        onpointerup={cancelCardPress}
+        onpointerleave={cancelCardPress}
+        onpointercancel={cancelCardPress}
+      >
         {@render resHeadAndBody(r)}
       </div>
     {/if}
@@ -1003,7 +1006,14 @@
           </div>
         {/if}
         <!-- own takes priority over unread: when r.own is true, unread class is not added -->
-        <div class="res" use:track={r.num} class:unread={r.num > readBaseline && !r.own} class:own={r.own}>
+        <div class="res" use:track={r.num} class:unread={r.num > readBaseline && !r.own} class:own={r.own}
+          role="group" aria-label="レス {r.num}"
+          oncontextmenu={(e) => onCardContextMenu(e, r.num)}
+          onpointerdown={(e) => onCardPointerDown(e, r.num)}
+          onpointerup={cancelCardPress}
+          onpointerleave={cancelCardPress}
+          onpointercancel={cancelCardPress}
+        >
           {@render resBody(r)}
         </div>
       {/each}
@@ -1090,7 +1100,13 @@
     {/snippet}
     <div class="id-list" data-testid="id-list" role="presentation" onclick={onBodyClick}>
       {#each idListRes as r (r.num)}
-        <div class="res id-list-res">
+        <div class="res id-list-res" role="group" aria-label="レス {r.num}"
+          oncontextmenu={(e) => onCardContextMenu(e, r.num)}
+          onpointerdown={(e) => onCardPointerDown(e, r.num)}
+          onpointerup={cancelCardPress}
+          onpointerleave={cancelCardPress}
+          onpointercancel={cancelCardPress}
+        >
           {@render resHeadAndBody(r)}
         </div>
       {/each}
@@ -1106,7 +1122,13 @@
     {/snippet}
     <div class="id-list" data-testid="wacchoi-list" role="presentation" onclick={onBodyClick}>
       {#each wacchoiListRes as r (r.num)}
-        <div class="res id-list-res">
+        <div class="res id-list-res" role="group" aria-label="レス {r.num}"
+          oncontextmenu={(e) => onCardContextMenu(e, r.num)}
+          onpointerdown={(e) => onCardPointerDown(e, r.num)}
+          onpointerup={cancelCardPress}
+          onpointerleave={cancelCardPress}
+          onpointercancel={cancelCardPress}
+        >
           {@render resHeadAndBody(r)}
         </div>
       {/each}
@@ -1196,7 +1218,7 @@
 
 <!-- Reply context menu modal: right-click on a res body opens this. -->
 {#if replyMenuResNum != null}
-  <Modal onclose={() => { replyMenuResNum = null }}>
+  <Modal onclose={closeReplyMenu}>
     {#snippet header()}
       <div class="menu-title">レス {replyMenuResNum}</div>
     {/snippet}
@@ -1308,6 +1330,8 @@
     border-radius: 8px;
     padding: 8px;
     margin-bottom: 4px;
+    /* Prefer the custom card menu over the native long-press callout. */
+    -webkit-touch-callout: none;
   }
   /* Unread: orange left border (--unread). Not --danger because unread is not an error. */
   .res.unread {
@@ -1334,9 +1358,6 @@
     margin-top: 4px;
     white-space: pre-wrap;
     word-break: break-word;
-    /* Prefer the custom long-press reply menu over the native selection callout.
-       -webkit-touch-callout is a no-op on desktop, so it is applied unconditionally. */
-    -webkit-touch-callout: none;
   }
   :global(.anchor) {
     color: var(--link);
