@@ -17,7 +17,6 @@
   // older posts are appended below it during idle time.
   let visibleRes = $state([])
   let readBoundaryNum = $state(null)
-  let entrySpacerHeight = $state(0)
   let olderComplete = $state(true)
   let olderQueue = []
   let olderIdleHandle = null
@@ -57,9 +56,7 @@
     const append = () => {
       olderIdleHandle = null
       if (destroyed) return
-      const next = olderQueue.splice(0, OLDER_BATCH_SIZE)
-      visibleRes = [...visibleRes, ...next]
-      olderComplete = olderQueue.length === 0
+      appendOlderBatch()
       if (!olderComplete) scheduleOlderBatch()
     }
     if ('requestIdleCallback' in window) {
@@ -67,6 +64,49 @@
     } else {
       olderIdleHandle = setTimeout(append, 0)
     }
+  }
+
+  function appendOlderBatch() {
+    const next = olderQueue.splice(0, OLDER_BATCH_SIZE)
+    if (next.length === 0) return false
+    visibleRes = [...visibleRes, ...next]
+    olderComplete = olderQueue.length === 0
+    return true
+  }
+
+  function finishInitialView() {
+    trackingReady = true
+    observer?.disconnect()
+    threadBody
+      ?.querySelectorAll(':scope > .res')
+      .forEach((node) => observer?.observe(node))
+    scheduleOlderBatch()
+  }
+
+  function settleInitialView(boundary) {
+    if (destroyed || !threadBody || !boundary.isConnected) return
+    const bodyRect = threadBody.getBoundingClientRect()
+    const boundaryBelowViewport = boundary.getBoundingClientRect().bottom > bodyRect.bottom
+
+    if (boundaryBelowViewport) {
+      boundary.scrollIntoView({ block: 'end', behavior: 'instant' })
+      finishInitialView()
+      return
+    }
+
+    // When the new section is shorter than the viewport, fill the remaining
+    // space with real older posts. Keep the viewport at the newest end instead
+    // of manufacturing blank space above it with a CSS spacer.
+    if (threadBody.scrollHeight <= threadBody.clientHeight && appendOlderBatch()) {
+      settleFrame = requestAnimationFrame(() => {
+        settleFrame = null
+        settleInitialView(boundary)
+      })
+      return
+    }
+
+    threadBody.scrollTop = 0
+    finishInitialView()
   }
 
   function prepareTimeline(nextData) {
@@ -217,8 +257,8 @@
     fetchDat()
   })
 
-  // Place the immutable entry-time boundary at the bottom of the viewport.
-  // Older posts begin appending below it only after this first stable paint.
+  // If the new section fills the viewport, place its boundary at the bottom.
+  // Otherwise show enough real older posts to fill the viewport naturally.
   $effect(() => {
     if (!data || restored) return
     restored = true
@@ -232,19 +272,9 @@
         trackingReady = true
         return
       }
-      const bottomGap =
-        threadBody.getBoundingClientRect().bottom - boundary.getBoundingClientRect().bottom
-      if (bottomGap > 0) entrySpacerHeight = bottomGap
       settleFrame = requestAnimationFrame(() => {
         settleFrame = null
-        if (destroyed || !threadBody || !boundary.isConnected) return
-        boundary.scrollIntoView({ block: 'end', behavior: 'instant' })
-        trackingReady = true
-        observer?.disconnect()
-        threadBody
-          .querySelectorAll(':scope > .res')
-          .forEach((node) => observer?.observe(node))
-        scheduleOlderBatch()
+        settleInitialView(boundary)
       })
     })
   })
@@ -1135,8 +1165,10 @@
   <!-- Scrollable body: flex:1 so it fills remaining space between header and footer. -->
   <div class="thread-body" bind:this={threadBody} use:backSwipe>
     {#if data}
-      {#if entrySpacerHeight > 0}
-        <div class="entry-spacer" style:height="{entrySpacerHeight}px" aria-hidden="true"></div>
+      {#if visibleRes.length > 0}
+        <div class="read-bar" data-testid="thread-end" aria-hidden="true">
+          <span class="read-bar-label">おわり</span>
+        </div>
       {/if}
       {#each visibleRes as r (r.num)}
         {#if r.num === readBoundaryNum && readBaseline >= 1}
@@ -1162,7 +1194,7 @@
         {/if}
       {/each}
       {#if olderComplete && readBoundaryNum !== visibleRes[visibleRes.length - 1]?.num}
-        <div class="read-bar" data-testid="thread-end" aria-hidden="true">
+        <div class="read-bar" data-testid="thread-start" aria-hidden="true">
           <span class="read-bar-label">はじまり</span>
         </div>
       {/if}

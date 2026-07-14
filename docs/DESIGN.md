@@ -165,12 +165,13 @@ Domain components on top of the Sumi recipes:
   the body is Sumi's reading surface — and the menu's copy-body action
   compensates on touch. This applies uniformly to every res body
   rendering (main list, anchor tree, ID/wacchoi search modals).
-- **Read-position dividers (thread view, newest-first model):** two hr-style
-  ruled lines rendered between res cards in the main list only — the
+- **Read-position dividers (thread view, newest-first model):** three hr-style
+  ruled lines rendered around res cards in the main list only — the
+  **thread end** (label 「おわり」) before the newest res, the
   **read boundary** (label 「前回ここまで」) immediately before the
   entry-time read-position res, and the **thread start** (label
   「はじまり」) after res 1 when it is distinct from the boundary.
-  Both share one recipe: a full-width flex row of two 1px hairlines in
+  All share one recipe: a full-width flex row of two 1px hairlines in
   `border` with a centered caption-size (12px) `muted` label, 8px gap
   between line and label, 8px vertical margin (4px scale), transparent
   background. **They must read as a ruled line on the paper, never as a
@@ -182,10 +183,12 @@ Domain components on top of the Sumi recipes:
   registration). Placement semantics: the boundary divider is frozen at
   the entry baseline — it does not move while reading (scroll advancing
   maxRead never moves it); a manual refresh may re-baseline it. Res cards
-  are ordered newest to oldest. The initial render ends at the boundary,
-  whose bottom edge is aligned with the scroll viewport bottom. Older
-  reses are appended below in idle batches; this must not move the
-  boundary on screen. With no previously read res (baseline 0), the
+  are ordered newest to oldest. When the new section fills the viewport,
+  the boundary's bottom edge is aligned with the scroll viewport bottom.
+  When it is shorter, real older reses are rendered below the boundary in
+  50-res batches until the viewport is naturally filled; synthetic blank
+  spacer space must not be used. Remaining older reses are appended below
+  in idle batches; this must not move the boundary on screen. With no previously read res (baseline 0), the
   boundary remains after res 1; otherwise it is immediately before the
   entry-time read-position res. When the boundary is at res 1, the thread
   start divider is omitted so duplicate dividers never share one position.

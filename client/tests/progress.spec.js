@@ -35,7 +35,7 @@ function datResponse() {
 test.describe('phone: saved position beyond the available dat', () => {
   test.use({ viewport: { width: 390, height: 700 } })
 
-  test('clamps the boundary to the newest post and aligns it to the viewport bottom', async ({
+  test('clamps the boundary to the newest post and fills the short view with older posts', async ({
     page,
   }) => {
     // Simulate stale progress beyond the available dat: read_res=50 with only
@@ -77,16 +77,9 @@ test.describe('phone: saved position beyond the available dat', () => {
     await page.goto(THREAD_PATH)
     await expect(page.locator('.thread-body > .res').first()).toHaveAttribute('data-res', '30')
     await expect(page.getByTestId('read-boundary')).toHaveText('前回ここまで')
-    await expect
-      .poll(() =>
-        page.locator('.thread-body').evaluate((body) => {
-          const marker = body.querySelector('[data-testid="read-boundary"]')
-          return Math.abs(
-            body.getBoundingClientRect().bottom - marker.getBoundingClientRect().bottom,
-          )
-        }),
-      )
-      .toBeLessThanOrEqual(1)
+    await expect(page.locator('.thread-body > .res')).toHaveCount(30)
+    await expect(page.locator('.entry-spacer')).toHaveCount(0)
+    await expect(page.locator('.thread-body')).toHaveJSProperty('scrollTop', 0)
   })
 })
 
@@ -134,7 +127,7 @@ test.describe('PC: unread badge decreases as user scrolls (onprogress)', () => {
   })
 })
 
-test('opening a thread puts the previous-read marker at the viewport bottom', async ({
+test('opening a short thread shows older posts naturally below the previous-read marker', async ({
   page,
 }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
@@ -161,14 +154,7 @@ test('opening a thread puts the previous-read marker at the viewport bottom', as
   await expect(posts.nth(1)).toHaveAttribute('data-res', '29')
   await expect(posts.nth(2)).toHaveAttribute('data-res', '28')
   await expect(page.getByTestId('read-boundary')).toHaveText('前回ここまで')
-  await expect
-    .poll(() =>
-      page.locator('.thread-body').evaluate((body) => {
-        const marker = body.querySelector('[data-testid="read-boundary"]')
-        return Math.abs(
-          body.getBoundingClientRect().bottom - marker.getBoundingClientRect().bottom,
-        )
-      }),
-    )
-    .toBeLessThanOrEqual(1)
+  await expect(posts).toHaveCount(30)
+  await expect(page.locator('.entry-spacer')).toHaveCount(0)
+  await expect(page.locator('.thread-body')).toHaveJSProperty('scrollTop', 0)
 })

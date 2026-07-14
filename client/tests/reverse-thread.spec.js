@@ -76,6 +76,11 @@ test('newest posts render first and older posts append below without moving the 
   await expect(posts).toHaveCount(21)
   await expect(posts.first()).toHaveAttribute('data-res', '120')
   await expect(posts.last()).toHaveAttribute('data-res', '100')
+  await expect(page.getByTestId('thread-end')).toHaveText('おわり')
+  await expect(page.getByTestId('thread-end').locator('+ .res')).toHaveAttribute(
+    'data-res',
+    '120',
+  )
   await expect(page.getByText('本文99', { exact: true })).toHaveCount(0)
   // The brief pre-position paint at the top must not mark the latest post read.
   // Only posts actually visible after the boundary is positioned may advance progress.
@@ -119,8 +124,14 @@ test('a 590-post thread with no unread posts places the boundary above res 590',
   await page.goto(THREAD_PATH)
 
   const boundary = page.getByTestId('read-boundary')
-  await expect(page.locator('.thread-body > .res')).toHaveCount(1)
+  const posts = page.locator('.thread-body > .res')
+  // One urgent post cannot fill the viewport. Older posts should be rendered
+  // naturally below it instead of inserting a synthetic top spacer.
+  await expect(posts).toHaveCount(51)
+  await expect(page.locator('.entry-spacer')).toHaveCount(0)
   await expect(boundary.locator('+ .res')).toHaveAttribute('data-res', '590')
+  await expect(posts.nth(1)).toHaveAttribute('data-res', '589')
+  await expect(page.locator('.thread-body')).toHaveJSProperty('scrollTop', 0)
 })
 
 test('an entirely unread thread keeps one boundary after res 1', async ({ page }) => {
@@ -133,7 +144,7 @@ test('an entirely unread thread keeps one boundary after res 1', async ({ page }
   await expect(posts.last()).toHaveAttribute('data-res', '1')
   await expect(page.getByTestId('read-boundary')).toHaveCount(1)
   await expect(posts.last().locator('+ [data-testid="read-boundary"]')).toHaveCount(1)
-  await expect(page.getByTestId('thread-end')).toHaveCount(0)
+  await expect(page.getByTestId('thread-end')).toHaveText('おわり')
 })
 
 test('progress tracking starts when an initially empty thread gains a post', async ({
