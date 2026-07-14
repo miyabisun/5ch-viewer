@@ -167,7 +167,7 @@ Domain components on top of the Sumi recipes:
   rendering (main list, anchor tree, ID/wacchoi search modals).
 - **Read-position dividers (thread view, newest-first model):** two hr-style
   ruled lines rendered between res cards in the main list only — the
-  **read boundary** (label 「前回ここまで」) immediately after the
+  **read boundary** (label 「前回ここまで」) immediately before the
   entry-time read-position res, and the **thread start** (label
   「はじまり」) after res 1 when it is distinct from the boundary.
   Both share one recipe: a full-width flex row of two 1px hairlines in
@@ -185,7 +185,9 @@ Domain components on top of the Sumi recipes:
   are ordered newest to oldest. The initial render ends at the boundary,
   whose bottom edge is aligned with the scroll viewport bottom. Older
   reses are appended below in idle batches; this must not move the
-  boundary on screen. When the boundary is already at res 1, the thread
+  boundary on screen. With no previously read res (baseline 0), the
+  boundary remains after res 1; otherwise it is immediately before the
+  entry-time read-position res. When the boundary is at res 1, the thread
   start divider is omitted so duplicate dividers never share one position.
 - **Anchor tree modal:** depth-indented nodes with a 2px border-left guide;
   the pivot res is highlighted with an accent left border.

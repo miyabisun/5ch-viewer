@@ -85,6 +85,7 @@ test('newest posts render first and older posts append below without moving the 
 
   const boundary = page.getByTestId('read-boundary')
   await expect(boundary).toHaveText('前回ここまで')
+  await expect(boundary.locator('+ .res')).toHaveAttribute('data-res', '100')
   const before = await page.locator('.thread-body').evaluate((body) => {
     const marker = body.querySelector('[data-testid="read-boundary"]')
     const bodyRect = body.getBoundingClientRect()
@@ -110,6 +111,18 @@ test('newest posts render first and older posts append below without moving the 
   await expect(posts.last()).toHaveAttribute('data-res', '1')
 })
 
+test('a 590-post thread with no unread posts places the boundary above res 590', async ({
+  page,
+}) => {
+  const fullyReadFav = { ...FAV, res_count: 590, read_res: 590 }
+  await setup(page, fullyReadFav)
+  await page.goto(THREAD_PATH)
+
+  const boundary = page.getByTestId('read-boundary')
+  await expect(page.locator('.thread-body > .res')).toHaveCount(1)
+  await expect(boundary.locator('+ .res')).toHaveAttribute('data-res', '590')
+})
+
 test('an entirely unread thread keeps one boundary after res 1', async ({ page }) => {
   await setup(page, { ...FAV, read_res: 0 })
   await page.goto(THREAD_PATH)
@@ -119,6 +132,7 @@ test('an entirely unread thread keeps one boundary after res 1', async ({ page }
   await expect(posts.first()).toHaveAttribute('data-res', '120')
   await expect(posts.last()).toHaveAttribute('data-res', '1')
   await expect(page.getByTestId('read-boundary')).toHaveCount(1)
+  await expect(posts.last().locator('+ [data-testid="read-boundary"]')).toHaveCount(1)
   await expect(page.getByTestId('thread-end')).toHaveCount(0)
 })
 

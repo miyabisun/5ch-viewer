@@ -1139,6 +1139,11 @@
         <div class="entry-spacer" style:height="{entrySpacerHeight}px" aria-hidden="true"></div>
       {/if}
       {#each visibleRes as r (r.num)}
+        {#if r.num === readBoundaryNum && readBaseline >= 1}
+          <div class="read-bar" data-testid="read-boundary" aria-hidden="true">
+            <span class="read-bar-label">前回ここまで</span>
+          </div>
+        {/if}
         <!-- own takes priority over unread: when r.own is true, unread class is not added -->
         <div class="res" use:track={r.num} class:unread={r.num > readBaseline && !r.own} class:own={r.own}
           role="group" aria-label="レス {r.num}"
@@ -1150,7 +1155,7 @@
         >
           {@render resBody(r)}
         </div>
-        {#if r.num === readBoundaryNum}
+        {#if r.num === readBoundaryNum && readBaseline < 1}
           <div class="read-bar" data-testid="read-boundary" aria-hidden="true">
             <span class="read-bar-label">前回ここまで</span>
           </div>
