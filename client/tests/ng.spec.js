@@ -143,17 +143,18 @@ test('NG post: reason header is struck-through and click toggles the body', asyn
   // The NG res has the concise reason header in the del.ng wrapper.
   const ngDel = page.locator('del.ng')
   await expect(ngDel).toHaveCount(2) // two posts with ID:target
-  await expect(ngDel.first()).toHaveText('[レス番号: 1] [理由: NG ID]')
+  const res1Ng = ngDel.filter({ hasText: '[レス番号: 1]' })
+  await expect(res1Ng).toHaveText('[レス番号: 1] [理由: NG ID]')
 
   // Clicking the replacement header reveals the original header and body.
-  await ngDel.first().click()
+  await res1Ng.click()
   await expect(page.getByText('本文1')).toBeVisible()
   await expect(page.getByText('本文3')).toHaveCount(0)
   // The privacy-preserving reason header remains in place; only the body toggles.
-  await expect(page.locator('.res').first().getByText('ID:target')).toHaveCount(0)
+  await expect(page.locator('.res[data-res="1"]').getByText('ID:target')).toHaveCount(0)
 
   // Clicking it again restores the initial hidden state.
-  await ngDel.first().click()
+  await res1Ng.click()
   await expect(page.getByText('本文1')).toHaveCount(0)
 })
 
@@ -203,7 +204,7 @@ test('NG post right-click opens its reason menu and removes the NG ID', async ({
   })
 
   await page.goto(THREAD_PATH)
-  const ngHeader = page.locator('del.ng').first()
+  const ngHeader = page.locator('del.ng').filter({ hasText: '[レス番号: 1]' })
   await expect(ngHeader).toHaveText('[レス番号: 1] [理由: NG ID]')
 
   await ngHeader.click({ button: 'right' })

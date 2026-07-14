@@ -69,7 +69,7 @@ test('desktop: right-click on .body opens the reply menu', async ({ page }) => {
   await page.goto(THREAD_PATH)
   await expect(page.getByText('二行目')).toBeVisible()
 
-  await page.locator('.body').first().click({ button: 'right' })
+  await page.locator('.res[data-res="1"] .body').click({ button: 'right' })
   await expect(page.locator('[data-testid="reply-menu"]')).toBeVisible()
 })
 
@@ -106,7 +106,7 @@ test('reply menu keeps the 返信する action and opens the post modal', async 
   await page.goto(THREAD_PATH)
   await expect(page.getByText('二行目')).toBeVisible()
 
-  await page.locator('.body').first().click({ button: 'right' })
+  await page.locator('.res[data-res="1"] .body').click({ button: 'right' })
   await expect(page.locator('[data-testid="reply-menu"]')).toBeVisible()
 
   await page.getByRole('button', { name: '返信する' }).click()
@@ -120,7 +120,7 @@ test('本文をコピー writes the body (with newline) to the clipboard', async
   await page.goto(THREAD_PATH)
   await expect(page.getByText('二行目')).toBeVisible()
 
-  await page.locator('.body').first().click({ button: 'right' })
+  await page.locator('.res[data-res="1"] .body').click({ button: 'right' })
   await page.getByRole('button', { name: '本文をコピー' }).click()
 
   const text = await page.evaluate(() => navigator.clipboard.readText())

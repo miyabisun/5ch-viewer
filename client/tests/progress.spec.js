@@ -32,16 +32,14 @@ function datResponse() {
   }
 }
 
-test.describe('phone: scroll fallback when target res is not rendered', () => {
+test.describe('phone: saved position beyond the available dat', () => {
   test.use({ viewport: { width: 390, height: 700 } })
 
-  test('scrolls window to bottom when read_res exceeds rendered res count', async ({
+  test('clamps the boundary to the newest post and aligns it to the viewport bottom', async ({
     page,
   }) => {
-    // read_res (28) is within the rendered count (30), but we simulate a case
-    // where the target node might not be found by using a read_res that exceeds
-    // the rendered count. Use read_res=50 with only 30 rendered posts so the
-    // target .res[data-res="50"] node does not exist and the fallback fires.
+    // Simulate stale progress beyond the available dat: read_res=50 with only
+    // 30 posts. The newest available post becomes the safe boundary.
     const phoneFav = { ...FAV, read_res: 50 }
 
     await page.route('**/api/favorites', (route) => route.fulfill({ json: [phoneFav] }))
@@ -77,14 +75,18 @@ test.describe('phone: scroll fallback when target res is not rendered', () => {
     })
 
     await page.goto(THREAD_PATH)
-    await expect(page.getByText('本文1', { exact: true })).toBeVisible()
-
-    // Fallback path: target res (50) is not in the DOM, so the code falls back
-    // to scrolling .thread-body to the bottom. Both PC and phone now scroll inside
-    // .thread-body (new layout), so verify .thread-body.scrollTop > 0.
+    await expect(page.locator('.thread-body > .res').first()).toHaveAttribute('data-res', '30')
+    await expect(page.getByTestId('read-boundary')).toHaveText('前回ここまで')
     await expect
-      .poll(() => page.locator('.thread-body').evaluate((el) => el.scrollTop))
-      .toBeGreaterThan(0)
+      .poll(() =>
+        page.locator('.thread-body').evaluate((body) => {
+          const marker = body.querySelector('[data-testid="read-boundary"]')
+          return Math.abs(
+            body.getBoundingClientRect().bottom - marker.getBoundingClientRect().bottom,
+          )
+        }),
+      )
+      .toBeLessThanOrEqual(1)
   })
 })
 
@@ -132,7 +134,7 @@ test.describe('PC: unread badge decreases as user scrolls (onprogress)', () => {
   })
 })
 
-test('opening a thread restores the saved read position (auto-scroll)', async ({
+test('opening a thread puts the previous-read marker at the viewport bottom', async ({
   page,
 }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
@@ -154,14 +156,19 @@ test('opening a thread restores the saved read position (auto-scroll)', async ({
   })
 
   await page.goto(THREAD_PATH)
-  await expect(page.getByText('本文1', { exact: true })).toBeVisible()
-
-  // The page auto-scrolls so the "ここまで読んだ" boundary bar sits at the viewport
-  // top and the first unread res (29) starts reading just below it. read_res=28 (res28)
-  // is scrolled above the fold, so the anchor is the first unread res, not res28.
-  await expect(page.locator('[data-testid="read-boundary"]')).toBeAttached()
-  await expect(page.locator('.res[data-res="29"]')).toBeInViewport()
+  const posts = page.locator('.thread-body > .res')
+  await expect(posts.first()).toHaveAttribute('data-res', '30')
+  await expect(posts.nth(1)).toHaveAttribute('data-res', '29')
+  await expect(posts.nth(2)).toHaveAttribute('data-res', '28')
+  await expect(page.getByTestId('read-boundary')).toHaveText('前回ここまで')
   await expect
-    .poll(() => page.locator('.thread-body').evaluate((el) => el.scrollTop))
-    .toBeGreaterThan(0)
+    .poll(() =>
+      page.locator('.thread-body').evaluate((body) => {
+        const marker = body.querySelector('[data-testid="read-boundary"]')
+        return Math.abs(
+          body.getBoundingClientRect().bottom - marker.getBoundingClientRect().bottom,
+        )
+      }),
+    )
+    .toBeLessThanOrEqual(1)
 })

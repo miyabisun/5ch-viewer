@@ -1,5 +1,5 @@
 <script>
-  import { untrack } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
   import { api, beaconProgress } from './api.js'
   import { formatName } from './name.js'
   import { stripId, buildIdStats } from './id.js'
@@ -13,6 +13,15 @@
   let { fav, onback, onprogress = () => {}, ngIds = new Set(), onngchange = () => {}, ngWacchoi = [], onngwacchoichange = () => {} } = $props()
 
   let data = $state(null)
+  // Newest-first timeline. The entry batch ends at the previous-read post;
+  // older posts are appended below it during idle time.
+  let visibleRes = $state([])
+  let readBoundaryNum = $state(null)
+  let entrySpacerHeight = $state(0)
+  let olderComplete = $state(true)
+  let olderQueue = []
+  let olderIdleHandle = null
+  const OLDER_BATCH_SIZE = 50
   // Surfaced when a manual refresh (footer button or post-write reload) fails.
   // The stored dat is still shown below, so this is a non-blocking notice rather
   // than a hard error. Entry never reloads, so it cannot set this on open.
@@ -29,15 +38,66 @@
   // Restore-on-open guard: scroll to the saved read position only after the first
   // successful load, never after a manual reload.
   let restored = $state(false)
+  let trackingReady = false
+  let threadBody
+  let destroyed = false
+  let restoreFrame = null
+  let settleFrame = null
+  let refreshFrame = null
 
-  // First unread res (num > readBaseline), or null when everything is read (or all
-  // unread: readBaseline 0). This is also the "ここまで読んだ" boundary anchor — null
-  // means no boundary bar (all read shows only the "おわり" bar; all unread none).
-  // readBaseline is the entry-time authority and does not move as maxRead advances,
-  // so the boundary bar stays anchored while scrolling (ChMate behaviour).
-  const firstUnreadNum = $derived.by(() => {
-    if (!data?.res || readBaseline < 1) return null
-    return data.res.find((r) => r.num > readBaseline)?.num ?? null
+  function cancelOlderWork() {
+    if (olderIdleHandle == null) return
+    if ('cancelIdleCallback' in window) window.cancelIdleCallback(olderIdleHandle)
+    else clearTimeout(olderIdleHandle)
+    olderIdleHandle = null
+  }
+
+  function scheduleOlderBatch() {
+    if (destroyed || olderComplete || olderIdleHandle != null) return
+    const append = () => {
+      olderIdleHandle = null
+      if (destroyed) return
+      const next = olderQueue.splice(0, OLDER_BATCH_SIZE)
+      visibleRes = [...visibleRes, ...next]
+      olderComplete = olderQueue.length === 0
+      if (!olderComplete) scheduleOlderBatch()
+    }
+    if ('requestIdleCallback' in window) {
+      olderIdleHandle = window.requestIdleCallback(append, { timeout: 500 })
+    } else {
+      olderIdleHandle = setTimeout(append, 0)
+    }
+  }
+
+  function prepareTimeline(nextData) {
+    cancelOlderWork()
+    const newestFirst = nextData.res.toReversed()
+    if (newestFirst.length === 0) {
+      visibleRes = []
+      olderQueue = []
+      readBoundaryNum = null
+      olderComplete = true
+      return
+    }
+
+    // Include the previous-read post itself in the urgent batch. A stale saved
+    // position beyond the available dat safely falls back to the newest post.
+    const foundBoundary = newestFirst.findIndex((r) => r.num <= readBaseline)
+    const boundaryIndex =
+      readBaseline < 1 ? newestFirst.length - 1 : Math.max(0, foundBoundary)
+    readBoundaryNum = newestFirst[boundaryIndex].num
+    visibleRes = newestFirst.slice(0, boundaryIndex + 1)
+    olderQueue = newestFirst.slice(boundaryIndex + 1)
+    olderComplete = olderQueue.length === 0
+  }
+
+  onDestroy(() => {
+    destroyed = true
+    cancelOlderWork()
+    if (restoreFrame != null) cancelAnimationFrame(restoreFrame)
+    if (settleFrame != null) cancelAnimationFrame(settleFrame)
+    if (refreshFrame != null) cancelAnimationFrame(refreshFrame)
+    observer?.disconnect()
   })
   // Post modal: open/close and form state.
   let postModalOpen = $state(false)
@@ -51,7 +111,16 @@
   // model: opening a thread never touches 5ch — the list bulk-refresh keeps the
   // stored dat fresh) and as the second half of reloadAndFetch.
   async function fetchDat() {
-    data = await api.getDat(fav.server, fav.board, fav.thread_id)
+    const nextData = await api.getDat(fav.server, fav.board, fav.thread_id)
+    prepareTimeline(nextData)
+    data = nextData
+    if (restored) {
+      if (refreshFrame != null) cancelAnimationFrame(refreshFrame)
+      refreshFrame = requestAnimationFrame(() => {
+        refreshFrame = null
+        if (!destroyed) scheduleOlderBatch()
+      })
+    }
     if (data.read_res > maxRead) maxRead = data.read_res
     // Update the mosaic URL set from the server response.
     mosaicUrls = new Set(data.mosaic_urls ?? [])
@@ -148,28 +217,35 @@
     fetchDat()
   })
 
-  // Restore the saved read position by scrolling the last-read res into view.
-  // Runs once after the dat has rendered (in an effect, not load, so the res
-  // nodes exist in the DOM); the `restored` guard prevents re-runs.
-  // With the new layout, .thread-body is the scroll container on both PC and phone.
+  // Place the immutable entry-time boundary at the bottom of the viewport.
+  // Older posts begin appending below it only after this first stable paint.
   $effect(() => {
     if (!data || restored) return
     restored = true
-    // read_res=0 (all unread): stay at the top.
-    if (readBaseline < 1) return
-    requestAnimationFrame(() => {
-      // Anchor the "ここまで読んだ" bar to the viewport top, so the bar is just visible
-      // and unread posts start reading right below it. The bar renders iff there is an
-      // unread res, so its absence means everything is read.
-      const boundary = document.querySelector('[data-testid="read-boundary"]')
-      if (boundary) {
-        // scrollIntoView uses the nearest scrollable ancestor (.thread-body).
-        boundary.scrollIntoView({ block: 'start' })
+    restoreFrame = requestAnimationFrame(() => {
+      restoreFrame = null
+      if (destroyed || !threadBody) return
+      const boundary = threadBody.querySelector('[data-testid="read-boundary"]')
+      if (!boundary) {
+        // An empty stored dat can later gain posts through manual refresh. Keep
+        // progress tracking live so those newly-created cards are observed.
+        trackingReady = true
         return
       }
-      // No unread (all read): scroll .thread-body to the bottom (the "おわり" bar shows).
-      const body = document.querySelector('.thread-body')
-      if (body) body.scrollTop = body.scrollHeight
+      const bottomGap =
+        threadBody.getBoundingClientRect().bottom - boundary.getBoundingClientRect().bottom
+      if (bottomGap > 0) entrySpacerHeight = bottomGap
+      settleFrame = requestAnimationFrame(() => {
+        settleFrame = null
+        if (destroyed || !threadBody || !boundary.isConnected) return
+        boundary.scrollIntoView({ block: 'end', behavior: 'instant' })
+        trackingReady = true
+        observer?.disconnect()
+        threadBody
+          .querySelectorAll(':scope > .res')
+          .forEach((node) => observer?.observe(node))
+        scheduleOlderBatch()
+      })
     })
   })
 
@@ -181,7 +257,7 @@
   $effect(() => {
     observer = new IntersectionObserver((entries) => {
       for (const e of entries) {
-        if (e.isIntersecting) {
+        if (trackingReady && e.isIntersecting) {
           const n = Number(e.target.dataset.res)
           if (n > maxRead) maxRead = n
         }
@@ -1057,16 +1133,12 @@
   {/if}
 
   <!-- Scrollable body: flex:1 so it fills remaining space between header and footer. -->
-  <div class="thread-body" use:backSwipe>
+  <div class="thread-body" bind:this={threadBody} use:backSwipe>
     {#if data}
-      {#each data.res as r (r.num)}
-        <!-- "ここまで読んだ" boundary bar: inserted before the first unread res.
-             Not a .res, so it stays off the IntersectionObserver / progress path. -->
-        {#if r.num === firstUnreadNum}
-          <div class="read-bar" data-testid="read-boundary" aria-hidden="true">
-            <span class="read-bar-label">ここまで読んだ</span>
-          </div>
-        {/if}
+      {#if entrySpacerHeight > 0}
+        <div class="entry-spacer" style:height="{entrySpacerHeight}px" aria-hidden="true"></div>
+      {/if}
+      {#each visibleRes as r (r.num)}
         <!-- own takes priority over unread: when r.own is true, unread class is not added -->
         <div class="res" use:track={r.num} class:unread={r.num > readBaseline && !r.own} class:own={r.own}
           role="group" aria-label="レス {r.num}"
@@ -1078,11 +1150,17 @@
         >
           {@render resBody(r)}
         </div>
+        {#if r.num === readBoundaryNum}
+          <div class="read-bar" data-testid="read-boundary" aria-hidden="true">
+            <span class="read-bar-label">前回ここまで</span>
+          </div>
+        {/if}
       {/each}
-      <!-- "おわり" bar: always at the tail of the loaded dat. -->
-      <div class="read-bar" data-testid="thread-end" aria-hidden="true">
-        <span class="read-bar-label">おわり</span>
-      </div>
+      {#if olderComplete && readBoundaryNum !== visibleRes[visibleRes.length - 1]?.num}
+        <div class="read-bar" data-testid="thread-end" aria-hidden="true">
+          <span class="read-bar-label">はじまり</span>
+        </div>
+      {/if}
     {/if}
   </div>
 
