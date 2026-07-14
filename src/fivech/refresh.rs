@@ -322,6 +322,7 @@ mod tests {
             image_http,
             jar,
             config: Config {
+                bind_address: "127.0.0.1".to_string(),
                 port: 3000,
                 base_path: String::new(),
                 db_path: ":memory:".to_string(),

@@ -2,6 +2,8 @@ use std::env;
 
 #[derive(Clone)]
 pub struct Config {
+    /// Interface/address the HTTP server binds to. Use 127.0.0.1 for local-only access.
+    pub bind_address: String,
     pub port: u16,
     pub base_path: String,
     pub db_path: String,
@@ -16,6 +18,12 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Self {
+        let bind_address = env::var("BIND_ADDRESS")
+            .ok()
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .unwrap_or_else(|| "0.0.0.0".to_string());
+
         let port = env::var("PORT")
             .ok()
             .and_then(|p| p.parse().ok())
@@ -52,6 +60,7 @@ impl Config {
             .to_string();
 
         Self {
+            bind_address,
             port,
             base_path,
             db_path,
