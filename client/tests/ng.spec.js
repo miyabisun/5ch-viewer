@@ -130,7 +130,7 @@ test('right-click on ID badge opens the ID menu', async ({ page }) => {
   await expect(page.getByRole('button', { name: '取得済みスレから検索' })).toBeVisible()
 })
 
-test('NG post: header struck-through, body hidden', async ({ page }) => {
+test('NG post: reason header is struck-through and click toggles the body', async ({ page }) => {
   // Simulate "target" already in the NG list.
   await setupRoutes(page, { ngIds: ['target'] })
   await page.goto(THREAD_PATH)
@@ -140,12 +140,24 @@ test('NG post: header struck-through, body hidden', async ({ page }) => {
   // Non-NG post body is still shown.
   await expect(page.getByText('本文2')).toBeVisible()
 
-  // The NG res has the del.ng wrapper.
+  // The NG res has the concise reason header in the del.ng wrapper.
   const ngDel = page.locator('del.ng')
   await expect(ngDel).toHaveCount(2) // two posts with ID:target
+  await expect(ngDel.first()).toHaveText('[レス番号: 1] [理由: NG ID]')
+
+  // Clicking the replacement header reveals the original header and body.
+  await ngDel.first().click()
+  await expect(page.getByText('本文1')).toBeVisible()
+  await expect(page.getByText('本文3')).toHaveCount(0)
+  // The privacy-preserving reason header remains in place; only the body toggles.
+  await expect(page.locator('.res').first().getByText('ID:target')).toHaveCount(0)
+
+  // Clicking it again restores the initial hidden state.
+  await ngDel.first().click()
+  await expect(page.getByText('本文1')).toHaveCount(0)
 })
 
-test('NGID追加 adds ID to NG and menu shows NGIDから削除 on reopen', async ({ page }) => {
+test('NGID追加 adds ID to NG and the ID menu does not expose removal', async ({ page }) => {
   const addRequests = []
   await setupRoutes(page)
   await page.route('**/api/ng-ids', async (route) => {
@@ -173,6 +185,50 @@ test('NGID追加 adds ID to NG and menu shows NGIDから削除 on reopen', async
   // The API was called.
   await expect.poll(() => addRequests.length).toBe(1)
   expect(addRequests[0]).toEqual({ ng_id: 'target' })
+
+  // Removal is available from the NG post menu instead of the now-hidden ID badge.
+  await expect(page.locator('del.ng').first()).toBeVisible()
+  await expect(page.locator('.resid[data-id="target"]')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'NGIDから削除' })).toHaveCount(0)
+})
+
+test('NG post right-click opens its reason menu and removes the NG ID', async ({ page }) => {
+  const removeRequests = []
+  await setupRoutes(page, { ngIds: ['target'] })
+  await page.route(/\/api\/ng-ids\/.*/, async (route) => {
+    if (route.request().method() === 'DELETE') {
+      removeRequests.push(route.request().url())
+    }
+    await route.fulfill({ json: { ok: true } })
+  })
+
+  await page.goto(THREAD_PATH)
+  const ngHeader = page.locator('del.ng').first()
+  await expect(ngHeader).toHaveText('[レス番号: 1] [理由: NG ID]')
+
+  await ngHeader.click({ button: 'right' })
+  await expect(page.locator('[data-testid="ng-menu"]')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'NG IDから削除' })).toBeVisible()
+  await expect(page.locator('[data-testid="reply-menu"]')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'NG IDから削除' }).click()
+  await expect.poll(() => removeRequests.length).toBe(1)
+  expect(decodeURIComponent(new URL(removeRequests[0]).pathname)).toBe('/api/ng-ids/target')
+})
+
+test('NG post long-press opens only its reason menu without toggling the body', async ({ page }) => {
+  await setupRoutes(page, { ngIds: ['target'] })
+  await page.goto(THREAD_PATH)
+
+  const ngHeader = page.locator('del.ng').first()
+  await ngHeader.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+  await page.waitForTimeout(550)
+  await ngHeader.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+  await ngHeader.dispatchEvent('click')
+
+  await expect(page.locator('[data-testid="ng-menu"]')).toBeVisible()
+  await expect(page.locator('[data-testid="reply-menu"]')).toHaveCount(0)
+  await expect(page.getByText('本文1')).toHaveCount(0)
 })
 
 test('copy writes "ID:xxx" to clipboard', async ({ page, context }) => {

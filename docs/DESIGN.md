@@ -149,8 +149,13 @@ Domain components on top of the Sumi recipes:
   is a long-press-menu target: it keeps the unconditional
   `-webkit-touch-callout: none` per the touch policy above.
 - **Res card (thread view):** Sumi card; unread/own state shown by the 3px
-  left border (see Colors). NG posts (NG ID / NG wacchoi) render the
-  header struck-through in muted with the body hidden entirely.
+  left border (see Colors). NG posts (NG ID / NG wacchoi) replace the
+  original header with a muted, struck-through disclosure in the form
+  「[レス番号: N] [理由: NG ID|NGワッチョイ]」. The body starts hidden and
+  clicking the disclosure toggles it without restoring the original header.
+  Right-click or a 500ms touch long-press anywhere on the NG card opens its
+  dedicated one-action menu, 「[理由]から削除」. Removal is intentionally not
+  offered from the original ID / wacchoi badge menus.
   **Res body context menu:** right-click (PC) or 500ms touch long-press
   on the body opens the reply menu — a standard Sumi context menu
   (modal, full-width default `.action` buttons) with 返信する and

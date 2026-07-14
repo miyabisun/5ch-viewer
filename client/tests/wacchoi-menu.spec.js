@@ -202,7 +202,7 @@ test('NGﾜｯﾁｮｲに追加 calls POST /api/ng-wacchoi with correct suffix,
   const addRequests = []
   await setupRoutes(page)
   // Override ng-wacchoi to capture POST.
-  await page.route('**/api/ng-wacchoi', async (route) => {
+  await page.route(/\/api\/ng-wacchoi(?:\?.*)?$/, async (route) => {
     if (route.request().method() === 'POST') {
       addRequests.push(route.request().postDataJSON())
       route.fulfill({ json: { ok: true } })
@@ -231,7 +231,7 @@ test('NGﾜｯﾁｮｲに追加 calls POST /api/ng-wacchoi with correct suffix,
   expect(req.wacchoi).toBe('7bb6-83IP')
 })
 
-test('NGﾜｯﾁｮｲ追加後に再開するとNGﾜｯﾁｮｲから削除ボタンが出る', async ({ page }) => {
+test('NGﾜｯﾁｮｲ追加後はワッチョイメニューに削除ボタンを出さない', async ({ page }) => {
   // week_key for 2025/01/01(水) -> Thursday 2024/12/26
   const existingNg = [{ suffix: '83IP', board: 'applism', week_key: '2024/12/26', wacchoi: '7bb6-83IP', created_at: 0 }]
 
@@ -254,9 +254,36 @@ test('NGﾜｯﾁｮｲ追加後に再開するとNGﾜｯﾁｮｲから削除�
   await page.locator('.wacchoi-badge').first().click({ button: 'right' })
   await page.getByRole('button', { name: 'NGﾜｯﾁｮｲに追加' }).click()
 
-  // Re-open menu: button must now say 削除.
-  await page.locator('.wacchoi-badge').first().click({ button: 'right' })
-  await expect(page.getByRole('button', { name: 'NGﾜｯﾁｮｲから削除' })).toBeVisible()
+  // The original badge is replaced by the NG disclosure, so its old removal
+  // action is physically unavailable and must not remain in the DOM.
+  await expect(page.locator('del.ng').first()).toHaveText('[レス番号: 1] [理由: NGワッチョイ]')
+  await expect(page.locator('.wacchoi-badge[data-wacchoi="7bb6-83IP"]')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'NGﾜｯﾁｮｲから削除' })).toHaveCount(0)
+})
+
+test('NG wacchoi post menu removes the matching scoped entry', async ({ page }) => {
+  const existingNg = [{ suffix: '83IP', board: 'applism', week_key: '2024/12/26', wacchoi: '7bb6-83IP', created_at: 0 }]
+  const deleteRequests = []
+  await setupRoutes(page, { ngWacchoi: existingNg })
+  await page.route(/\/api\/ng-wacchoi(?:\?.*)?$/, async (route) => {
+    if (route.request().method() === 'DELETE') {
+      const url = new URL(route.request().url())
+      deleteRequests.push(Object.fromEntries(url.searchParams))
+      await route.fulfill({ json: { ok: true } })
+    } else {
+      await route.fulfill({ json: existingNg })
+    }
+  })
+
+  await page.goto(THREAD_PATH)
+  const ngHeader = page.locator('del.ng').first()
+  await expect(ngHeader).toHaveText('[レス番号: 1] [理由: NGワッチョイ]')
+  await ngHeader.click({ button: 'right' })
+  await expect(page.locator('[data-testid="ng-menu"]')).toBeVisible()
+  await page.getByRole('button', { name: 'NGワッチョイから削除' }).click()
+
+  await expect.poll(() => deleteRequests.length).toBe(1)
+  expect(deleteRequests[0]).toEqual({ suffix: '83IP', board: 'applism', week_key: '2024/12/26' })
 })
 
 // --- NG scope regression tests ---

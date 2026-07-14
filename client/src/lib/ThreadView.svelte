@@ -104,6 +104,7 @@
       idMenu != null ||
       wacchoiListKey != null ||
       wacchoiMenu != null ||
+      ngMenu != null ||
       replyMenuResNum != null ||
       idSearchLoading ||
       idSearchResult != null ||
@@ -617,8 +618,8 @@
     )
   }
 
-  // Add or remove the wacchoi from the NG list. Calls onngwacchoichange to let the parent reload.
-  async function toggleNgWacchoi(wacchoi, date) {
+  // Add the wacchoi to the NG list. Removal belongs exclusively to the NG post menu.
+  async function addNgWacchoi(wacchoi, date) {
     const suffix = extractWacchoiSuffix(wacchoi)
     const weekKey = wacchoiWeekKey(date)
     if (!suffix || !weekKey) {
@@ -627,11 +628,7 @@
       return
     }
     try {
-      if (isWacchoiNgFor(wacchoi, date)) {
-        await api.removeNgWacchoi({ suffix, board: fav.board, week_key: weekKey })
-      } else {
-        await api.addNgWacchoi({ suffix, board: fav.board, week_key: weekKey, wacchoi })
-      }
+      await api.addNgWacchoi({ suffix, board: fav.board, week_key: weekKey, wacchoi })
       onngwacchoichange()
     } catch (e) {
       console.error('[ng-wacchoi]', e)
@@ -645,6 +642,20 @@
   function isWacchoiNg(r) {
     if (!wacchoiEnabledFlag) return false
     return isWacchoiNgFor(resolveWacchoi(r), r.date)
+  }
+
+  // Return the single reason presented for an NG post. ID takes precedence when
+  // a post matches both lists; removing it then naturally reveals the remaining
+  // wacchoi reason after the parent reloads the NG state.
+  function ngReason(r) {
+    if (r.id && ngIds.has(r.id)) {
+      return { kind: 'id', label: 'NG ID', id: r.id }
+    }
+    const wacchoi = resolveWacchoi(r)
+    if (isWacchoiNg(r)) {
+      return { kind: 'wacchoi', label: 'NGワッチョイ', wacchoi, date: r.date }
+    }
+    return null
   }
 
   // --- Wacchoi search ---
@@ -721,19 +732,60 @@
     closeIdMenu()
   }
 
-  // Add or remove the ID from the NG list. Calls onngchange to let the parent reload.
-  async function toggleNg(id) {
+  // Add the ID to the NG list. Removal belongs exclusively to the NG post menu.
+  async function addNg(id) {
     try {
-      if (ngIds.has(id)) {
-        await api.removeNgId(id)
-      } else {
-        await api.addNgId(id)
-      }
+      await api.addNgId(id)
       onngchange()
     } catch (e) {
       console.error('[ng]', e)
     }
     closeIdMenu()
+  }
+
+  // --- NG post disclosure / context menu ---
+  let expandedNgRes = $state(new Set())
+  let ngMenu = $state(null) // { resNum, kind, label, ...reason fields } | null
+
+  function toggleNgBody(e, resNum) {
+    e.preventDefault()
+    e.stopPropagation()
+    // A touch long-press is followed by a synthetic click. Consume it so opening
+    // the menu never also reveals the body underneath.
+    if (cardLongPressed) {
+      cardLongPressed = false
+      return
+    }
+    if (expandedNgRes.has(resNum)) expandedNgRes.delete(resNum)
+    else expandedNgRes.add(resNum)
+    expandedNgRes = new Set(expandedNgRes)
+  }
+
+  function closeNgMenu() {
+    ngMenu = null
+    cardLongPressed = false
+  }
+
+  async function removeNgReason() {
+    if (ngMenu == null) return
+    const target = ngMenu
+    try {
+      if (target.kind === 'id') {
+        await api.removeNgId(target.id)
+        onngchange()
+      } else {
+        const suffix = extractWacchoiSuffix(target.wacchoi)
+        const weekKey = wacchoiWeekKey(target.date)
+        if (!suffix || !weekKey) throw new Error('NGワッチョイの対象を特定できません')
+        await api.removeNgWacchoi({ suffix, board: fav.board, week_key: weekKey })
+        onngwacchoichange()
+      }
+      expandedNgRes.delete(target.resNum)
+      expandedNgRes = new Set(expandedNgRes)
+    } catch (e) {
+      console.error('[ng-remove]', e)
+    }
+    closeNgMenu()
   }
 
   // --- Reply context menu ---
@@ -742,10 +794,12 @@
 
   // Right-click anywhere on a res card opens its reply menu. Controls with a
   // dedicated context menu stop propagation before this card-level handler.
-  function onCardContextMenu(e, resNum) {
-    if (resNum == null) return
+  function onCardContextMenu(e, r) {
+    if (r?.num == null) return
     e.preventDefault()
-    replyMenuResNum = resNum
+    const reason = ngReason(r)
+    if (reason) ngMenu = { resNum: r.num, ...reason }
+    else replyMenuResNum = r.num
   }
 
   // Long-press detection for the whole res card (touch devices, 500ms, same pattern as
@@ -754,13 +808,15 @@
   // native right-click path (onCardContextMenu) cannot cover touch.
   let cardPressTimer
   let cardLongPressed = false
-  function onCardPointerDown(e, resNum) {
+  function onCardPointerDown(e, r) {
     if (e.pointerType !== 'touch') return
-    if (resNum == null) return
+    if (r?.num == null) return
     cardLongPressed = false
     cardPressTimer = setTimeout(() => {
       cardLongPressed = true
-      replyMenuResNum = resNum
+      const reason = ngReason(r)
+      if (reason) ngMenu = { resNum: r.num, ...reason }
+      else replyMenuResNum = r.num
     }, 500)
   }
   function cancelCardPress() {
@@ -940,12 +996,18 @@
 
 <!-- resHead + body snippet combined (used in main list). -->
 {#snippet resHeadAndBody(r)}
-  {@const ngd = (r.id && ngIds.has(r.id)) || isWacchoiNg(r)}
-  {#if ngd}
-    <!-- NG post: header shown struck-through + muted, body hidden completely. -->
-    <del class="ng">
-      {@render resHead(r)}
-    </del>
+  {@const reason = ngReason(r)}
+  {#if reason}
+    <!-- NG post: concise struck-through disclosure; body starts hidden. -->
+    <button
+      class="ng-toggle"
+      type="button"
+      aria-expanded={expandedNgRes.has(r.num)}
+      onclick={(e) => toggleNgBody(e, r.num)}
+    ><del class="ng">[レス番号: {r.num}] [理由: {reason.label}]</del></button>
+    {#if expandedNgRes.has(r.num)}
+      {@render body(r.body, r.num)}
+    {/if}
   {:else}
     {@render resHead(r)}
     {@render body(r.body, r.num)}
@@ -970,8 +1032,8 @@
     {:else}
       <!-- Uses resHeadAndBody so NG posts are hidden even inside the anchor tree. -->
       <div class="res" class:anchor-self={highlight} role="group" aria-label="レス {r.num}"
-        oncontextmenu={(e) => onCardContextMenu(e, r.num)}
-        onpointerdown={(e) => onCardPointerDown(e, r.num)}
+        oncontextmenu={(e) => onCardContextMenu(e, r)}
+        onpointerdown={(e) => onCardPointerDown(e, r)}
         onpointerup={cancelCardPress}
         onpointerleave={cancelCardPress}
         onpointercancel={cancelCardPress}
@@ -1008,8 +1070,8 @@
         <!-- own takes priority over unread: when r.own is true, unread class is not added -->
         <div class="res" use:track={r.num} class:unread={r.num > readBaseline && !r.own} class:own={r.own}
           role="group" aria-label="レス {r.num}"
-          oncontextmenu={(e) => onCardContextMenu(e, r.num)}
-          onpointerdown={(e) => onCardPointerDown(e, r.num)}
+          oncontextmenu={(e) => onCardContextMenu(e, r)}
+          onpointerdown={(e) => onCardPointerDown(e, r)}
           onpointerup={cancelCardPress}
           onpointerleave={cancelCardPress}
           onpointercancel={cancelCardPress}
@@ -1101,8 +1163,8 @@
     <div class="id-list" data-testid="id-list" role="presentation" onclick={onBodyClick}>
       {#each idListRes as r (r.num)}
         <div class="res id-list-res" role="group" aria-label="レス {r.num}"
-          oncontextmenu={(e) => onCardContextMenu(e, r.num)}
-          onpointerdown={(e) => onCardPointerDown(e, r.num)}
+          oncontextmenu={(e) => onCardContextMenu(e, r)}
+          onpointerdown={(e) => onCardPointerDown(e, r)}
           onpointerup={cancelCardPress}
           onpointerleave={cancelCardPress}
           onpointercancel={cancelCardPress}
@@ -1123,8 +1185,8 @@
     <div class="id-list" data-testid="wacchoi-list" role="presentation" onclick={onBodyClick}>
       {#each wacchoiListRes as r (r.num)}
         <div class="res id-list-res" role="group" aria-label="レス {r.num}"
-          oncontextmenu={(e) => onCardContextMenu(e, r.num)}
-          onpointerdown={(e) => onCardPointerDown(e, r.num)}
+          oncontextmenu={(e) => onCardContextMenu(e, r)}
+          onpointerdown={(e) => onCardPointerDown(e, r)}
           onpointerup={cancelCardPress}
           onpointerleave={cancelCardPress}
           onpointercancel={cancelCardPress}
@@ -1143,11 +1205,23 @@
       <div class="menu-title">ﾜｯﾁｮｲ:{wacchoiMenu.wacchoi}</div>
     {/snippet}
     <div class="menu" data-testid="wacchoi-menu">
-      <button class="action" onclick={() => toggleNgWacchoi(wacchoiMenu.wacchoi, wacchoiMenu.date)}>
-        {isWacchoiNgFor(wacchoiMenu.wacchoi, wacchoiMenu.date) ? 'NGﾜｯﾁｮｲから削除' : 'NGﾜｯﾁｮｲに追加'}
-      </button>
+      {#if !isWacchoiNgFor(wacchoiMenu.wacchoi, wacchoiMenu.date)}
+        <button class="action" onclick={() => addNgWacchoi(wacchoiMenu.wacchoi, wacchoiMenu.date)}>NGﾜｯﾁｮｲに追加</button>
+      {/if}
       <button class="action" onclick={() => copyWacchoi(wacchoiMenu.wacchoi)}>コピー</button>
       <button class="action" onclick={() => startWacchoiSearch(wacchoiMenu.wacchoi)}>取得済みスレから検索</button>
+    </div>
+  </Modal>
+{/if}
+
+<!-- NG post right-click / long-press menu. -->
+{#if ngMenu != null}
+  <Modal onclose={closeNgMenu}>
+    {#snippet header()}
+      <div class="menu-title">レス {ngMenu.resNum}（{ngMenu.label}）</div>
+    {/snippet}
+    <div class="menu" data-testid="ng-menu">
+      <button class="action" onclick={removeNgReason}>{ngMenu.label}から削除</button>
     </div>
   </Modal>
 {/if}
@@ -1207,9 +1281,9 @@
       <div class="menu-title">ID:{idMenu}</div>
     {/snippet}
     <div class="menu" data-testid="id-menu">
-      <button class="action" onclick={() => toggleNg(idMenu)}>
-        {ngIds.has(idMenu) ? 'NGIDから削除' : 'NGIDに追加'}
-      </button>
+      {#if !ngIds.has(idMenu)}
+        <button class="action" onclick={() => addNg(idMenu)}>NGIDに追加</button>
+      {/if}
       <button class="action" onclick={() => copyId(idMenu)}>コピー</button>
       <button class="action" onclick={() => startIdSearch(idMenu)}>取得済みスレから検索</button>
     </div>
@@ -1433,10 +1507,29 @@
     cursor: pointer;
   }
 
-  /* NG post: header is struck-through + muted; body is not rendered. */
+  /* NG disclosure: terse, muted and keyboard-focusable; its body is opt-in. */
+  .ng-toggle {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    color: var(--muted);
+    background: transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
   .ng {
     color: var(--muted);
     text-decoration: line-through;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .ng-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   /* ID action menu (same layout as FavoritesList menu). */
