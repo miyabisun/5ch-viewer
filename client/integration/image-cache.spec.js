@@ -114,6 +114,7 @@ test('seeded image is served via GET /api/images/{path}', async ({ request }) =>
   const r = await request.get(`${APP_URL}/api/images/${imagePath}`)
   expect(r.ok()).toBeTruthy()
   expect(r.headers()['content-type']).toContain('image/png')
+  expect(r.headers()['x-content-type-options']).toBe('nosniff')
   expect(r.headers()['cache-control']).toContain('max-age=31536000')
 })
 

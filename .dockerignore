@@ -1,0 +1,6 @@
+.git
+target
+data
+client/node_modules
+client/build
+client/test-results

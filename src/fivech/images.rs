@@ -326,22 +326,38 @@ pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) 
         .collect::<Vec<_>>()
         .join(",");
     let sql = format!(
-        "SELECT url FROM image_cache WHERE url IN ({placeholders}) AND image IS NOT NULL"
+        "SELECT id, url, file_size FROM image_cache WHERE url IN ({placeholders})"
     );
 
     // Find which URLs are already cached.
-    let already_cached: std::collections::HashSet<String> = {
+    let cached_rows: Vec<(i64, String, Option<i64>)> = {
         let conn = state.db.lock().unwrap();
-        let mut stmt = conn.prepare(&sql).unwrap_or_else(|_| {
-            // Fallback: nothing cached (will re-download).
-            conn.prepare("SELECT url FROM image_cache WHERE 0").unwrap()
-        });
+        let mut stmt = conn.prepare(&sql).unwrap();
         let params: Vec<&dyn rusqlite::ToSql> =
             urls.iter().map(|u| u as &dyn rusqlite::ToSql).collect();
-        stmt.query_map(params.as_slice(), |r| r.get::<_, String>(0))
+        stmt.query_map(params.as_slice(), |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+            ))
+        })
             .map(|rows| rows.flatten().collect())
             .unwrap_or_default()
     };
+    let already_cached: std::collections::HashSet<String> = cached_rows
+        .into_iter()
+        .filter_map(|(id, url, size)| {
+            crate::image_cache::audit_file(
+                std::path::Path::new(&state.config.image_cache_dir),
+                id,
+                size,
+            )
+            .ok()
+            .filter(|ok| *ok)
+            .map(|_| url)
+        })
+        .collect();
 
     let pending: Vec<String> = urls
         .into_iter()
@@ -360,25 +376,55 @@ pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) 
             Some(p) => p,
             None => continue,
         };
+        let id = {
+            let conn = state.db.lock().unwrap();
+            if conn
+                .execute(
+                    "INSERT OR IGNORE INTO image_cache (url, path, mosaic) VALUES (?1, ?2, 0)",
+                    rusqlite::params![url, path],
+                )
+                .is_err()
+            {
+                continue;
+            }
+            match conn.query_row(
+                "SELECT id FROM image_cache WHERE url=?1",
+                rusqlite::params![url],
+                |r| r.get(0),
+            ) {
+                Ok(id) => id,
+                Err(_) => continue,
+            }
+        };
         let sem = sem.clone();
         let client = state.image_http.clone();
         let db = state.db.clone();
+        let image_cache_dir = state.config.image_cache_dir.clone();
         let url_clone = url.clone();
 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.ok()?;
             let blob = fetch_image(&client, &url_clone).await?;
-            {
-                let conn = db.lock().unwrap();
-                conn.execute(
-                    "INSERT INTO image_cache (url, path, image, mime, mosaic)
-                     VALUES (?1, ?2, ?3, ?4, 0)
-                     ON CONFLICT(url) DO UPDATE SET path=excluded.path, image=excluded.image, mime=excluded.mime",
-                    rusqlite::params![url_clone, path, blob.bytes, blob.mime],
+            let size = blob.bytes.len() as i64;
+            let mime = blob.mime;
+            let bytes = blob.bytes;
+            tokio::task::spawn_blocking(move || {
+                crate::image_cache::write_verified(
+                    std::path::Path::new(&image_cache_dir),
+                    id,
+                    &bytes,
                 )
-                .ok()?;
-            }
-            tracing::debug!("[images] cached {} ({} bytes)", url_clone, blob.bytes.len());
+            })
+            .await
+            .ok()?
+            .ok()?;
+            let conn = db.lock().unwrap();
+            conn.execute(
+                "UPDATE image_cache SET path=?1, mime=?2, file_size=?3 WHERE id=?4",
+                rusqlite::params![path, mime, size, id],
+            )
+            .ok()?;
+            tracing::debug!("[images] cached {} ({} bytes)", url_clone, size);
             Some(())
         });
         handles.push(handle);

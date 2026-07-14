@@ -39,4 +39,19 @@ docker run -p 3000:3000 -v viewer-of-5ch-data:/data viewer-of-5ch
 | --- | --- | --- |
 | `PORT` | 3000 | 待受ポート |
 | `DATABASE_PATH` | ./data/5ch-viewer.db | SQLite パス |
+| `IMAGE_CACHE_DIR` | DATABASE_PATH の親/images | 画像キャッシュファイルの保存先 |
 | `BASE_PATH` | （空） | リバースプロキシのサブパス（例: `/5ch`） |
+
+## 画像キャッシュの移行
+
+旧バージョンのSQLite BLOBキャッシュを利用している場合は、アプリを停止してDBをバックアップした後、新バージョンを起動する前に一度だけ実行する。
+
+```bash
+DATABASE_PATH=./data/5ch-viewer.db \
+IMAGE_CACHE_DIR=./data/images \
+cargo run --release --bin migrate-image-cache
+```
+
+全画像をファイルへ書き出して検証できた場合に限り、SQLiteの画像テーブルをメタデータ専用スキーマへ置き換える。再実行時はファイル監査のみを行い、`VACUUM`は実行しない。
+
+`IMAGE_CACHE_DIR`はアプリ専用とし、アプリ実行ユーザー以外から書き込めない権限で管理する。

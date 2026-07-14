@@ -7,6 +7,7 @@ pub struct Config {
     pub port: u16,
     pub base_path: String,
     pub db_path: String,
+    pub image_cache_dir: String,
     /// Path to the persistent cookie jar file (JSON). Loaded at startup, saved after
     /// each successful post so acorn/MonaTicket survive process restarts.
     pub cookies_path: String,
@@ -44,6 +45,17 @@ impl Config {
         let db_path =
             env::var("DATABASE_PATH").unwrap_or_else(|_| "./data/5ch-viewer.db".to_string());
 
+        let image_cache_dir = env::var("IMAGE_CACHE_DIR")
+            .ok()
+            .map(|path| path.trim().to_string())
+            .filter(|path| !path.is_empty())
+            .unwrap_or_else(|| {
+                std::path::Path::new(&db_path)
+                    .parent()
+                    .map(|p| p.join("images").to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "./images".to_string())
+            });
+
         // Cookie jar persisted alongside the DB (same data directory by default).
         let cookies_path = env::var("COOKIES_PATH").unwrap_or_else(|_| {
             // Derive from db_path: replace the last path component with "cookies.json".
@@ -64,6 +76,7 @@ impl Config {
             port,
             base_path,
             db_path,
+            image_cache_dir,
             cookies_path,
             fivech_base_url,
         }

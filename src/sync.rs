@@ -233,6 +233,7 @@ mod tests {
                 port: 3000,
                 base_path: String::new(),
                 db_path: ":memory:".to_string(),
+                image_cache_dir: "/tmp/fivech-test-images".to_string(),
                 cookies_path: "/tmp/fivech_test_cookies.json".to_string(),
                 fivech_base_url: String::new(),
             },

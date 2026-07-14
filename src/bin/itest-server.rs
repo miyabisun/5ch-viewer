@@ -483,6 +483,10 @@ async fn ctl_reset(State(app): State<AppState>) -> Json<bool> {
     conn.execute("DELETE FROM own_posts", []).unwrap();
     conn.execute("DELETE FROM favorites", []).unwrap();
     conn.execute("DELETE FROM image_cache", []).unwrap();
+    drop(conn);
+    let image_root = std::path::Path::new(&app.config.image_cache_dir);
+    let _ = std::fs::remove_dir_all(image_root);
+    std::fs::create_dir(image_root).unwrap();
     Json(true) // dat_blobs cascade-deletes via the favorites FK
 }
 
@@ -497,7 +501,7 @@ struct SeedImageCtl {
 
 /// Seeds an image_cache row directly (bypasses the HTTP download pipeline).
 /// Used by tests that need to verify the serve endpoint without hitting external URLs.
-/// The `image` BLOB is filled with a minimal 1×1 PNG so the serve path is exercised.
+/// A minimal 1×1 PNG is written to the filesystem cache so the serve path is exercised.
 async fn ctl_seed_image(State(app): State<AppState>, Json(c): Json<SeedImageCtl>) -> Json<bool> {
     // Minimal PNG: 1×1 pixel, RGB.
     let tiny_png: Vec<u8> = vec![
@@ -511,13 +515,30 @@ async fn ctl_seed_image(State(app): State<AppState>, Json(c): Json<SeedImageCtl>
         0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
         0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
+    let id = {
+        let conn = app.db.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO image_cache (url, path, mosaic) VALUES (?1, ?2, ?3)",
+            params![c.url, c.path, c.mosaic],
+        )
+        .unwrap();
+        conn.query_row(
+            "SELECT id FROM image_cache WHERE url=?1",
+            params![c.url],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+    };
+    viewer_of_5ch::image_cache::write_verified(
+        std::path::Path::new(&app.config.image_cache_dir),
+        id,
+        &tiny_png,
+    )
+    .unwrap();
     let conn = app.db.lock().unwrap();
     conn.execute(
-        "INSERT INTO image_cache (url, path, image, mime, mosaic)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(url) DO UPDATE SET path=excluded.path, image=excluded.image,
-             mime=excluded.mime, mosaic=excluded.mosaic",
-        params![c.url, c.path, tiny_png, c.mime, c.mosaic],
+        "UPDATE image_cache SET path=?1, mime=?2, file_size=?3, mosaic=?4 WHERE id=?5",
+        params![c.path, c.mime, tiny_png.len() as i64, c.mosaic, id],
     )
     .unwrap();
     Json(true)
@@ -565,11 +586,14 @@ async fn main() {
         port: app_port,
         base_path: String::new(),
         db_path: ":memory:".into(),
+        image_cache_dir: format!("/tmp/fivech-itest-images-{}", std::process::id()),
         // Integration tests use an in-memory DB; cookies are not persisted.
         // Use a temp path that will not be written (the itest process is short-lived).
         cookies_path: "/tmp/fivech_itest_cookies.json".into(),
         fivech_base_url: format!("http://127.0.0.1:{mock_port}"),
     };
+    let _ = std::fs::remove_dir_all(&config.image_cache_dir);
+    std::fs::create_dir(&config.image_cache_dir).expect("create integration image cache");
     let app_state = AppState::new(conn, config);
 
     // The real router + test-only control endpoints (seed / reset the in-memory DB).

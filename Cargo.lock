@@ -2161,6 +2161,7 @@ dependencies = [
  "dotenvy",
  "encoding_rs",
  "futures-util",
+ "libc",
  "quick-xml",
  "regex-lite",
  "reqwest",

@@ -8,9 +8,8 @@ use crate::error::AppError;
 use crate::fivech::images::normalize_image_path;
 use crate::models::MosaicRequest;
 use crate::state::AppState;
-use axum::body::Bytes;
 use axum::extract::{Path, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderName, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
@@ -41,25 +40,35 @@ fn validate_mosaic_url(url: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// `GET /api/images/{*path}` — serve a cached image BLOB by its normalized path.
-/// Returns 404 when the path is not cached or the BLOB is NULL (mosaic pre-registration only).
+/// `GET /api/images/{*path}` — serve a cached image file by its normalized URL path.
+/// Returns 404 when the metadata or corresponding regular file is missing.
 /// Cache-Control is set to immutable: images are content-addressed by URL (never change in place).
 async fn serve_image(
     State(state): State<AppState>,
     Path(path): Path<String>,
 ) -> Result<Response, AppError> {
-    let conn = state.db.lock().unwrap();
-    let row: Option<(Vec<u8>, String)> = conn
-        .query_row(
-            "SELECT image, mime FROM image_cache WHERE path=?1 AND image IS NOT NULL",
+    let row: Option<(i64, String, i64)> = {
+        let conn = state.db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, mime, file_size FROM image_cache WHERE path=?1 AND file_size IS NOT NULL",
             params![path],
-            |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
-        .optional()?;
+        .optional()?
+    };
 
     match row {
-        Some((blob, mime)) => {
-            let body = Bytes::from(blob);
+        Some((id, mime, file_size)) => {
+            if !matches!(mime.as_str(), "image/png" | "image/jpeg" | "image/gif" | "image/webp") {
+                return Err(AppError::NotFound(format!("image MIME is invalid: {path}")));
+            }
+            let root = state.config.image_cache_dir.clone();
+            let body = tokio::task::spawn_blocking(move || {
+                crate::image_cache::read_verified(std::path::Path::new(&root), id, file_size)
+            })
+                .await
+                .map_err(|e| AppError::Internal(format!("image read task failed: {e}")))?
+                .map_err(|_| AppError::NotFound(format!("image file is unavailable: {path}")))?;
             let content_type: axum::http::HeaderValue = mime
                 .parse()
                 .unwrap_or_else(|_| "application/octet-stream".parse().unwrap());
@@ -70,8 +79,12 @@ async fn serve_image(
                 [
                     (header::CONTENT_TYPE, content_type),
                     (header::CACHE_CONTROL, cache_control),
+                    (
+                        HeaderName::from_static("x-content-type-options"),
+                        axum::http::HeaderValue::from_static("nosniff"),
+                    ),
                 ],
-                body,
+                axum::body::Bytes::from(body),
             )
                 .into_response())
         }
@@ -80,7 +93,7 @@ async fn serve_image(
 }
 
 /// `POST /api/images/mosaic` — set mosaic=1 for the given URL.
-/// Inserts a placeholder row when the URL is not yet in the cache (BLOB will be filled later).
+/// Inserts a placeholder row when the URL is not yet cached (the file will be filled later).
 async fn set_mosaic(
     State(state): State<AppState>,
     Json(req): Json<MosaicRequest>,

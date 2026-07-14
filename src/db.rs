@@ -73,10 +73,11 @@ pub const SCHEMA: &str = "
     );
 
     CREATE TABLE IF NOT EXISTS image_cache (
-        url         TEXT    NOT NULL PRIMARY KEY,
+        id          INTEGER PRIMARY KEY,
+        url         TEXT    NOT NULL UNIQUE,
         path        TEXT    NOT NULL DEFAULT '',
-        image       BLOB,
         mime        TEXT    NOT NULL DEFAULT '',
+        file_size   INTEGER,
         mosaic      INTEGER NOT NULL DEFAULT 0,
         created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     );
@@ -87,6 +88,10 @@ pub const SCHEMA: &str = "
 /// Applies idempotent schema migrations for existing databases created before a given
 /// column/cleanup was introduced. Safe to call repeatedly (each step is a no-op once applied).
 pub fn migrate(conn: &Connection) {
+    if has_column(conn, "image_cache", "image") {
+        panic!("image_cache contains legacy image BLOBs; run `migrate-image-cache` before starting the application");
+    }
+
     // Migration: add `archived` column to favorites if it does not exist yet (existing DBs).
     if !has_column(conn, "favorites", "archived") {
         conn.execute_batch(
@@ -103,12 +108,8 @@ pub fn migrate(conn: &Connection) {
         .expect("Failed to add dat_bytes column to dat_blobs");
     }
 
-    // Migration: add `mosaic` column to image_cache if it does not exist yet (existing DBs).
-    if !has_column(conn, "image_cache", "mosaic") {
-        conn.execute_batch(
-            "ALTER TABLE image_cache ADD COLUMN mosaic INTEGER NOT NULL DEFAULT 0",
-        )
-        .expect("Failed to add mosaic column to image_cache");
+    if !has_column(conn, "image_cache", "file_size") {
+        panic!("image_cache has an unsupported schema; run `migrate-image-cache`");
     }
 
     // One-time migration: if any dat_blobs row still holds a Shift-JIS BLOB (typeof='blob'),
@@ -358,10 +359,12 @@ mod tests {
                     REFERENCES favorites(server, board, thread_id) ON DELETE CASCADE
             );
             CREATE TABLE image_cache (
-                url        TEXT NOT NULL PRIMARY KEY,
+                id         INTEGER PRIMARY KEY,
+                url        TEXT NOT NULL UNIQUE,
                 path       TEXT NOT NULL DEFAULT '',
-                image      BLOB,
                 mime       TEXT NOT NULL DEFAULT '',
+                file_size  INTEGER,
+                mosaic     INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
             );",
         )
@@ -398,7 +401,7 @@ mod tests {
     fn image_cache_upsert_and_mosaic_preserved() {
         let conn = open_memory();
 
-        // Insert a new image cache entry (BLOB not yet available → NULL).
+        // Insert a new image cache entry (file not yet available → NULL size).
         conn.execute(
             "INSERT INTO image_cache (url, path, mosaic) VALUES ('https://i.imgur.com/Abc123.jpg', 'i.imgur.com/Abc123.jpg', 1)",
             [],
@@ -415,13 +418,11 @@ mod tests {
             .unwrap();
         assert_eq!(mosaic, 1);
 
-        // UPSERT: fill in the image BLOB + mime, but must not touch mosaic.
-        let fake_png: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47];
+        // Filling file metadata must not touch mosaic.
         conn.execute(
-            "INSERT INTO image_cache (url, path, image, mime, mosaic)
-             VALUES ('https://i.imgur.com/Abc123.jpg', 'i.imgur.com/Abc123.jpg', ?1, 'image/png', 0)
-             ON CONFLICT(url) DO UPDATE SET path=excluded.path, image=excluded.image, mime=excluded.mime",
-            rusqlite::params![fake_png],
+            "UPDATE image_cache SET mime='image/png', file_size=4
+             WHERE url='https://i.imgur.com/Abc123.jpg'",
+            [],
         )
         .unwrap();
 
@@ -446,6 +447,24 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM image_cache", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1, "INSERT OR IGNORE must not create a duplicate row");
+    }
+
+    #[test]
+    #[should_panic(expected = "migrate-image-cache")]
+    fn legacy_image_blob_schema_requires_explicit_migration() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE image_cache (
+                url TEXT NOT NULL PRIMARY KEY,
+                path TEXT NOT NULL DEFAULT '',
+                image BLOB,
+                mime TEXT NOT NULL DEFAULT '',
+                mosaic INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT 0
+            );",
+        )
+        .unwrap();
+        migrate(&conn);
     }
 
     #[test]
