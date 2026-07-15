@@ -14,8 +14,7 @@ static THREAD_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 // SSRF mitigation: server/board allow only alphanumerics, hyphen, and underscore; thread_id only digits.
 // This prevents host/path injection (slash, dot, @, etc.) during URL assembly.
-static SEGMENT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
+static SEGMENT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
 static THREAD_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9]+$").unwrap());
 
 #[derive(Debug, Clone, PartialEq)]

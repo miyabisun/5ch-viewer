@@ -9,8 +9,7 @@ use std::sync::LazyLock;
 // Matches "ID:" followed by non-whitespace characters.
 // 5ch IDs appear after the date/time and are delimited by whitespace (ASCII or full-width)
 // or end of string. We capture everything after "ID:" until the next whitespace or EOL.
-static ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"ID:([^\s\u{3000}]+)").unwrap());
+static ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"ID:([^\s\u{3000}]+)").unwrap());
 
 /// Extracts the raw ID string (the part after "ID:") from the dat date field.
 /// Returns None when no ID token is present (e.g., the OP post on some boards).
@@ -116,7 +115,8 @@ mod tests {
 
     #[test]
     fn extracts_title_from_first_line() {
-        let text = "名無し<>sage<>2025 ID:x<>本文<>【テスト】スレッド Part1\n名無し<><>2025<>本文2<>\n";
+        let text =
+            "名無し<>sage<>2025 ID:x<>本文<>【テスト】スレッド Part1\n名無し<><>2025<>本文2<>\n";
         assert_eq!(
             title_from_dat(text),
             Some("【テスト】スレッド Part1".to_string())

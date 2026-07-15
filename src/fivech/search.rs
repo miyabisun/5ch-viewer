@@ -31,7 +31,11 @@ pub struct SearchResult {
 /// Searches via ff5ch.syoboi.jp and returns the result list.
 pub async fn search(client: &Client, query: &str) -> Result<Vec<SearchResult>, AppError> {
     let url = format!("{SEARCH_BASE}{}&alt=rss", urlencoding::encode(query));
-    let resp = client.get(&url).header("User-Agent", USER_AGENT).send().await?;
+    let resp = client
+        .get(&url)
+        .header("User-Agent", USER_AGENT)
+        .send()
+        .await?;
     if !resp.status().is_success() {
         return Err(AppError::Upstream(format!(
             "ff5ch.syoboi.jp HTTP {}",

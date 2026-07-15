@@ -11,9 +11,8 @@ use std::sync::LazyLock;
 
 // Matches any <a ...> tag (with attributes) followed by its content and </a>.
 // Used to locate anchor elements whose href determines keep-vs-strip behaviour.
-static ANCHOR_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)<a\b([^>]*?)>(.*?)</a>").unwrap()
-});
+static ANCHOR_TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)<a\b([^>]*?)>(.*?)</a>").unwrap());
 
 // Extracts the value of the href attribute from the attribute string of an <a> tag.
 static HREF_RE: LazyLock<Regex> =

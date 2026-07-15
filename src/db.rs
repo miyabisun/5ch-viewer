@@ -94,18 +94,14 @@ pub fn migrate(conn: &Connection) {
 
     // Migration: add `archived` column to favorites if it does not exist yet (existing DBs).
     if !has_column(conn, "favorites", "archived") {
-        conn.execute_batch(
-            "ALTER TABLE favorites ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
-        )
-        .expect("Failed to add archived column to favorites");
+        conn.execute_batch("ALTER TABLE favorites ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            .expect("Failed to add archived column to favorites");
     }
 
     // Migration: add `dat_bytes` column to dat_blobs if it does not exist yet (existing DBs).
     if !has_column(conn, "dat_blobs", "dat_bytes") {
-        conn.execute_batch(
-            "ALTER TABLE dat_blobs ADD COLUMN dat_bytes INTEGER NOT NULL DEFAULT 0",
-        )
-        .expect("Failed to add dat_bytes column to dat_blobs");
+        conn.execute_batch("ALTER TABLE dat_blobs ADD COLUMN dat_bytes INTEGER NOT NULL DEFAULT 0")
+            .expect("Failed to add dat_bytes column to dat_blobs");
     }
 
     if !has_column(conn, "image_cache", "file_size") {
@@ -231,11 +227,8 @@ mod tests {
     #[test]
     fn ng_ids_table_exists_and_accepts_rows() {
         let conn = open_memory();
-        conn.execute(
-            "INSERT INTO ng_ids (ng_id) VALUES ('testUser123')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO ng_ids (ng_id) VALUES ('testUser123')", [])
+            .unwrap();
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM ng_ids", [], |r| r.get(0))
             .unwrap();
@@ -537,7 +530,10 @@ mod tests {
         let count_after: i64 = conn
             .query_row("SELECT COUNT(*) FROM dat_blobs", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count_after, 0, "migration must clear all rows when any BLOB row exists");
+        assert_eq!(
+            count_after, 0,
+            "migration must clear all rows when any BLOB row exists"
+        );
 
         // Complement: when there are NO blob rows, the migration must not delete anything.
         // Re-insert only a TEXT row.
@@ -554,6 +550,9 @@ mod tests {
         let count_text_only: i64 = conn
             .query_row("SELECT COUNT(*) FROM dat_blobs", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count_text_only, 1, "TEXT-only rows must not be deleted by the migration");
+        assert_eq!(
+            count_text_only, 1,
+            "TEXT-only rows must not be deleted by the migration"
+        );
     }
 }

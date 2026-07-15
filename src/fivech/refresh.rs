@@ -80,8 +80,13 @@ pub async fn refresh_board_with_subject(
     };
 
     // One subject.txt read covers the whole board.
-    let entries = match http::fetch_subject(&state.http, &state.config.fivech_base_url, server, board)
-        .await
+    let entries = match http::fetch_subject(
+        &state.http,
+        &state.config.fivech_base_url,
+        server,
+        board,
+    )
+    .await
     {
         Ok(e) => e,
         Err(e) => {
@@ -89,13 +94,18 @@ pub async fn refresh_board_with_subject(
             return None;
         }
     };
-    let subject: HashMap<&str, i64> =
-        entries.iter().map(|e| (e.thread_id.as_str(), e.res_count)).collect();
+    let subject: HashMap<&str, i64> = entries
+        .iter()
+        .map(|e| (e.thread_id.as_str(), e.res_count))
+        .collect();
 
     let mut fetched = 0;
     for t in &threads {
         // Gate on the blob count (self-healing): fetch only grown threads, skip the rest.
-        if !needs_fetch(subject.get(t.thread_id.as_str()).copied(), t.stored_res_count) {
+        if !needs_fetch(
+            subject.get(t.thread_id.as_str()).copied(),
+            t.stored_res_count,
+        ) {
             continue;
         }
         if refresh_thread(state, server, board, &t.thread_id).await {
@@ -405,8 +415,11 @@ mod tests {
         let conn = setup();
         insert_fav(&conn, "1001", "active", 0);
         // Seed a stale/drifted res_count to prove persist_fetch overwrites it with the blob count.
-        conn.execute("UPDATE favorites SET res_count=111 WHERE thread_id='1001'", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE favorites SET res_count=111 WHERE thread_id='1001'",
+            [],
+        )
+        .unwrap();
         let state = make_state(conn);
 
         // 3-post dat (ASCII bytes: decode_shift_jis is a no-op on ASCII; no image URLs so no
@@ -415,15 +428,28 @@ mod tests {
                       name<>mail<>date ID:b<>body2<>\n\
                       name<>mail<>date ID:c<>body3<>\n"
             .to_vec();
-        let updated =
-            persist_fetch(&state, "egg", "applism", "1001", DatFetch::Replace { bytes }).unwrap();
+        let updated = persist_fetch(
+            &state,
+            "egg",
+            "applism",
+            "1001",
+            DatFetch::Replace { bytes },
+        )
+        .unwrap();
         assert!(updated, "a non-empty Replace must report an update");
 
         let conn = state.db.lock().unwrap();
         let res_count: i64 = conn
-            .query_row("SELECT res_count FROM favorites WHERE thread_id='1001'", [], |r| r.get(0))
+            .query_row(
+                "SELECT res_count FROM favorites WHERE thread_id='1001'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(res_count, 3, "res_count must equal the blob's real post count, not the stale 111");
+        assert_eq!(
+            res_count, 3,
+            "res_count must equal the blob's real post count, not the stale 111"
+        );
     }
 
     // --- compute_status threshold tests (sentinel parity) ---

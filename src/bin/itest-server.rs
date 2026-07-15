@@ -141,10 +141,7 @@ struct SeedCtl {
 
 // ---- mock 5ch handlers -----------------------------------------------------
 
-async fn mock_subject(
-    State(mock): State<MockState>,
-    AxPath(board): AxPath<String>,
-) -> Response {
+async fn mock_subject(State(mock): State<MockState>, AxPath(board): AxPath<String>) -> Response {
     let mut inner = mock.lock().unwrap();
     *inner.subject_hits.entry(board.clone()).or_insert(0) += 1;
     let mut lines = String::new();
@@ -173,10 +170,7 @@ async fn mock_dat(
     }
 }
 
-async fn mock_setting(
-    State(mock): State<MockState>,
-    AxPath(board): AxPath<String>,
-) -> Response {
+async fn mock_setting(State(mock): State<MockState>, AxPath(board): AxPath<String>) -> Response {
     let inner = mock.lock().unwrap();
     let name = inner
         .threads
@@ -208,15 +202,18 @@ async fn mock_bbs_cgi(
 
     // Decode the body to check whether the `feature` field is present.
     let body_str = String::from_utf8_lossy(&body);
-    let has_feature = body_str.contains("feature=confirmed%3A")
-        || body_str.contains("feature=confirmed:");
+    let has_feature =
+        body_str.contains("feature=confirmed%3A") || body_str.contains("feature=confirmed:");
     let is_guid = params.get("guid").is_some_and(|v| v == "ON");
 
     // Second call (with feature + guid=ON) → success.
     if count > 0 && has_feature && is_guid {
         let res_num = inner.bbs_cgi_next_res;
         let mut headers = HeaderMap::new();
-        headers.insert("x-resnum", HeaderValue::from_str(&res_num.to_string()).unwrap());
+        headers.insert(
+            "x-resnum",
+            HeaderValue::from_str(&res_num.to_string()).unwrap(),
+        );
         headers.insert("x-posterid", HeaderValue::from_static("TestPosterID1"));
         headers.insert(
             "x-postdate",
@@ -226,16 +223,16 @@ async fn mock_bbs_cgi(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs()
-            )).unwrap(),
+            ))
+            .unwrap(),
         );
         // Set a mock acorn cookie (session cookie without Max-Age, like real 5ch).
         headers.insert(
             "set-cookie",
-            HeaderValue::from_static(
-                "acorn=mock_acorn_value; Path=/; Domain=.5ch.io",
-            ),
+            HeaderValue::from_static("acorn=mock_acorn_value; Path=/; Domain=.5ch.io"),
         );
-        let success_html = sjis("<html><head><title>書きこみました。</title></head><body>OK</body></html>");
+        let success_html =
+            sjis("<html><head><title>書きこみました。</title></head><body>OK</body></html>");
         return (StatusCode::OK, headers, success_html).into_response();
     }
 
@@ -251,10 +248,7 @@ async fn mock_bbs_cgi(
   </form>
 </body></html>"#;
     let mut headers = HeaderMap::new();
-    headers.insert(
-        "x-chx-error",
-        HeaderValue::from_static("0000 Confirmation"),
-    );
+    headers.insert("x-chx-error", HeaderValue::from_static("0000 Confirmation"));
     (StatusCode::OK, headers, sjis(confirmation_html)).into_response()
 }
 
@@ -280,7 +274,9 @@ struct BbsCgiStatus {
 
 async fn ctl_bbs_cgi_status(State(mock): State<MockState>) -> Json<BbsCgiStatus> {
     let inner = mock.lock().unwrap();
-    Json(BbsCgiStatus { call_count: inner.bbs_cgi_call_count })
+    Json(BbsCgiStatus {
+        call_count: inner.bbs_cgi_call_count,
+    })
 }
 
 async fn ctl_thread(State(mock): State<MockState>, Json(c): Json<ThreadCtl>) -> Json<bool> {
@@ -336,8 +332,8 @@ const TINY_PNG: &[u8] = &[
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1×1
     0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, // 8-bit RGB, CRC
     0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, // IDAT chunk
-    0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
-    0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59, // IDAT data + CRC
+    0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F, 0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC,
+    0x59, // IDAT data + CRC
     0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, // IEND chunk
     0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
@@ -388,10 +384,7 @@ async fn mock_image(
 }
 
 /// Returns how many times a specific image file has been requested.
-async fn ctl_image_hits(
-    State(mock): State<MockState>,
-    AxPath(file): AxPath<String>,
-) -> Json<u64> {
+async fn ctl_image_hits(State(mock): State<MockState>, AxPath(file): AxPath<String>) -> Json<u64> {
     let inner = mock.lock().unwrap();
     Json(inner.image_hits.get(&file).copied().unwrap_or(0))
 }
@@ -404,10 +397,7 @@ struct ImageSizeCtl {
 
 /// Programs the mock image server to return a body of `size` bytes for `file`.
 /// Used to test the 5MB size limit guard.
-async fn ctl_image_size(
-    State(mock): State<MockState>,
-    Json(c): Json<ImageSizeCtl>,
-) -> Json<bool> {
+async fn ctl_image_size(State(mock): State<MockState>, Json(c): Json<ImageSizeCtl>) -> Json<bool> {
     let mut inner = mock.lock().unwrap();
     inner.image_size_overrides.insert(c.file, c.size);
     Json(true)
@@ -426,7 +416,9 @@ async fn ctl_image_content_type(
     Json(c): Json<ImageContentTypeCtl>,
 ) -> Json<bool> {
     let mut inner = mock.lock().unwrap();
-    inner.image_content_type_overrides.insert(c.file, c.content_type);
+    inner
+        .image_content_type_overrides
+        .insert(c.file, c.content_type);
     Json(true)
 }
 
@@ -468,7 +460,10 @@ struct RefreshBoardCtl {
 /// Test-only trigger for the board-level bulk refresh (`refresh::refresh_board`). Returns
 /// immediately and runs the subject + bulk-dat download in a spawned task, mirroring the old
 /// `POST /api/favorites/refresh` behavior so tests can poll the store for the result.
-async fn ctl_refresh_board(State(app): State<AppState>, Json(c): Json<RefreshBoardCtl>) -> Json<bool> {
+async fn ctl_refresh_board(
+    State(app): State<AppState>,
+    Json(c): Json<RefreshBoardCtl>,
+) -> Json<bool> {
     tokio::spawn(async move {
         let n = viewer_of_5ch::fivech::refresh::refresh_board(&app, &c.server, &c.board).await;
         tracing::info!("[refresh] {}/{}: {n} dat(s) updated", c.server, c.board);
@@ -505,15 +500,11 @@ struct SeedImageCtl {
 async fn ctl_seed_image(State(app): State<AppState>, Json(c): Json<SeedImageCtl>) -> Json<bool> {
     // Minimal PNG: 1×1 pixel, RGB.
     let tiny_png: Vec<u8> = vec![
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-        0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
-        0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
-        0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
-        0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
-        0x44, 0xAE, 0x42, 0x60, 0x82,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8,
+        0xFF, 0xFF, 0x3F, 0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59, 0xE7, 0x00, 0x00, 0x00,
+        0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
     let id = {
         let conn = app.db.lock().unwrap();
@@ -548,8 +539,14 @@ async fn ctl_seed_image(State(app): State<AppState>, Json(c): Json<SeedImageCtl>
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let app_port: u16 = std::env::var("APP_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(3001);
-    let mock_port: u16 = std::env::var("MOCK_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(3002);
+    let app_port: u16 = std::env::var("APP_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3001);
+    let mock_port: u16 = std::env::var("MOCK_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3002);
 
     // 1. Mock 5ch server.
     let mock_state: MockState = Arc::new(Mutex::new(MockInner::default()));
@@ -571,9 +568,13 @@ async fn main() {
         .route("/_control/reset", post(ctl_mock_reset))
         .with_state(mock_state.clone());
     let mock_addr = format!("127.0.0.1:{mock_port}");
-    let mock_listener = tokio::net::TcpListener::bind(&mock_addr).await.expect("bind mock");
+    let mock_listener = tokio::net::TcpListener::bind(&mock_addr)
+        .await
+        .expect("bind mock");
     tokio::spawn(async move {
-        axum::serve(mock_listener, mock_app).await.expect("mock serve");
+        axum::serve(mock_listener, mock_app)
+            .await
+            .expect("mock serve");
     });
 
     // 2. Real app server (in-memory DB, pointed at the mock for 5ch access).
@@ -608,7 +609,9 @@ async fn main() {
     let app = control.merge(routes::build_router(app_state));
 
     let app_addr = format!("127.0.0.1:{app_port}");
-    let app_listener = tokio::net::TcpListener::bind(&app_addr).await.expect("bind app");
+    let app_listener = tokio::net::TcpListener::bind(&app_addr)
+        .await
+        .expect("bind app");
     eprintln!("[itest-server] app=http://{app_addr} mock=http://127.0.0.1:{mock_port}");
     axum::serve(app_listener, app).await.expect("app serve");
 }

@@ -145,8 +145,8 @@ fn is_safe_ip(ip: IpAddr) -> bool {
     // so that integration tests can download images from the local mock server.
     // The env var is honored ONLY in debug builds; in release builds it has no effect.
     // All other unsafe IPs (private, link-local, ULA) are rejected unconditionally.
-    let allow_loopback = cfg!(debug_assertions)
-        && std::env::var("FIVECH_ALLOW_LOOPBACK_FOR_TEST").is_ok();
+    let allow_loopback =
+        cfg!(debug_assertions) && std::env::var("FIVECH_ALLOW_LOOPBACK_FOR_TEST").is_ok();
 
     match ip {
         IpAddr::V4(v4) => {
@@ -325,9 +325,7 @@ pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) 
         .map(|(i, _)| format!("?{}", i + 1))
         .collect::<Vec<_>>()
         .join(",");
-    let sql = format!(
-        "SELECT id, url, file_size FROM image_cache WHERE url IN ({placeholders})"
-    );
+    let sql = format!("SELECT id, url, file_size FROM image_cache WHERE url IN ({placeholders})");
 
     // Find which URLs are already cached.
     let cached_rows: Vec<(i64, String, Option<i64>)> = {
@@ -342,8 +340,8 @@ pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) 
                 r.get::<_, Option<i64>>(2)?,
             ))
         })
-            .map(|rows| rows.flatten().collect())
-            .unwrap_or_default()
+        .map(|rows| rows.flatten().collect())
+        .unwrap_or_default()
     };
     let already_cached: std::collections::HashSet<String> = cached_rows
         .into_iter()
@@ -483,7 +481,11 @@ mod tests {
         // Deduplication collapses them to 1 entry.
         let dat = "https://img.com/a.jpg?v=1 https://img.com/a.jpg?v=2";
         let urls = extract_image_urls(dat);
-        assert_eq!(urls.len(), 1, "same base URL with different queries deduplicates to 1");
+        assert_eq!(
+            urls.len(),
+            1,
+            "same base URL with different queries deduplicates to 1"
+        );
     }
 
     // --- normalize_image_path ---

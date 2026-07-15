@@ -31,14 +31,12 @@ use std::sync::LazyLock;
 
 // Allowlist for ng_id values: alphanumeric + common base64/ID symbols.
 // Prevents PRIMARY KEY pollution and log injection without being overly restrictive.
-static NG_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[A-Za-z0-9+/._=\-]+$").unwrap());
+static NG_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9+/._=\-]+$").unwrap());
 
 // Wacchoi suffix: exactly 4 chars from [\w+] (alphanumeric, underscore, or '+').
 // Matches the last 4 chars of the xxyy-zzzz token (after the hyphen).
 // '+' appears in some wacchoi tokens so the character class includes it.
-static SUFFIX_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[\w+]{4}$").unwrap());
+static SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\w+]{4}$").unwrap());
 
 // Wacchoi token in a name string: [\w+]{4}-[\w+]{4} inside parentheses.
 // Mirrors client/src/lib/wacchoi.js WACCHOI_RE (which uses JS lookbehind/lookahead;
@@ -66,7 +64,10 @@ pub fn routes() -> Router<AppState> {
         .route("/api/ng-wacchoi", get(list_ng_wacchoi).post(add_ng_wacchoi))
         .route("/api/ng-wacchoi", delete(remove_ng_wacchoi))
         .route("/api/boards/{server}/{board}/id-search", get(id_search))
-        .route("/api/boards/{server}/{board}/wacchoi-search", get(wacchoi_search))
+        .route(
+            "/api/boards/{server}/{board}/wacchoi-search",
+            get(wacchoi_search),
+        )
 }
 
 /// List all registered NGID entries (unordered; sorting is the frontend's job).
@@ -149,9 +150,8 @@ fn board_post_search(
     // Collect favorites for this board (all statuses — dead threads still have cached blobs).
     let thread_rows: Vec<(String, String)> = {
         let conn = state.db.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT thread_id, title FROM favorites WHERE server=?1 AND board=?2",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT thread_id, title FROM favorites WHERE server=?1 AND board=?2")?;
         let rows = stmt
             .query_map(params![server, board], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -193,13 +193,10 @@ fn board_post_search(
 // --- NG wacchoi handlers ---
 
 /// List all registered NG wacchoi entries.
-async fn list_ng_wacchoi(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<NgWacchoi>>, AppError> {
+async fn list_ng_wacchoi(State(state): State<AppState>) -> Result<Json<Vec<NgWacchoi>>, AppError> {
     let conn = state.db.lock().unwrap();
-    let mut stmt = conn.prepare(
-        "SELECT suffix, board, week_key, wacchoi, created_at FROM ng_wacchoi",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT suffix, board, week_key, wacchoi, created_at FROM ng_wacchoi")?;
     let rows = stmt
         .query_map([], |row| {
             Ok(NgWacchoi {
@@ -306,7 +303,9 @@ fn validate_ng_id(id: &str) -> Result<(), AppError> {
 /// Validates a wacchoi suffix: must be exactly 4 word characters.
 fn validate_suffix(suffix: &str) -> Result<(), AppError> {
     if !SUFFIX_RE.is_match(suffix) {
-        return Err(AppError::BadRequest(format!("invalid wacchoi suffix: {suffix}")));
+        return Err(AppError::BadRequest(format!(
+            "invalid wacchoi suffix: {suffix}"
+        )));
     }
     Ok(())
 }
@@ -315,10 +314,14 @@ fn validate_suffix(suffix: &str) -> Result<(), AppError> {
 /// at most 64 characters (the client generates a date-based string like "2026/06/11").
 fn validate_week_key(week_key: &str) -> Result<(), AppError> {
     if week_key.is_empty() || week_key.len() > 64 {
-        return Err(AppError::BadRequest(format!("invalid week_key: {week_key}")));
+        return Err(AppError::BadRequest(format!(
+            "invalid week_key: {week_key}"
+        )));
     }
     if week_key.chars().any(|c| c.is_control()) {
-        return Err(AppError::BadRequest(format!("invalid week_key: {week_key}")));
+        return Err(AppError::BadRequest(format!(
+            "invalid week_key: {week_key}"
+        )));
     }
     Ok(())
 }
@@ -391,7 +394,7 @@ mod tests {
     #[test]
     fn validate_suffix_rejects_wrong_length() {
         assert!(validate_suffix("").is_err());
-        assert!(validate_suffix("abc").is_err());   // 3 chars
+        assert!(validate_suffix("abc").is_err()); // 3 chars
         assert!(validate_suffix("abcde").is_err()); // 5 chars
     }
 
@@ -476,12 +479,18 @@ mod tests {
         // Both threads have exactly one matching post each; only 1 result per thread.
         assert_eq!(results.len(), 2);
 
-        let thread_a = results.iter().find(|t| t.thread_id == "1000000001").unwrap();
+        let thread_a = results
+            .iter()
+            .find(|t| t.thread_id == "1000000001")
+            .unwrap();
         // Only res1 matches (res2 has ZZZZ suffix).
         assert_eq!(thread_a.res.len(), 1);
         assert_eq!(thread_a.res[0].body, "本文1_83IP");
 
-        let thread_b = results.iter().find(|t| t.thread_id == "1000000002").unwrap();
+        let thread_b = results
+            .iter()
+            .find(|t| t.thread_id == "1000000002")
+            .unwrap();
         // スレB's res1 also has suffix 83IP (different prefix is fine — suffix match wins).
         assert_eq!(thread_b.res.len(), 1);
         assert_eq!(thread_b.res[0].body, "本文3_83IP");
@@ -536,10 +545,9 @@ mod tests {
 
         // Call the real search function (as id_search does) for ID "target".
         let state = make_state(conn);
-        let results = board_post_search(&state, "egg", "test", |r| {
-            r.id.as_deref() == Some("target")
-        })
-        .unwrap();
+        let results =
+            board_post_search(&state, "egg", "test", |r| r.id.as_deref() == Some("target"))
+                .unwrap();
 
         // Only スレA has a matching post; スレB (no ID:target) is absent from the results.
         assert_eq!(results.len(), 1);
@@ -549,4 +557,3 @@ mod tests {
         assert_eq!(thread_a.res[0].body, "targetの本文");
     }
 }
-

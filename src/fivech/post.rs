@@ -114,7 +114,10 @@ fn extract_feature(html: &str) -> Option<String> {
 
 /// Reads a header as an owned string, or None when absent / non-UTF-8.
 fn header_str(resp: &Response, name: &str) -> Option<String> {
-    resp.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_owned)
+    resp.headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
 }
 
 /// Builds a PostResult from the response headers when x-resnum is present (= success).
@@ -159,7 +162,10 @@ fn is_confirmation(x_chx_error: Option<&str>, title: &str) -> bool {
 fn extract_title(html: &str) -> String {
     let lower = html.to_lowercase();
     let start = lower.find("<title>").map(|i| i + 7).unwrap_or(0);
-    let end = lower[start..].find("</title>").map(|i| i + start).unwrap_or(lower.len());
+    let end = lower[start..]
+        .find("</title>")
+        .map(|i| i + start)
+        .unwrap_or(lower.len());
     lower[start..end].trim().to_string()
 }
 
@@ -214,7 +220,10 @@ pub async fn post_message(
 
     // Read the body to determine whether this is a confirmation page or an error.
     let chx1 = header_str(&resp1, "x-chx-error");
-    let bytes1 = resp1.bytes().await.map_err(|e| AppError::Upstream(e.to_string()))?;
+    let bytes1 = resp1
+        .bytes()
+        .await
+        .map_err(|e| AppError::Upstream(e.to_string()))?;
     let (html1, _, _) = encoding_rs::SHIFT_JIS.decode(&bytes1);
     let title1 = extract_title(&html1);
 
@@ -244,10 +253,15 @@ pub async fn post_message(
     }
 
     // Neither attempt succeeded — read the second response body for a diagnostic message.
-    let bytes2 = resp2.bytes().await.map_err(|e| AppError::Upstream(e.to_string()))?;
+    let bytes2 = resp2
+        .bytes()
+        .await
+        .map_err(|e| AppError::Upstream(e.to_string()))?;
     let (html2, _, _) = encoding_rs::SHIFT_JIS.decode(&bytes2);
     let reason = extract_error_reason(&html2).unwrap_or_else(|| extract_title(&html2));
-    Err(AppError::Upstream(format!("bbs.cgi (after confirmation): {reason}")))
+    Err(AppError::Upstream(format!(
+        "bbs.cgi (after confirmation): {reason}"
+    )))
 }
 
 #[cfg(test)]
@@ -296,7 +310,10 @@ mod tests {
     fn sjis_encode_confirmation_submit() {
         let out = sjis_encode("上記全てを承諾して書き込む");
         // Must be non-empty and start with a % (all kanji are outside ASCII range).
-        assert!(out.starts_with('%'), "confirmation submit must be percent-encoded: {out}");
+        assert!(
+            out.starts_with('%'),
+            "confirmation submit must be percent-encoded: {out}"
+        );
         // Must not contain any raw multi-byte character — all bytes outside ASCII must be encoded.
         assert!(
             !out.chars().any(|c| c as u32 > 0x7f),
@@ -397,7 +414,10 @@ mod tests {
     #[test]
     fn extract_error_reason_stops_at_next_tag() {
         let html = "<b>ERROR: Rock54</b><p>rest</p>";
-        assert_eq!(extract_error_reason(html), Some("ERROR: Rock54".to_string()));
+        assert_eq!(
+            extract_error_reason(html),
+            Some("ERROR: Rock54".to_string())
+        );
     }
 
     // --- is_confirmation ---
@@ -422,7 +442,16 @@ mod tests {
 
     #[test]
     fn build_form_contains_all_required_fields() {
-        let form = build_form("software", "1779846933", 1000, "", "sage", "テスト", None, false);
+        let form = build_form(
+            "software",
+            "1779846933",
+            1000,
+            "",
+            "sage",
+            "テスト",
+            None,
+            false,
+        );
         assert!(form.contains("bbs=software"), "bbs field missing: {form}");
         assert!(form.contains("key=1779846933"), "key field missing: {form}");
         assert!(form.contains("time=1000"), "time field missing: {form}");
@@ -452,7 +481,9 @@ mod tests {
             Some(("feature", "confirmed:abc")),
             true,
         );
-        assert!(form.contains("feature=confirmed%3Aabc") || form.contains("feature=confirmed:abc"),
-            "feature field must appear in form: {form}");
+        assert!(
+            form.contains("feature=confirmed%3Aabc") || form.contains("feature=confirmed:abc"),
+            "feature field must appear in form: {form}"
+        );
     }
 }

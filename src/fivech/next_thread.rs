@@ -175,7 +175,10 @@ mod tests {
     #[test]
     fn returns_none_for_empty_entries() {
         let entries: Vec<SubjectEntry> = vec![];
-        let result = find_next_thread("【ブルアカ】ブルーアーカイブ -Blue Archive- Part5843", &entries);
+        let result = find_next_thread(
+            "【ブルアカ】ブルーアーカイブ -Blue Archive- Part5843",
+            &entries,
+        );
         assert_eq!(result, None);
     }
 
@@ -208,7 +211,11 @@ mod tests {
     #[test]
     fn finds_next_thread_across_fullwidth_space_wobble() {
         let entries = vec![
-            entry("1770000000", "なんJBLAC(ブルアカ)部★503　【転載禁止】", 1002),
+            entry(
+                "1770000000",
+                "なんJBLAC(ブルアカ)部★503　【転載禁止】",
+                1002,
+            ),
             entry("1770100000", "なんJBLAC(ブルアカ)部★504【転載禁止】", 34),
         ];
         let result = find_next_thread("なんJBLAC(ブルアカ)部★503　【転載禁止】", &entries);

@@ -27,8 +27,7 @@ const INTERVAL: Duration = Duration::from_secs(180);
 /// the current thread went dead" race without polling dead-only boards forever (5ch access
 /// policy). Once the next thread is registered it enters as an active row and keeps the board
 /// live; the dead row falls off after 7 days; archiving (archived=1) also removes it.
-const WATCH_QUERY: &str =
-    "SELECT server, board, thread_id, title, rating, status
+const WATCH_QUERY: &str = "SELECT server, board, thread_id, title, rating, status
      FROM favorites
      WHERE archived = 0
        AND (status != 'dead' OR updated_at >= strftime('%s','now') - 604800)";
@@ -107,7 +106,13 @@ async fn run_once(state: &AppState) -> Result<(), AppError> {
     Ok(())
 }
 
-fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entries: &[SubjectEntry]) {
+fn process_thread(
+    state: &AppState,
+    server: &str,
+    board: &str,
+    w: &Watch,
+    entries: &[SubjectEntry],
+) {
     let found = entries.iter().find(|e| e.thread_id == w.thread_id);
 
     // Decide whether we entered the danger zone (start next-thread search). If absent from
@@ -157,7 +162,13 @@ fn process_thread(state: &AppState, server: &str, board: &str, w: &Watch, entrie
 ///
 /// The search title prefers the DB-stored title, falling back to what subject.txt reports
 /// for this thread (if still listed).
-fn try_add_next_thread(state: &AppState, server: &str, board: &str, w: &Watch, entries: &[SubjectEntry]) {
+fn try_add_next_thread(
+    state: &AppState,
+    server: &str,
+    board: &str,
+    w: &Watch,
+    entries: &[SubjectEntry],
+) {
     let title = if !w.title.is_empty() {
         w.title.clone()
     } else {
@@ -191,10 +202,20 @@ fn try_add_next_thread(state: &AppState, server: &str, board: &str, w: &Watch, e
             "INSERT OR IGNORE INTO favorites
              (server, board, thread_id, board_name, title, rating)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![server, board, next.thread_id, board_name, next.title, w.rating],
+            rusqlite::params![
+                server,
+                board,
+                next.thread_id,
+                board_name,
+                next.title,
+                w.rating
+            ],
         ) {
             Err(err) => {
-                tracing::error!("[sync] auto-add next {server}/{board}/{}: {err}", next.thread_id);
+                tracing::error!(
+                    "[sync] auto-add next {server}/{board}/{}: {err}",
+                    next.thread_id
+                );
             }
             Ok(0) => tracing::debug!("[sync] next thread already registered: {}", next.title),
             Ok(_) => tracing::info!("[sync] next thread added: {} -> {}", title, next.title),
@@ -208,7 +229,7 @@ mod tests {
     use crate::db::SCHEMA;
     use crate::fivech::subject::SubjectEntry;
     use crate::state::AppState;
-    use rusqlite::{Connection, params};
+    use rusqlite::{params, Connection};
     use std::collections::HashSet;
     use std::sync::{Arc, Mutex};
 
@@ -249,7 +270,13 @@ mod tests {
         }
     }
 
-    fn insert_favorite(conn: &Connection, thread_id: &str, title: &str, status: &str, archived: i64) {
+    fn insert_favorite(
+        conn: &Connection,
+        thread_id: &str,
+        title: &str,
+        status: &str,
+        archived: i64,
+    ) {
         conn.execute(
             "INSERT INTO favorites (thread_id, server, board, board_name, title, status, archived)
              VALUES (?1, 'egg', 'applism', '板', ?2, ?3, ?4)",
@@ -314,13 +341,19 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert!(watches.is_empty(), "archived dead thread must not appear in sync watch list");
+        assert!(
+            watches.is_empty(),
+            "archived dead thread must not appear in sync watch list"
+        );
 
         // Verify: no next-thread INSERT happened because watches is empty.
         let count_after: i64 = conn
             .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count_after, 1, "no next thread should be auto-added for archived threads");
+        assert_eq!(
+            count_after, 1,
+            "no next thread should be auto-added for archived threads"
+        );
     }
 
     /// INVARIANT: process_thread must NOT write res_count from subject.txt. res_count reflects
@@ -333,8 +366,11 @@ mod tests {
         let conn = setup();
         insert_fav_with_rating(&conn, "1001", "アクティブ", "active", 0);
         // The blob-derived baseline: 10 posts.
-        conn.execute("UPDATE favorites SET res_count=10 WHERE thread_id='1001'", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE favorites SET res_count=10 WHERE thread_id='1001'",
+            [],
+        )
+        .unwrap();
 
         let state = make_state(conn);
         let w = super::Watch {
@@ -395,7 +431,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(res_count, 0, "next thread must register with res_count=0, not subject's 777");
+        assert_eq!(
+            res_count, 0,
+            "next thread must register with res_count=0, not subject's 777"
+        );
     }
 
     // --- process_thread warned-trigger tests ---
@@ -444,7 +483,10 @@ mod tests {
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 2, "next thread must be auto-added when current thread is warned");
+        assert_eq!(
+            count, 2,
+            "next thread must be auto-added when current thread is warned"
+        );
 
         let next_title: String = conn
             .query_row(
@@ -486,7 +528,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(rating, 5, "next thread must inherit rating from the current thread");
+        assert_eq!(
+            rating, 5,
+            "next thread must inherit rating from the current thread"
+        );
     }
 
     /// If the next thread is already in favorites, INSERT OR IGNORE must not create a duplicate.
@@ -522,7 +567,10 @@ mod tests {
         let count_after: i64 = conn
             .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count_after, 2, "already-registered next thread must not be duplicated");
+        assert_eq!(
+            count_after, 2,
+            "already-registered next thread must not be duplicated"
+        );
     }
 
     /// When next thread is not yet posted in subject, nothing is registered.
@@ -549,7 +597,10 @@ mod tests {
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 1, "next thread must not be registered when absent from subject");
+        assert_eq!(
+            count, 1,
+            "next thread must not be registered when absent from subject"
+        );
     }
 
     /// Threads below res=980 (active) must not trigger next-thread search.
@@ -578,7 +629,10 @@ mod tests {
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 1, "next thread must NOT be registered when current thread is active");
+        assert_eq!(
+            count, 1,
+            "next thread must NOT be registered when current thread is active"
+        );
     }
 
     // --- try_add_next_thread on a dead row (read-only) tests ---
@@ -623,7 +677,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(title, "ブルアカ Part5863");
-        assert_eq!(rating, 4, "next thread must inherit rating from the dead source thread");
+        assert_eq!(
+            rating, 4,
+            "next thread must inherit rating from the dead source thread"
+        );
 
         // Dead source row is untouched: res_count / status / updated_at unchanged.
         let (res_count, status, updated_at): (i64, String, i64) = conn
@@ -635,7 +692,10 @@ mod tests {
             .unwrap();
         assert_eq!(res_count, 1002, "dead row res_count must not change");
         assert_eq!(status, "dead", "dead row status must not change");
-        assert_eq!(updated_at, 1700000000, "dead row updated_at must not change");
+        assert_eq!(
+            updated_at, 1700000000,
+            "dead row updated_at must not change"
+        );
     }
 
     /// The dead-row search must not duplicate an already-registered next thread (INSERT OR IGNORE).
@@ -665,6 +725,9 @@ mod tests {
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 2, "already-registered next thread must not be duplicated");
+        assert_eq!(
+            count, 2,
+            "already-registered next thread must not be duplicated"
+        );
     }
 }

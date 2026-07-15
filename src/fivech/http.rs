@@ -70,7 +70,9 @@ async fn retry_request(
             }
         }
     }
-    Err(AppError::Upstream(format!("{label} failed: {url} ({last})")))
+    Err(AppError::Upstream(format!(
+        "{label} failed: {url} ({last})"
+    )))
 }
 
 /// HEAD with retry (limited attempts; failures fall back to full GET at the call site).
@@ -94,7 +96,10 @@ pub async fn fetch_subject(
     validate_ref(server, board, "0")?;
     let resp = get(client, &subject_url(base, server, board)).await?;
     if !resp.status().is_success() {
-        return Err(AppError::Upstream(format!("subject.txt HTTP {}", resp.status())));
+        return Err(AppError::Upstream(format!(
+            "subject.txt HTTP {}",
+            resp.status()
+        )));
     }
     let bytes = resp.bytes().await?;
     Ok(parse_subject_txt(&decode_shift_jis(&bytes)))
@@ -151,7 +156,10 @@ pub async fn head_dat_content_length(
     // SSRF defense-in-depth: validate before assembling the URL.
     validate_ref(server, board, thread_id).ok()?;
     let url = dat_url(base, server, board, thread_id);
-    let resp = head(client, &url).await.ok().filter(|r| r.status().is_success())?;
+    let resp = head(client, &url)
+        .await
+        .ok()
+        .filter(|r| r.status().is_success())?;
     // Read Content-Length directly from the header rather than resp.content_length(),
     // because reqwest interprets HEAD response body length as 0 internally.
     resp.headers()
@@ -176,9 +184,9 @@ pub async fn fetch_dat(
     let resp = get(client, &url).await?;
     match resp.status() {
         StatusCode::NOT_FOUND => Ok(DatFetch::Gone),
-        s if s.is_success() => {
-            Ok(DatFetch::Replace { bytes: resp.bytes().await?.to_vec() })
-        }
+        s if s.is_success() => Ok(DatFetch::Replace {
+            bytes: resp.bytes().await?.to_vec(),
+        }),
         s => Err(AppError::Upstream(format!("dat HTTP {s}"))),
     }
 }

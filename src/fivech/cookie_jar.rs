@@ -40,7 +40,9 @@ impl Default for PersistentJar {
 impl PersistentJar {
     /// Creates an empty jar.
     pub fn new() -> Self {
-        PersistentJar { inner: RwLock::new(cookie_store::CookieStore::new()) }
+        PersistentJar {
+            inner: RwLock::new(cookie_store::CookieStore::new()),
+        }
     }
 
     /// Loads a previously saved jar from `path`. Returns an empty jar on any I/O error
@@ -55,7 +57,9 @@ impl PersistentJar {
                     .ok()
             })
             .unwrap_or_default();
-        PersistentJar { inner: RwLock::new(store) }
+        PersistentJar {
+            inner: RwLock::new(store),
+        }
     }
 
     /// Serialises the jar to `path` (JSON). Called after a successful post so the
@@ -100,19 +104,24 @@ impl CookieStore for PersistentJar {
         // with a fixed Max-Age so they survive `save()`.  The `cookie_store` JSON serialiser
         // silently drops cookies without an expiry, which means acorn/MonaTicket — which 5ch
         // sends without an explicit lifetime — would be lost on every process restart.
-        let cookies: Vec<_> = cookie_headers.filter_map(|val| {
-            let mut c = std::str::from_utf8(val.as_bytes())
-                .ok()
-                .and_then(|s| cookie::Cookie::parse(s).ok())
-                .map(|c| c.into_owned())?;
-            // If neither Expires nor Max-Age is set, the cookie is a session cookie.
-            // Apply a default Max-Age so the JSON serialiser keeps it.
-            if c.max_age().is_none() && c.expires().is_none() {
-                c.set_max_age(TimeDuration::days(SESSION_COOKIE_MAX_AGE_DAYS));
-            }
-            Some(c)
-        }).collect();
-        self.inner.write().unwrap().store_response_cookies(cookies.into_iter(), url);
+        let cookies: Vec<_> = cookie_headers
+            .filter_map(|val| {
+                let mut c = std::str::from_utf8(val.as_bytes())
+                    .ok()
+                    .and_then(|s| cookie::Cookie::parse(s).ok())
+                    .map(|c| c.into_owned())?;
+                // If neither Expires nor Max-Age is set, the cookie is a session cookie.
+                // Apply a default Max-Age so the JSON serialiser keeps it.
+                if c.max_age().is_none() && c.expires().is_none() {
+                    c.set_max_age(TimeDuration::days(SESSION_COOKIE_MAX_AGE_DAYS));
+                }
+                Some(c)
+            })
+            .collect();
+        self.inner
+            .write()
+            .unwrap()
+            .store_response_cookies(cookies.into_iter(), url);
     }
 
     fn cookies(&self, url: &Url) -> Option<reqwest::header::HeaderValue> {
@@ -159,7 +168,8 @@ mod tests {
 
         // Simulate Set-Cookie headers.
         let h1 = reqwest::header::HeaderValue::from_static("acorn=abc123; Path=/; Domain=.5ch.io");
-        let h2 = reqwest::header::HeaderValue::from_static("MonaTicket=xyz; Path=/; Domain=.5ch.io");
+        let h2 =
+            reqwest::header::HeaderValue::from_static("MonaTicket=xyz; Path=/; Domain=.5ch.io");
         let headers = [h1, h2];
         let mut iter = headers.iter();
         jar.set_cookies(&mut iter, &url);
@@ -168,8 +178,10 @@ mod tests {
         let got = jar.cookies(&url);
         assert!(got.is_some(), "jar must return cookies after set_cookies");
         let s = got.unwrap().to_str().unwrap().to_string();
-        assert!(s.contains("acorn=abc123") || s.contains("MonaTicket=xyz"),
-            "jar must contain at least one of the set cookies: {s}");
+        assert!(
+            s.contains("acorn=abc123") || s.contains("MonaTicket=xyz"),
+            "jar must contain at least one of the set cookies: {s}"
+        );
     }
 
     #[test]
@@ -228,7 +240,10 @@ mod tests {
 
         // The cookie must be readable in the same process.
         let before = jar.cookies(&url);
-        assert!(before.is_some(), "session cookie must be readable after set_cookies");
+        assert!(
+            before.is_some(),
+            "session cookie must be readable after set_cookies"
+        );
 
         // Save and reload: the session cookie must survive because we patched Max-Age.
         assert!(jar.save(path), "save must succeed");

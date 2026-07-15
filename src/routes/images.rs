@@ -35,7 +35,9 @@ fn validate_mosaic_url(url: &str) -> Result<(), AppError> {
         ));
     }
     if url.chars().any(|c| c.is_control()) {
-        return Err(AppError::BadRequest("url contains control characters".into()));
+        return Err(AppError::BadRequest(
+            "url contains control characters".into(),
+        ));
     }
     Ok(())
 }
@@ -59,16 +61,19 @@ async fn serve_image(
 
     match row {
         Some((id, mime, file_size)) => {
-            if !matches!(mime.as_str(), "image/png" | "image/jpeg" | "image/gif" | "image/webp") {
+            if !matches!(
+                mime.as_str(),
+                "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+            ) {
                 return Err(AppError::NotFound(format!("image MIME is invalid: {path}")));
             }
             let root = state.config.image_cache_dir.clone();
             let body = tokio::task::spawn_blocking(move || {
                 crate::image_cache::read_verified(std::path::Path::new(&root), id, file_size)
             })
-                .await
-                .map_err(|e| AppError::Internal(format!("image read task failed: {e}")))?
-                .map_err(|_| AppError::NotFound(format!("image file is unavailable: {path}")))?;
+            .await
+            .map_err(|e| AppError::Internal(format!("image read task failed: {e}")))?
+            .map_err(|_| AppError::NotFound(format!("image file is unavailable: {path}")))?;
             let content_type: axum::http::HeaderValue = mime
                 .parse()
                 .unwrap_or_else(|_| "application/octet-stream".parse().unwrap());

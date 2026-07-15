@@ -23,9 +23,18 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/favorites", get(list).post(add))
         .route("/api/archives", get(list_archives))
-        .route("/api/favorites/{server}/{board}/{thread_id}", delete(remove))
-        .route("/api/favorites/{server}/{board}/{thread_id}/dat", get(get_dat))
-        .route("/api/favorites/{server}/{board}/{thread_id}/reload", get(reload))
+        .route(
+            "/api/favorites/{server}/{board}/{thread_id}",
+            delete(remove),
+        )
+        .route(
+            "/api/favorites/{server}/{board}/{thread_id}/dat",
+            get(get_dat),
+        )
+        .route(
+            "/api/favorites/{server}/{board}/{thread_id}/reload",
+            get(reload),
+        )
         .route(
             "/api/favorites/{server}/{board}/{thread_id}/progress",
             // Read position: GET fetches, POST saves (POST so sendBeacon can be used on unload).
@@ -132,7 +141,10 @@ fn resolve_ref(req: &AddRequest) -> Result<(String, String, String), AppError> {
     Ok((server, board, thread_id))
 }
 
-async fn remove(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<Value>, AppError> {
+async fn remove(
+    State(state): State<AppState>,
+    Path((server, board, thread_id)): ThreadPath,
+) -> Result<Json<Value>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
     let conn = state.db.lock().unwrap();
     let n = conn.execute(
@@ -146,7 +158,10 @@ async fn remove(State(state): State<AppState>, Path((server, board, thread_id)):
 }
 
 /// Read position: GET the saved read_res for a thread (viewer semantics).
-async fn get_progress(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<Value>, AppError> {
+async fn get_progress(
+    State(state): State<AppState>,
+    Path((server, board, thread_id)): ThreadPath,
+) -> Result<Json<Value>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
     let conn = state.db.lock().unwrap();
     let read_res: i64 = conn
@@ -246,7 +261,10 @@ fn set_archived(
 }
 
 /// Returns the stored dat as an array of posts.
-async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<DatResponse>, AppError> {
+async fn get_dat(
+    State(state): State<AppState>,
+    Path((server, board, thread_id)): ThreadPath,
+) -> Result<Json<DatResponse>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
     let conn = state.db.lock().unwrap();
     let (title, res_count, read_res, status) = conn
@@ -300,7 +318,10 @@ async fn get_dat(State(state): State<AppState>, Path((server, board, thread_id))
 /// dat_bytes the dat is unchanged and the fetch is skipped. Any mismatch (or HEAD failure)
 /// triggers a full GET. This also means writes are detected immediately after posting
 /// without needing a `?force` parameter.
-async fn reload(State(state): State<AppState>, Path((server, board, thread_id)): ThreadPath) -> Result<Json<ReloadResponse>, AppError> {
+async fn reload(
+    State(state): State<AppState>,
+    Path((server, board, thread_id)): ThreadPath,
+) -> Result<Json<ReloadResponse>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
 
     // 1. Read the stored dat_bytes from the DB.
@@ -341,7 +362,12 @@ async fn reload(State(state): State<AppState>, Path((server, board, thread_id)):
             params![server, board, thread_id],
         )?;
         let (res_count, read_res, status) = read_meta(&conn, &server, &board, &thread_id)?;
-        return Ok(Json(ReloadResponse { res_count, read_res, status, updated: false }));
+        return Ok(Json(ReloadResponse {
+            res_count,
+            read_res,
+            status,
+            updated: false,
+        }));
     }
     tracing::info!(
         "[reload] {server}/{board}/{thread_id}: HEAD={head_content_length:?} stored={stored_dat_bytes} -> fetching dat"
@@ -469,7 +495,15 @@ async fn find_next(
 
     let next = {
         let conn = state.db.lock().unwrap();
-        match register_next_thread(&conn, &server, &board, &board_name, rating, &title, &entries)? {
+        match register_next_thread(
+            &conn,
+            &server,
+            &board,
+            &board_name,
+            rating,
+            &title,
+            &entries,
+        )? {
             Some(n) => n,
             None => return Ok(Json(json!({ "found": false }))),
         }
@@ -509,7 +543,14 @@ fn register_next_thread(
         "INSERT OR IGNORE INTO favorites
          (server, board, thread_id, board_name, title, rating)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![server, board, next.thread_id, board_name, next.title, rating],
+        params![
+            server,
+            board,
+            next.thread_id,
+            board_name,
+            next.title,
+            rating
+        ],
     )?;
     Ok(Some(next))
 }
@@ -548,9 +589,7 @@ fn query_mosaic_urls(
         .map(|(i, _)| format!("?{}", i + 1))
         .collect::<Vec<_>>()
         .join(",");
-    let sql = format!(
-        "SELECT url FROM image_cache WHERE url IN ({placeholders}) AND mosaic = 1"
-    );
+    let sql = format!("SELECT url FROM image_cache WHERE url IN ({placeholders}) AND mosaic = 1");
     let params_vec: Vec<&dyn rusqlite::ToSql> =
         urls.iter().map(|u| u as &dyn rusqlite::ToSql).collect();
     let mut stmt = conn.prepare(&sql)?;
@@ -571,7 +610,13 @@ fn read_meta(
         "SELECT res_count, read_res, status FROM favorites
          WHERE server=?1 AND board=?2 AND thread_id=?3",
         params![server, board, thread_id],
-        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)),
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        },
     )?)
 }
 
@@ -661,15 +706,32 @@ mod tests {
 
         // subject lists the successor with a non-zero count (777) that must NOT be copied.
         let entries = vec![
-            SubjectEntry { thread_id: "1000000002".into(), title: "ブルアカ Part5862".into(), res_count: 995 },
-            SubjectEntry { thread_id: "1000000003".into(), title: "ブルアカ Part5863".into(), res_count: 777 },
+            SubjectEntry {
+                thread_id: "1000000002".into(),
+                title: "ブルアカ Part5862".into(),
+                res_count: 995,
+            },
+            SubjectEntry {
+                thread_id: "1000000003".into(),
+                title: "ブルアカ Part5863".into(),
+                res_count: 777,
+            },
         ];
 
         let next = super::register_next_thread(
-            &conn, SERVER, BOARD, "板", 4, "ブルアカ Part5862", &entries,
+            &conn,
+            SERVER,
+            BOARD,
+            "板",
+            4,
+            "ブルアカ Part5862",
+            &entries,
         )
         .unwrap();
-        assert!(next.is_some(), "successor Part5863 must be found in subject");
+        assert!(
+            next.is_some(),
+            "successor Part5863 must be found in subject"
+        );
 
         let (res_count, rating): (i64, i64) = conn
             .query_row(
@@ -678,7 +740,10 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
-        assert_eq!(res_count, 0, "next thread must register with res_count=0, not subject's 777");
+        assert_eq!(
+            res_count, 0,
+            "next thread must register with res_count=0, not subject's 777"
+        );
         assert_eq!(rating, 4, "next thread must inherit the source rating");
     }
 
@@ -858,8 +923,24 @@ mod tests {
     #[test]
     fn replace_blob_overwrites_previous_body() {
         let conn = setup();
-        replace_blob(&conn, SERVER, BOARD, THREAD, "古い<>sage<>d ID:x<>古い本文<>t\n", 0).unwrap();
-        replace_blob(&conn, SERVER, BOARD, THREAD, "新しい<>sage<>d ID:y<>新本文<>t\n", 0).unwrap();
+        replace_blob(
+            &conn,
+            SERVER,
+            BOARD,
+            THREAD,
+            "古い<>sage<>d ID:x<>古い本文<>t\n",
+            0,
+        )
+        .unwrap();
+        replace_blob(
+            &conn,
+            SERVER,
+            BOARD,
+            THREAD,
+            "新しい<>sage<>d ID:y<>新本文<>t\n",
+            0,
+        )
+        .unwrap();
         let raw: String = conn
             .query_row(
                 "SELECT raw FROM dat_blobs WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -895,9 +976,7 @@ mod tests {
         // Replicate the get_dat own-marking logic.
         let mut res = read_blob_posts(&conn, SERVER, BOARD, THREAD).unwrap();
         let own_nums: std::collections::HashSet<i64> = conn
-            .prepare(
-                "SELECT res_num FROM own_posts WHERE server=?1 AND board=?2 AND thread_id=?3",
-            )
+            .prepare("SELECT res_num FROM own_posts WHERE server=?1 AND board=?2 AND thread_id=?3")
             .unwrap()
             .query_map(params![SERVER, BOARD, THREAD], |r| r.get(0))
             .unwrap()
