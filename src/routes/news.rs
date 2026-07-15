@@ -24,7 +24,7 @@ struct NewsRow {
     updated_at: i64,
 }
 
-/// GET /api/news — favorite threads with unread posts, as JSON Feed 1.1.
+/// GET /api/news — starred threads with unread posts, as JSON Feed 1.1.
 ///
 /// Polled by the news-server aggregator (via a Cloudflare Access service
 /// token) to place unread threads on the unified timeline. One item per
@@ -41,7 +41,7 @@ async fn get_news(
             "SELECT server, board, board_name, thread_id, title,
                     res_count, read_res, rating, status, updated_at
              FROM favorites
-             WHERE archived = 0 AND res_count > read_res
+             WHERE rating > 0 AND archived = 0 AND res_count > read_res
              ORDER BY updated_at DESC
              LIMIT 100",
         )?;
@@ -129,6 +129,7 @@ mod tests {
     //
     // GET /api/news delivers favorite threads with unread posts for the
     // news-server aggregator:
+    // - Only explicitly starred threads (rating > 0)
     // - Only threads with unread posts (res_count > read_res)
     // - Archived threads are excluded; dead threads stay while unread remains
     // - Sorted by updated_at DESC, limited to 100
@@ -188,8 +189,8 @@ mod tests {
     ) {
         conn.execute(
             "INSERT INTO favorites
-             (thread_id, server, board, board_name, title, res_count, read_res, archived, status, updated_at)
-             VALUES (?1, 'egg', 'applism', 'スマホアプリ', ?2, ?3, ?4, ?5, ?6, ?7)",
+             (thread_id, server, board, board_name, title, res_count, read_res, rating, archived, status, updated_at)
+             VALUES (?1, 'egg', 'applism', 'スマホアプリ', ?2, ?3, ?4, 1, ?5, ?6, ?7)",
             params![thread_id, title, res_count, read_res, archived, status, updated_at],
         )
         .unwrap();
@@ -231,6 +232,21 @@ mod tests {
         let conn = setup();
         insert_favorite(&conn, "1001", "未読あり", 100, 50, 0, "active", 1700000000);
         insert_favorite(&conn, "1002", "既読済み", 100, 100, 0, "active", 1700000001);
+
+        let feed = get_news_feed(&make_state(conn)).await;
+        assert_eq!(item_ids(&feed), vec!["egg/applism/1001"]);
+    }
+
+    #[tokio::test]
+    async fn news_excludes_unstarred_threads() {
+        let conn = setup();
+        insert_favorite(&conn, "1001", "星あり", 100, 50, 0, "active", 1700000000);
+        insert_favorite(&conn, "1002", "星なし", 100, 50, 0, "active", 1700000001);
+        conn.execute(
+            "UPDATE favorites SET rating = 0 WHERE thread_id = '1002'",
+            [],
+        )
+        .unwrap();
 
         let feed = get_news_feed(&make_state(conn)).await;
         assert_eq!(item_ids(&feed), vec!["egg/applism/1001"]);
