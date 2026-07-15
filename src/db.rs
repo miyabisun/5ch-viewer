@@ -186,6 +186,23 @@ mod tests {
     }
 
     #[test]
+    fn timestamps_are_stored_as_unix_second_integers() {
+        let conn = open_memory();
+        insert_favorite(&conn, "1700000000", "timestamp invariant");
+
+        let types: (String, String) = conn
+            .query_row(
+                "SELECT typeof(created_at), typeof(updated_at)
+                 FROM favorites WHERE thread_id = '1700000000'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        assert_eq!(types, ("integer".to_string(), "integer".to_string()));
+    }
+
+    #[test]
     fn ng_wacchoi_table_exists_and_accepts_rows() {
         let conn = open_memory();
         conn.execute(

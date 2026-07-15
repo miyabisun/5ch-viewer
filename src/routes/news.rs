@@ -118,7 +118,7 @@ fn build_item(row: &NewsRow, base: &str) -> serde_json::Value {
         },
     });
     if let Some(dt) = chrono::DateTime::from_timestamp(row.updated_at, 0) {
-        obj["date_published"] = json!(dt.to_rfc3339());
+        obj["date_published"] = json!(dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
     }
     obj
 }
@@ -349,7 +349,7 @@ mod tests {
             "JSON Feed 1.1 requires content_text or content_html on every item"
         );
         assert_eq!(
-            item["date_published"], "2023-11-14T22:13:20+00:00",
+            item["date_published"], "2023-11-14T22:13:20Z",
             "updated_at unix seconds must be emitted as RFC3339 UTC"
         );
         assert_eq!(item["_news"]["service"], "5ch");
