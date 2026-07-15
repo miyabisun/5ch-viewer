@@ -257,8 +257,8 @@ test('NGﾜｯﾁｮｲ追加後はワッチョイメニューに削除ボタン
   // The original badge is replaced by the NG disclosure, so its old removal
   // action is physically unavailable and must not remain in the DOM.
   await expect(
-    page.locator('del.ng').filter({ hasText: '[レス番号: 1]' }),
-  ).toHaveText('[レス番号: 1] [理由: NGワッチョイ]')
+    page.locator('del.ng').filter({ hasText: '1 NGワッチョイ' }),
+  ).toHaveText('1 NGワッチョイ')
   await expect(page.locator('.wacchoi-badge[data-wacchoi="7bb6-83IP"]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'NGﾜｯﾁｮｲから削除' })).toHaveCount(0)
 })
@@ -278,8 +278,8 @@ test('NG wacchoi post menu removes the matching scoped entry', async ({ page }) 
   })
 
   await page.goto(THREAD_PATH)
-  const ngHeader = page.locator('del.ng').filter({ hasText: '[レス番号: 1]' })
-  await expect(ngHeader).toHaveText('[レス番号: 1] [理由: NGワッチョイ]')
+  const ngHeader = page.locator('del.ng').filter({ hasText: '1 NGワッチョイ' })
+  await expect(ngHeader).toHaveText('1 NGワッチョイ')
   await ngHeader.click({ button: 'right' })
   await expect(page.locator('[data-testid="ng-menu"]')).toBeVisible()
   await page.getByRole('button', { name: 'NGワッチョイから削除' }).click()

@@ -1110,7 +1110,7 @@
       type="button"
       aria-expanded={expandedNgRes.has(r.num)}
       onclick={(e) => toggleNgBody(e, r.num)}
-    ><del class="ng">[レス番号: {r.num}] [理由: {reason.label}]</del></button>
+    ><del class="ng">{r.num} {reason.label}</del></button>
     {#if expandedNgRes.has(r.num)}
       {@render body(r.body, r.num)}
     {/if}
