@@ -1,6 +1,8 @@
 <script>
   import { onMount } from 'svelte'
   import { api } from './lib/api.js'
+  import { startAutoReload } from './lib/auto-reload.js'
+  import { preserveReadProgress } from './lib/favorite-list.js'
   import { initTheme } from './lib/theme.js'
   import { parseLocation, push, replace } from './lib/router.js'
   import NavBar from './lib/NavBar.svelte'
@@ -18,12 +20,17 @@
   // Global NG wacchoi list: array of { suffix, board, week_key, wacchoi, created_at }.
   // Matching is done client-side with (suffix + board + week_key) triple.
   let ngWacchoi = $state([])
+  let loadSeq = 0
 
   async function load() {
+    const seq = ++loadSeq
     try {
-      favorites = await api.listFavorites()
+      const refreshed = await api.listFavorites()
+      if (seq !== loadSeq) return
+      favorites = preserveReadProgress(favorites, refreshed)
       error = null
     } catch (e) {
+      if (seq !== loadSeq) return
       error = e.message
     }
   }
@@ -73,9 +80,16 @@
     loadNgIds()
     loadNgWacchoi()
 
+    // Keep the favorites page in sync with SQLite only. This does not call the
+    // 5ch refresh/dat endpoints; upstream access remains the background crawler's job.
+    const stopAutoReload = startAutoReload(() => {
+      if (page === 'favorites') load()
+    })
+
     const onpop = () => applyRoute(parseLocation())
     window.addEventListener('popstate', onpop)
     return () => {
+      stopAutoReload()
       window.removeEventListener('popstate', onpop)
     }
   })
@@ -111,7 +125,10 @@
   function onProgress(readRes) {
     if (!current) return
     const i = favorites.findIndex(
-      (f) => f.server === current.server && f.board === current.board && f.thread_id === current.thread_id,
+      (f) =>
+        f.server === current.server &&
+        f.board === current.board &&
+        f.thread_id === current.thread_id,
     )
     if (i < 0) return // thread not in favorites list (minimal fav fallback)
     const cur = favorites[i].read_res ?? 0
@@ -149,7 +166,15 @@
   <section class="pane detail-pane">
     {#if current}
       {#key threadKey}
-        <ThreadView fav={current} onback={back} onprogress={onProgress} {ngIds} onngchange={loadNgIds} {ngWacchoi} onngwacchoichange={loadNgWacchoi} />
+        <ThreadView
+          fav={current}
+          onback={back}
+          onprogress={onProgress}
+          {ngIds}
+          onngchange={loadNgIds}
+          {ngWacchoi}
+          onngwacchoichange={loadNgWacchoi}
+        />
       {/key}
     {:else}
       <p class="placeholder">スレッドを選択してください</p>

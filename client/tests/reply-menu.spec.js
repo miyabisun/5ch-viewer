@@ -23,8 +23,22 @@ function datResponse() {
     read_res: 0,
     status: 'active',
     res: [
-      { num: 1, name: '名無し', mail: '', date: '2025/01/01(水) 00:00:00.00', body: '一行目<br>二行目', id: 'TESTID1' },
-      { num: 2, name: '名無し', mail: '', date: '2025/01/01(水) 00:01:00.00', body: '短文<br>https://example.com/test.jpg', id: null },
+      {
+        num: 1,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01(水) 00:00:00.00',
+        body: '一行目<br>二行目',
+        id: 'TESTID1',
+      },
+      {
+        num: 2,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01(水) 00:01:00.00',
+        body: '短文<br>https://example.com/test.jpg',
+        id: null,
+      },
     ],
   }
 }
@@ -34,18 +48,20 @@ async function setupRoutes(page) {
   await page.route('**/api/favorites/refresh', (route) =>
     route.fulfill({ json: { ok: true, boards: 0 } }),
   )
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse() }),
-  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse() }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
   )
   await page.route('**/api/ng-ids', (route) =>
-    route.fulfill({ json: route.request().method() === 'GET' ? [] : { ok: true } }),
+    route.fulfill({
+      json: route.request().method() === 'GET' ? [] : { ok: true },
+    }),
   )
   await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
   await page.route('**/api/ng-wacchoi', (route) =>
-    route.fulfill({ json: route.request().method() === 'GET' ? [] : { ok: true } }),
+    route.fulfill({
+      json: route.request().method() === 'GET' ? [] : { ok: true },
+    }),
   )
   await page.route('**/api/images/**', (route) => route.fulfill({ status: 200, body: '' }))
 }
@@ -157,9 +173,15 @@ test.describe('mobile (touch)', () => {
     await expect(page.getByText('二行目')).toBeVisible()
 
     const num = page.locator('.res .num').first()
-    await num.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+    await num.dispatchEvent('pointerdown', {
+      pointerType: 'touch',
+      pointerId: 1,
+    })
     await page.waitForTimeout(550)
-    await num.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+    await num.dispatchEvent('pointerup', {
+      pointerType: 'touch',
+      pointerId: 1,
+    })
 
     await expect(page.locator('[data-testid="reply-menu"]')).toBeVisible()
   })
@@ -170,9 +192,15 @@ test.describe('mobile (touch)', () => {
     await expect(page.locator('.thumb-strip')).toBeVisible()
 
     const strip = page.locator('.thumb-strip')
-    await strip.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+    await strip.dispatchEvent('pointerdown', {
+      pointerType: 'touch',
+      pointerId: 1,
+    })
     await page.waitForTimeout(550)
-    await strip.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+    await strip.dispatchEvent('pointerup', {
+      pointerType: 'touch',
+      pointerId: 1,
+    })
 
     await expect(page.locator('[data-testid="reply-menu"]')).toBeVisible()
   })
@@ -183,9 +211,15 @@ test.describe('mobile (touch)', () => {
     await expect(page.locator('.thumb-btn')).toBeVisible()
 
     const thumb = page.locator('.thumb-btn')
-    await thumb.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+    await thumb.dispatchEvent('pointerdown', {
+      pointerType: 'touch',
+      pointerId: 1,
+    })
     await page.waitForTimeout(550)
-    await thumb.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+    await thumb.dispatchEvent('pointerup', {
+      pointerType: 'touch',
+      pointerId: 1,
+    })
 
     await expect(page.locator('[data-testid="image-menu"]')).toBeVisible()
     await expect(page.locator('[data-testid="reply-menu"]')).toHaveCount(0)
@@ -197,9 +231,15 @@ test.describe('mobile (touch)', () => {
     await expect(page.locator('.id-badge').first()).toBeVisible()
 
     const badge = page.locator('.id-badge').first()
-    await badge.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+    await badge.dispatchEvent('pointerdown', {
+      pointerType: 'touch',
+      pointerId: 1,
+    })
     await page.waitForTimeout(550)
-    await badge.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+    await badge.dispatchEvent('pointerup', {
+      pointerType: 'touch',
+      pointerId: 1,
+    })
 
     await expect(page.locator('[data-testid="id-menu"]')).toBeVisible()
     await expect(page.locator('[data-testid="reply-menu"]')).toHaveCount(0)

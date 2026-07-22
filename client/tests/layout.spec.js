@@ -20,7 +20,9 @@ const THREAD_PATH = `/${FAV.server}/${FAV.board}/${FAV.thread_id}`
 
 function mock(page) {
   page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
   page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({
       json: {
@@ -28,7 +30,15 @@ function mock(page) {
         res_count: 1,
         read_res: 0,
         status: 'active',
-        res: [{ num: 1, name: '名無し', mail: '', date: '2025 ID:x', body: '本文1' }],
+        res: [
+          {
+            num: 1,
+            name: '名無し',
+            mail: '',
+            date: '2025 ID:x',
+            body: '本文1',
+          },
+        ],
       },
     }),
   )
@@ -61,7 +71,9 @@ function mockLong(page, resCount = 60) {
     }),
   )
   page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
-    route.fulfill({ json: { res_count: resCount, read_res: 0, status: 'active' } }),
+    route.fulfill({
+      json: { res_count: resCount, read_res: 0, status: 'active' },
+    }),
   )
 }
 

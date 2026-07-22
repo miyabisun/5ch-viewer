@@ -22,7 +22,9 @@ function ratingRoute(page, store) {
 
 test('each item carries its rating color-bar class (0..5)', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: FAVS }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
   await page.goto('/')
 
   for (const r of [0, 1, 2, 3, 4, 5]) {
@@ -36,11 +38,11 @@ test('each item carries its rating color-bar class (0..5)', async ({ page }) => 
   }
 })
 
-test('right-click opens the action menu and rating change is sent', async ({
-  page,
-}) => {
+test('right-click opens the action menu and rating change is sent', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: FAVS }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
   const sent = []
   await ratingRoute(page, sent)
   await page.goto('/')
@@ -69,7 +71,9 @@ test('stars reflect the current rating with color, and modal closes via × / scr
   page,
 }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: FAVS }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
   await page.goto('/')
 
   // ★3 item: stars 1..3 lit, 4..5 off plus the fixed ☆ (r=0) — off total = 3.
@@ -97,7 +101,9 @@ test('stars reflect the current rating with color, and modal closes via × / scr
 
 test('☆ (data-rating=0) clears rating to 0 unconditionally', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: FAVS }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
   const sent = []
   await ratingRoute(page, sent)
   await page.goto('/')
@@ -109,15 +115,27 @@ test('☆ (data-rating=0) clears rating to 0 unconditionally', async ({ page }) 
   expect(sent[0]).toEqual({ rating: 0 })
 })
 
-test('unread badge: shown (rounded, colored) when unread > 0, hidden at 0', async ({
-  page,
-}) => {
+test('unread badge: shown (rounded, colored) when unread > 0, hidden at 0', async ({ page }) => {
   const favs = [
-    { ...FAVS[3], thread_id: '2000000001', title: 'unread', res_count: 10, read_res: 4 },
-    { ...FAVS[3], thread_id: '2000000002', title: 'read', res_count: 10, read_res: 10 },
+    {
+      ...FAVS[3],
+      thread_id: '2000000001',
+      title: 'unread',
+      res_count: 10,
+      read_res: 4,
+    },
+    {
+      ...FAVS[3],
+      thread_id: '2000000002',
+      title: 'read',
+      res_count: 10,
+      read_res: 10,
+    },
   ]
   await page.route('**/api/favorites', (route) => route.fulfill({ json: favs }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
   await page.goto('/')
 
   // Exactly one badge (the unread item); the fully-read item shows none.
@@ -134,13 +152,12 @@ test('unread badge: shown (rounded, colored) when unread > 0, hidden at 0', asyn
   expect(parseFloat(style.radius)).toBeGreaterThan(0)
 })
 
-test('copy actions write title / url / share text to the clipboard', async ({
-  page,
-  context,
-}) => {
+test('copy actions write title / url / share text to the clipboard', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.route('**/api/favorites', (route) => route.fulfill({ json: FAVS }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
   await page.goto('/')
 
   const url = 'https://egg.5ch.io/test/read.cgi/applism/1000000003/'
@@ -164,7 +181,9 @@ test('copy actions write title / url / share text to the clipboard', async ({
 
 test('plain click still opens the thread', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: FAVS }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
     route.fulfill({
       json: {
@@ -172,7 +191,15 @@ test('plain click still opens the thread', async ({ page }) => {
         res_count: 1,
         read_res: 0,
         status: 'active',
-        res: [{ num: 1, name: '名無し', mail: '', date: '2025 ID:x', body: '本文1' }],
+        res: [
+          {
+            num: 1,
+            name: '名無し',
+            mail: '',
+            date: '2025 ID:x',
+            body: '本文1',
+          },
+        ],
       },
     }),
   )

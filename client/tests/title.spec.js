@@ -33,12 +33,14 @@ function datResponse() {
 
 test('the thread title stays pinned at the top while scrolling', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse() }),
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
   )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse() }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
-    route.fulfill({ json: { res_count: COUNT, read_res: 0, status: 'active' } }),
+    route.fulfill({
+      json: { res_count: COUNT, read_res: 0, status: 'active' },
+    }),
   )
 
   await page.goto(THREAD_PATH)
@@ -63,10 +65,16 @@ test.describe('on phone', () => {
 
   test('the thread title pins flush below the NavBar (no gap)', async ({ page }) => {
     await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-    await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
-    await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse() }))
+    await page.route('**/api/favorites/refresh', (route) =>
+      route.fulfill({ json: { ok: true, boards: 0 } }),
+    )
+    await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+      route.fulfill({ json: datResponse() }),
+    )
     await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
-      route.fulfill({ json: { res_count: COUNT, read_res: 0, status: 'active' } }),
+      route.fulfill({
+        json: { res_count: COUNT, read_res: 0, status: 'active' },
+      }),
     )
 
     await page.goto(THREAD_PATH)

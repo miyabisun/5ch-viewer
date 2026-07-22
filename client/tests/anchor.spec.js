@@ -23,8 +23,20 @@ function datResponse() {
     read_res: 0,
     status: 'active',
     res: [
-      { num: 1, name: '名無し', mail: '', date: '2025 ID:a', body: '最初のレス &gt;&gt;2' },
-      { num: 2, name: '名無し', mail: '', date: '2025 ID:b', body: '&gt;&gt;1 これはアンカー' },
+      {
+        num: 1,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:a',
+        body: '最初のレス &gt;&gt;2',
+      },
+      {
+        num: 2,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:b',
+        body: '&gt;&gt;1 これはアンカー',
+      },
     ],
   }
 }
@@ -47,7 +59,13 @@ test('a sanitized >>N in a dat body renders as a clickable .anchor span (not a r
     read_res: 0,
     status: 'active',
     res: [
-      { num: 1, name: '名無し', mail: '', date: '2025 ID:a', body: '最初のレス' },
+      {
+        num: 1,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:a',
+        body: '最初のレス',
+      },
       {
         num: 2,
         name: '名無し',
@@ -85,10 +103,10 @@ test('a sanitized >>N in a dat body renders as a clickable .anchor span (not a r
 
 test('clicking a >>N anchor opens the modal without navigating', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse() }),
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
   )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse() }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
   )
@@ -127,18 +145,34 @@ test('anchor tree: unified single tree with ancestors above self and children be
     read_res: 0,
     status: 'active',
     res: [
-      { num: 1, name: '名無し', mail: '', date: '2025 ID:a', body: '最初のレス &gt;&gt;2' },
-      { num: 2, name: '名無し', mail: '', date: '2025 ID:b', body: '&gt;&gt;1 これはアンカー' },
-      { num: 3, name: '名無し', mail: '', date: '2025 ID:c', body: '&gt;&gt;1 別の返信' },
+      {
+        num: 1,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:a',
+        body: '最初のレス &gt;&gt;2',
+      },
+      {
+        num: 2,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:b',
+        body: '&gt;&gt;1 これはアンカー',
+      },
+      {
+        num: 3,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:c',
+        body: '&gt;&gt;1 別の返信',
+      },
     ],
   }
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
   await page.route('**/api/favorites/refresh', (route) =>
     route.fulfill({ json: { ok: true, boards: 0 } }),
   )
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: dat }),
-  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: dat }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 3, read_res: 0, status: 'active' } }),
   )
@@ -171,10 +205,10 @@ test('anchor tree: unified single tree with ancestors above self and children be
 // as a child (because it is already used as an ancestor).
 test('anchor tree expands recursively and stops at cycles', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse() }),
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
   )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse() }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
   )
@@ -210,10 +244,34 @@ test('anchor tree expands DAG without duplicating shared nodes', async ({ page }
     read_res: 0,
     status: 'active',
     res: [
-      { num: 1, name: '名無し', mail: '', date: '2025 ID:a', body: 'root &gt;&gt;2 &gt;&gt;3' },
-      { num: 2, name: '名無し', mail: '', date: '2025 ID:b', body: '&gt;&gt;4 経路A' },
-      { num: 3, name: '名無し', mail: '', date: '2025 ID:c', body: '&gt;&gt;4 経路B' },
-      { num: 4, name: '名無し', mail: '', date: '2025 ID:d', body: '共有ノード' },
+      {
+        num: 1,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:a',
+        body: 'root &gt;&gt;2 &gt;&gt;3',
+      },
+      {
+        num: 2,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:b',
+        body: '&gt;&gt;4 経路A',
+      },
+      {
+        num: 3,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:c',
+        body: '&gt;&gt;4 経路B',
+      },
+      {
+        num: 4,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:d',
+        body: '共有ノード',
+      },
     ],
   }
 
@@ -221,9 +279,7 @@ test('anchor tree expands DAG without duplicating shared nodes', async ({ page }
   await page.route('**/api/favorites/refresh', (route) =>
     route.fulfill({ json: { ok: true, boards: 0 } }),
   )
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: dagDat }),
-  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: dagDat }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 4, read_res: 0, status: 'active' } }),
   )
@@ -247,14 +303,12 @@ test('anchor tree expands DAG without duplicating shared nodes', async ({ page }
 
 // The anchor-tree modal follows the shared modal convention: a top-right × and an
 // outside (scrim) click both close it; there is no bottom "閉じる" button.
-test('anchor modal closes via × and via outside click (no bottom 閉じる)', async ({
-  page,
-}) => {
+test('anchor modal closes via × and via outside click (no bottom 閉じる)', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse() }),
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
   )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse() }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
   )
@@ -296,7 +350,12 @@ test.describe('touch: anchor tap vs swipe-back', () => {
         const x0 = r.left + Math.min(20, r.width / 2)
         const y0 = r.top + r.height / 2
         const mk = (type, x, y, list) => {
-          const t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y })
+          const t = new Touch({
+            identifier: 1,
+            target: el,
+            clientX: x,
+            clientY: y,
+          })
           el.dispatchEvent(
             new TouchEvent(type, {
               bubbles: true,
@@ -319,7 +378,9 @@ test.describe('touch: anchor tap vs swipe-back', () => {
 
   test('a swipe starting on an anchor does not navigate back', async ({ page }) => {
     await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-    await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+    await page.route('**/api/favorites/refresh', (route) =>
+      route.fulfill({ json: { ok: true, boards: 0 } }),
+    )
     await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
       route.fulfill({ json: datResponse() }),
     )
@@ -339,7 +400,9 @@ test.describe('touch: anchor tap vs swipe-back', () => {
 
   test('a clear right-swipe on the body returns to the list', async ({ page }) => {
     await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-    await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+    await page.route('**/api/favorites/refresh', (route) =>
+      route.fulfill({ json: { ok: true, boards: 0 } }),
+    )
     await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
       route.fulfill({ json: datResponse() }),
     )
@@ -370,18 +433,34 @@ test('anchor tree depth indentation: ancestor shallower than self, self shallowe
     read_res: 0,
     status: 'active',
     res: [
-      { num: 859, name: '名無し', mail: '', date: '2025 ID:a', body: '859のレス' },
-      { num: 863, name: '名無し', mail: '', date: '2025 ID:b', body: '&gt;&gt;859 863のレス' },
-      { num: 886, name: '名無し', mail: '', date: '2025 ID:c', body: '&gt;&gt;863 886のレス' },
+      {
+        num: 859,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:a',
+        body: '859のレス',
+      },
+      {
+        num: 863,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:b',
+        body: '&gt;&gt;859 863のレス',
+      },
+      {
+        num: 886,
+        name: '名無し',
+        mail: '',
+        date: '2025 ID:c',
+        body: '&gt;&gt;863 886のレス',
+      },
     ],
   }
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
   await page.route('**/api/favorites/refresh', (route) =>
     route.fulfill({ json: { ok: true, boards: 0 } }),
   )
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: dat }),
-  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: dat }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 3, read_res: 0, status: 'active' } }),
   )

@@ -3,14 +3,28 @@
   import { api, beaconProgress } from './api.js'
   import { formatName } from './name.js'
   import { stripId, buildIdStats } from './id.js'
-  import { buildWacchoiStats, wacchoiEnabled, linkifyWacchoi, extractWacchoiSuffix, wacchoiWeekKey } from './wacchoi.js'
+  import {
+    buildWacchoiStats,
+    wacchoiEnabled,
+    linkifyWacchoi,
+    extractWacchoiSuffix,
+    wacchoiWeekKey,
+  } from './wacchoi.js'
   import { linkify, extractImageUrls, ANCHOR_RE } from './linkify.js'
   import { copyText } from './clipboard.js'
   import Modal from './Modal.svelte'
   import ImageViewer from './ImageViewer.svelte'
   import Icon from './Icon.svelte'
 
-  let { fav, onback, onprogress = () => {}, ngIds = new Set(), onngchange = () => {}, ngWacchoi = [], onngwacchoichange = () => {} } = $props()
+  let {
+    fav,
+    onback,
+    onprogress = () => {},
+    ngIds = new Set(),
+    onngchange = () => {},
+    ngWacchoi = [],
+    onngwacchoichange = () => {},
+  } = $props()
 
   let data = $state(null)
   // Newest-first timeline. The entry batch ends at the previous-read post;
@@ -77,9 +91,7 @@
   function finishInitialView() {
     trackingReady = true
     observer?.disconnect()
-    threadBody
-      ?.querySelectorAll(':scope > .res')
-      .forEach((node) => observer?.observe(node))
+    threadBody?.querySelectorAll(':scope > .res').forEach((node) => observer?.observe(node))
     scheduleOlderBatch()
   }
 
@@ -123,8 +135,7 @@
     // Include the previous-read post itself in the urgent batch. A stale saved
     // position beyond the available dat safely falls back to the newest post.
     const foundBoundary = newestFirst.findIndex((r) => r.num <= readBaseline)
-    const boundaryIndex =
-      readBaseline < 1 ? newestFirst.length - 1 : Math.max(0, foundBoundary)
+    const boundaryIndex = readBaseline < 1 ? newestFirst.length - 1 : Math.max(0, foundBoundary)
     readBoundaryNum = newestFirst[boundaryIndex].num
     visibleRes = newestFirst.slice(0, boundaryIndex + 1)
     olderQueue = newestFirst.slice(boundaryIndex + 1)
@@ -323,8 +334,7 @@
 
   // On unload, reliably send the final position via sendBeacon.
   $effect(() => {
-    const sendBeacon = () =>
-      beaconProgress(fav.server, fav.board, fav.thread_id, maxRead)
+    const sendBeacon = () => beaconProgress(fav.server, fav.board, fav.thread_id, maxRead)
     const onHide = () => {
       if (document.visibilityState === 'hidden') sendBeacon()
     }
@@ -367,9 +377,7 @@
   const wacchoiEnabledFlag = $derived(wacchoiEnabled(data?.res ?? []))
   // Per-res wacchoi stats: Map<resNum, { wacchoi, total, order, colorLevel }>.
   // Empty Map when the thread has no wacchoi (wacchoiEnabledFlag=false).
-  const wacchoiStats = $derived.by(() =>
-    buildWacchoiStats(data?.res ?? [], wacchoiEnabledFlag),
-  )
+  const wacchoiStats = $derived.by(() => buildWacchoiStats(data?.res ?? [], wacchoiEnabledFlag))
 
   // Resolve a res's ID: server-extracted r.id is authoritative; fall back to
   // client extraction (idStats) for edge cases such as id-search result reses.
@@ -459,11 +467,7 @@
       descendants.push({ num, depth: selfDepth + dist }),
     )
 
-    return [
-      ...ancestors,
-      { num: anchorRoot, depth: selfDepth, highlight: true },
-      ...descendants,
-    ]
+    return [...ancestors, { num: anchorRoot, depth: selfDepth, highlight: true }, ...descendants]
   })
 
   // Body click (shared by list and modal). Follow the anchor or open wacchoi list when tapped.
@@ -572,9 +576,7 @@
   })
 
   function openImageViewer(resNum, indexInRes) {
-    const idx = allImages.findIndex(
-      (img) => img.resNum === resNum && img.indexInRes === indexInRes,
-    )
+    const idx = allImages.findIndex((img) => img.resNum === resNum && img.indexInRes === indexInRes)
     if (idx === -1) return
     imageViewerState = { images: allImages, initialIndex: idx }
   }
@@ -969,9 +971,7 @@
   let idSearchLoading = $state(false)
   let idSearchResult = $state(null) // null = closed, [] = empty result, [...] = results
   let idSearchTarget = $state(null) // the ID that was searched
-  const idSearchHits = $derived(
-    idSearchResult?.reduce((s, t) => s + t.res.length, 0) ?? 0,
-  )
+  const idSearchHits = $derived(idSearchResult?.reduce((s, t) => s + t.res.length, 0) ?? 0)
 
   async function startIdSearch(id) {
     closeIdMenu()
@@ -998,9 +998,7 @@
 <!-- resNum is used by the surrounding card's reply-menu handlers. -->
 {#snippet body(html, resNum)}
   {@const images = extractImageUrls(html)}
-  <div class="body" role="presentation"
-    onclick={onBodyClick}
-  >{@html linkify(html)}</div>
+  <div class="body" role="presentation" onclick={onBodyClick}>{@html linkify(html)}</div>
   {#if images.length > 0}
     <div class="thumb-strip">
       {#each images as img, indexInRes}
@@ -1008,10 +1006,18 @@
         <button
           class="thumb-btn"
           onclick={(e) => {
-            if (imageLongPressed) { imageLongPressed = false; e.stopPropagation(); return }
+            if (imageLongPressed) {
+              imageLongPressed = false
+              e.stopPropagation()
+              return
+            }
             openImageViewer(resNum, indexInRes)
           }}
-          oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); imageMenu = { url: img.url, mosaic: isMosaic } }}
+          oncontextmenu={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            imageMenu = { url: img.url, mosaic: isMosaic }
+          }}
           onpointerdown={(e) => onThumbPointerDown(e, img.url)}
           onpointerup={cancelThumbPress}
           onpointerleave={cancelThumbPress}
@@ -1052,7 +1058,8 @@
   {@const resolvedId = resolveId(r)}
   {@const wStats = wacchoiStats.get(r.num)}
   {@const wNameColorCls = wStats && wStats.total >= 2 ? `id-${wStats.colorLevel}` : ''}
-  <span class="num">{r.num}</span><!--
+  <span class="num">{r.num}</span
+  ><!--
        Name: when the thread has wacchoi enabled, linkifyWacchoi() wraps the
          wacchoi token inside a clickable .wacchoi-badge span.  The .name element
          inherits the colour class set by wNameColorCls so the badge takes the
@@ -1069,34 +1076,40 @@
       onpointerdown={onWacchoiPointerDown}
       onpointerup={cancelWacchoiPress}
       onpointerleave={cancelWacchoiPress}
-      onpointercancel={cancelWacchoiPress}
-    >{@html linkifyWacchoi(r.name)}</span>
+      onpointercancel={cancelWacchoiPress}>{@html linkifyWacchoi(r.name)}</span
+    >
   {:else}
     <span class="name">{formatName(r.name)}</span>
   {/if}
-  <span class="date">{stripId(r.date)}</span><!--
+  <span class="date">{stripId(r.date)}</span
+  ><!--
        ID badge: always shown when an ID exists (total>=2 only controls colour).
          Right-click (PC) or long-press (touch) opens the ID context menu.
          For total>=2 the span is coloured and shows order/total counts.
          The &nbsp; inside the {#if} separates the badge from .date only when an ID exists. -->
   {#if resolvedId}
     {@const colorCls = stats && stats.total >= 2 ? `id-${stats.colorLevel}` : 'id-l1'}
-    {@const label = stats && stats.total >= 2
-      ? `ID:${resolvedId} (${stats.order}/${stats.total})`
-      : `ID:${resolvedId}`}
+    {@const label =
+      stats && stats.total >= 2
+        ? `ID:${resolvedId} (${stats.order}/${stats.total})`
+        : `ID:${resolvedId}`}
     &nbsp;<span
       class="id-badge {colorCls} resid"
       role="button"
       tabindex="0"
       data-id={resolvedId}
-      oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); openIdMenu(resolvedId) }}
+      oncontextmenu={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        openIdMenu(resolvedId)
+      }}
       onpointerdown={(e) => onIdPointerDown(e, resolvedId)}
       onpointerup={cancelIdPress}
       onpointerleave={cancelIdPress}
       onpointercancel={cancelIdPress}
       onclick={(e) => onIdClick(e, resolvedId)}
-      onkeydown={(e) => e.key === 'Enter' && openIdList(resolvedId)}
-    >{label}</span>
+      onkeydown={(e) => e.key === 'Enter' && openIdList(resolvedId)}>{label}</span
+    >
   {/if}
 {/snippet}
 
@@ -1109,8 +1122,8 @@
       class="ng-toggle"
       type="button"
       aria-expanded={expandedNgRes.has(r.num)}
-      onclick={(e) => toggleNgBody(e, r.num)}
-    ><del class="ng">{r.num} {reason.label}</del></button>
+      onclick={(e) => toggleNgBody(e, r.num)}><del class="ng">{r.num} {reason.label}</del></button
+    >
     {#if expandedNgRes.has(r.num)}
       {@render body(r.body, r.num)}
     {/if}
@@ -1137,7 +1150,11 @@
       <div class="res missing">レス {num} は未取得です</div>
     {:else}
       <!-- Uses resHeadAndBody so NG posts are hidden even inside the anchor tree. -->
-      <div class="res" class:anchor-self={highlight} role="group" aria-label="レス {r.num}"
+      <div
+        class="res"
+        class:anchor-self={highlight}
+        role="group"
+        aria-label="レス {r.num}"
         oncontextmenu={(e) => onCardContextMenu(e, r)}
         onpointerdown={(e) => onCardPointerDown(e, r)}
         onpointerup={cancelCardPress}
@@ -1177,8 +1194,13 @@
           </div>
         {/if}
         <!-- own takes priority over unread: when r.own is true, unread class is not added -->
-        <div class="res" use:track={r.num} class:unread={r.num > readBaseline && !r.own} class:own={r.own}
-          role="group" aria-label="レス {r.num}"
+        <div
+          class="res"
+          use:track={r.num}
+          class:unread={r.num > readBaseline && !r.own}
+          class:own={r.own}
+          role="group"
+          aria-label="レス {r.num}"
           oncontextmenu={(e) => onCardContextMenu(e, r)}
           onpointerdown={(e) => onCardPointerDown(e, r)}
           onpointerup={cancelCardPress}
@@ -1208,20 +1230,25 @@
     <button
       class="btn icon-btn"
       aria-label="書き込む"
-      onclick={() => { postModalOpen = true; postError = null }}
-    ><Icon name="pencil" size="18" /></button>
-    <button
-      class="btn icon-btn"
-      aria-label="更新"
-      disabled={refreshing}
-      onclick={triggerRefresh}
-    ><Icon name="refresh-cw" size="18" /></button>
+      onclick={() => {
+        postModalOpen = true
+        postError = null
+      }}><Icon name="pencil" size="18" /></button
+    >
+    <button class="btn icon-btn" aria-label="更新" disabled={refreshing} onclick={triggerRefresh}
+      ><Icon name="refresh-cw" size="18" /></button
+    >
   </div>
 </div>
 
 <!-- Post (write) modal. -->
 {#if postModalOpen}
-  <Modal onclose={() => { postModalOpen = false; postError = null }}>
+  <Modal
+    onclose={() => {
+      postModalOpen = false
+      postError = null
+    }}
+  >
     {#snippet header()}
       <div class="menu-title">書き込む</div>
     {/snippet}
@@ -1229,16 +1256,33 @@
       <div class="post-row">
         <label class="post-label">
           名前
-          <input class="input" type="text" placeholder="（省略可）" bind:value={postName} disabled={postSubmitting} />
+          <input
+            class="input"
+            type="text"
+            placeholder="（省略可）"
+            bind:value={postName}
+            disabled={postSubmitting}
+          />
         </label>
         <label class="post-label">
           メール
-          <input class="input" type="text" placeholder="sage" bind:value={postMail} disabled={postSubmitting} />
+          <input
+            class="input"
+            type="text"
+            placeholder="sage"
+            bind:value={postMail}
+            disabled={postSubmitting}
+          />
         </label>
       </div>
       <label class="post-label">
         本文
-        <textarea class="post-textarea input" rows="6" placeholder="本文を入力" bind:value={postMessage} disabled={postSubmitting}></textarea>
+        <textarea
+          class="post-textarea input"
+          rows="6"
+          placeholder="本文を入力"
+          bind:value={postMessage}
+          disabled={postSubmitting}></textarea>
       </label>
       {#if postError}
         <p class="post-error error" role="alert">{postError}</p>
@@ -1277,7 +1321,10 @@
     {/snippet}
     <div class="id-list" data-testid="id-list" role="presentation" onclick={onBodyClick}>
       {#each idListRes as r (r.num)}
-        <div class="res id-list-res" role="group" aria-label="レス {r.num}"
+        <div
+          class="res id-list-res"
+          role="group"
+          aria-label="レス {r.num}"
           oncontextmenu={(e) => onCardContextMenu(e, r)}
           onpointerdown={(e) => onCardPointerDown(e, r)}
           onpointerup={cancelCardPress}
@@ -1299,7 +1346,10 @@
     {/snippet}
     <div class="id-list" data-testid="wacchoi-list" role="presentation" onclick={onBodyClick}>
       {#each wacchoiListRes as r (r.num)}
-        <div class="res id-list-res" role="group" aria-label="レス {r.num}"
+        <div
+          class="res id-list-res"
+          role="group"
+          aria-label="レス {r.num}"
           oncontextmenu={(e) => onCardContextMenu(e, r)}
           onpointerdown={(e) => onCardPointerDown(e, r)}
           onpointerup={cancelCardPress}
@@ -1321,10 +1371,14 @@
     {/snippet}
     <div class="menu" data-testid="wacchoi-menu">
       {#if !isWacchoiNgFor(wacchoiMenu.wacchoi, wacchoiMenu.date)}
-        <button class="action" onclick={() => addNgWacchoi(wacchoiMenu.wacchoi, wacchoiMenu.date)}>NGﾜｯﾁｮｲに追加</button>
+        <button class="action" onclick={() => addNgWacchoi(wacchoiMenu.wacchoi, wacchoiMenu.date)}
+          >NGﾜｯﾁｮｲに追加</button
+        >
       {/if}
       <button class="action" onclick={() => copyWacchoi(wacchoiMenu.wacchoi)}>コピー</button>
-      <button class="action" onclick={() => startWacchoiSearch(wacchoiMenu.wacchoi)}>取得済みスレから検索</button>
+      <button class="action" onclick={() => startWacchoiSearch(wacchoiMenu.wacchoi)}
+        >取得済みスレから検索</button
+      >
     </div>
   </Modal>
 {/if}
@@ -1420,13 +1474,23 @@
 
 <!-- Image context menu (thumbnail long-press or right-click). -->
 {#if imageMenu != null}
-  <Modal onclose={() => { imageMenu = null }}>
+  <Modal
+    onclose={() => {
+      imageMenu = null
+    }}
+  >
     {#snippet header()}<div class="menu-title">画像</div>{/snippet}
     <div class="menu" data-testid="image-menu">
       <button class="action" onclick={() => toggleMosaic(imageMenu.url)}>
         {imageMenu.mosaic ? 'モザイクを解除' : 'モザイクをかける'}
       </button>
-      <button class="action" onclick={() => { copyText(imageMenu.url); imageMenu = null }}>URL をコピー</button>
+      <button
+        class="action"
+        onclick={() => {
+          copyText(imageMenu.url)
+          imageMenu = null
+        }}>URL をコピー</button
+      >
     </div>
   </Modal>
 {/if}
@@ -1437,8 +1501,13 @@
     images={imageViewerState.images}
     initialIndex={imageViewerState.initialIndex}
     {mosaicUrls}
-    onclose={() => { imageViewerState = null }}
-    onImageMenu={(item) => { imageViewerState = null; imageMenu = { url: item.url, mosaic: mosaicUrls.has(item.url) } }}
+    onclose={() => {
+      imageViewerState = null
+    }}
+    onImageMenu={(item) => {
+      imageViewerState = null
+      imageMenu = { url: item.url, mosaic: mosaicUrls.has(item.url) }
+    }}
   />
 {/if}
 
@@ -1609,11 +1678,22 @@
     font-size: 12px;
   }
   /* id-l1: single-occurrence ID — shown as muted text (clickable but no colour accent). */
-  .id-l1 { color: var(--muted); }
-  .id-l2 { color: var(--id-l2); }
-  .id-l3 { color: var(--id-l3); }
-  .id-l4 { color: var(--id-l4); }
-  .id-l5 { color: var(--id-l5); font-weight: bold; }
+  .id-l1 {
+    color: var(--muted);
+  }
+  .id-l2 {
+    color: var(--id-l2);
+  }
+  .id-l3 {
+    color: var(--id-l3);
+  }
+  .id-l4 {
+    color: var(--id-l4);
+  }
+  .id-l5 {
+    color: var(--id-l5);
+    font-weight: bold;
+  }
 
   /* Clickable-badge affordance, shared by the ID badge and the wacchoi badge.
      Selection suppression is handled app-wide (DESIGN.md Touch text-selection policy). */

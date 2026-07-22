@@ -94,11 +94,7 @@
 
 {#each groups as g (g.key)}
   <div class="board-group">
-    <button
-      class="board-header"
-      aria-expanded={open.has(g.key)}
-      onclick={() => toggleGroup(g.key)}
-    >
+    <button class="board-header" aria-expanded={open.has(g.key)} onclick={() => toggleGroup(g.key)}>
       <span class="board-name">{g.board_name}</span>
       <span class="board-count">({g.threads.length})</span>
       <span class="chevron" aria-hidden="true">

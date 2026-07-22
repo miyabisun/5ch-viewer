@@ -57,9 +57,7 @@ async function setupRoutes(page, { ngWacchoi = [] } = {}) {
   await page.route('**/api/favorites/refresh', (route) =>
     route.fulfill({ json: { ok: true, boards: 0 } }),
   )
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse() }),
-  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse() }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 3, read_res: 0, status: 'active' } }),
   )
@@ -70,9 +68,7 @@ async function setupRoutes(page, { ngWacchoi = [] } = {}) {
       route.fulfill({ json: { ok: true } })
     }
   })
-  await page.route(/\/api\/ng-ids\/.*/, (route) =>
-    route.fulfill({ json: { ok: true } }),
-  )
+  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
   await page.route('**/api/ng-wacchoi', (route) => {
     if (route.request().method() === 'GET') {
       route.fulfill({ json: ngWacchoi })
@@ -80,9 +76,7 @@ async function setupRoutes(page, { ngWacchoi = [] } = {}) {
       route.fulfill({ json: { ok: true } })
     }
   })
-  await page.route(/\/api\/boards\/.+\/wacchoi-search/, (route) =>
-    route.fulfill({ json: [] }),
-  )
+  await page.route(/\/api\/boards\/.+\/wacchoi-search/, (route) => route.fulfill({ json: [] }))
 }
 
 test('right-click on wacchoi badge opens wacchoi-menu modal', async ({ page }) => {
@@ -108,21 +102,32 @@ test('long-press on wacchoi badge opens only the wacchoi menu', async ({ page })
   await expect(page.getByText('本文1')).toBeVisible()
 
   const badge = page.locator('.wacchoi-badge').first()
-  await badge.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+  await badge.dispatchEvent('pointerdown', {
+    pointerType: 'touch',
+    pointerId: 1,
+  })
   await page.waitForTimeout(550)
-  await badge.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+  await badge.dispatchEvent('pointerup', {
+    pointerType: 'touch',
+    pointerId: 1,
+  })
 
   await expect(page.locator('[data-testid="wacchoi-menu"]')).toBeVisible()
   await expect(page.locator('[data-testid="reply-menu"]')).toHaveCount(0)
 })
 
-test('wacchoi tap still works after closing a reply menu opened from the res header', async ({ page }) => {
+test('wacchoi tap still works after closing a reply menu opened from the res header', async ({
+  page,
+}) => {
   await setupRoutes(page)
   await page.goto(THREAD_PATH)
   await expect(page.getByText('本文1')).toBeVisible()
 
   const num = page.locator('.res .num').first()
-  await num.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+  await num.dispatchEvent('pointerdown', {
+    pointerType: 'touch',
+    pointerId: 1,
+  })
   await page.waitForTimeout(550)
   await num.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
   await num.dispatchEvent('click')
@@ -198,7 +203,9 @@ test('left-click on wacchoi badge opens wacchoi-list (not wacchoi-menu)', async 
 
 // --- New tests: NG wacchoi button and API calls ---
 
-test('NGﾜｯﾁｮｲに追加 calls POST /api/ng-wacchoi with correct suffix, board, week_key', async ({ page }) => {
+test('NGﾜｯﾁｮｲに追加 calls POST /api/ng-wacchoi with correct suffix, board, week_key', async ({
+  page,
+}) => {
   const addRequests = []
   await setupRoutes(page)
   // Override ng-wacchoi to capture POST.
@@ -233,7 +240,15 @@ test('NGﾜｯﾁｮｲに追加 calls POST /api/ng-wacchoi with correct suffix,
 
 test('NGﾜｯﾁｮｲ追加後はワッチョイメニューに削除ボタンを出さない', async ({ page }) => {
   // week_key for 2025/01/01(水) -> Thursday 2024/12/26
-  const existingNg = [{ suffix: '83IP', board: 'applism', week_key: '2024/12/26', wacchoi: '7bb6-83IP', created_at: 0 }]
+  const existingNg = [
+    {
+      suffix: '83IP',
+      board: 'applism',
+      week_key: '2024/12/26',
+      wacchoi: '7bb6-83IP',
+      created_at: 0,
+    },
+  ]
 
   const getRequests = []
   await setupRoutes(page)
@@ -256,15 +271,23 @@ test('NGﾜｯﾁｮｲ追加後はワッチョイメニューに削除ボタン
 
   // The original badge is replaced by the NG disclosure, so its old removal
   // action is physically unavailable and must not remain in the DOM.
-  await expect(
-    page.locator('del.ng').filter({ hasText: '1 NGワッチョイ' }),
-  ).toHaveText('1 NGワッチョイ')
+  await expect(page.locator('del.ng').filter({ hasText: '1 NGワッチョイ' })).toHaveText(
+    '1 NGワッチョイ',
+  )
   await expect(page.locator('.wacchoi-badge[data-wacchoi="7bb6-83IP"]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'NGﾜｯﾁｮｲから削除' })).toHaveCount(0)
 })
 
 test('NG wacchoi post menu removes the matching scoped entry', async ({ page }) => {
-  const existingNg = [{ suffix: '83IP', board: 'applism', week_key: '2024/12/26', wacchoi: '7bb6-83IP', created_at: 0 }]
+  const existingNg = [
+    {
+      suffix: '83IP',
+      board: 'applism',
+      week_key: '2024/12/26',
+      wacchoi: '7bb6-83IP',
+      created_at: 0,
+    },
+  ]
   const deleteRequests = []
   await setupRoutes(page, { ngWacchoi: existingNg })
   await page.route(/\/api\/ng-wacchoi(?:\?.*)?$/, async (route) => {
@@ -285,7 +308,11 @@ test('NG wacchoi post menu removes the matching scoped entry', async ({ page }) 
   await page.getByRole('button', { name: 'NGワッチョイから削除' }).click()
 
   await expect.poll(() => deleteRequests.length).toBe(1)
-  expect(deleteRequests[0]).toEqual({ suffix: '83IP', board: 'applism', week_key: '2024/12/26' })
+  expect(deleteRequests[0]).toEqual({
+    suffix: '83IP',
+    board: 'applism',
+    week_key: '2024/12/26',
+  })
 })
 
 // --- NG scope regression tests ---
@@ -348,14 +375,30 @@ function datForNgScope() {
   }
 }
 
-test('NG scope: same suffix + same board + same week are hidden (different prefix is also NG)', async ({ page }) => {
+test('NG scope: same suffix + same board + same week are hidden (different prefix is also NG)', async ({
+  page,
+}) => {
   // Register suffix 83IP for board applism, week_key 2024/12/26 (week of 2025/01/01 Wed).
-  const ngWacchoi = [{ suffix: '83IP', board: 'applism', week_key: '2024/12/26', wacchoi: '7bb6-83IP', created_at: 0 }]
+  const ngWacchoi = [
+    {
+      suffix: '83IP',
+      board: 'applism',
+      week_key: '2024/12/26',
+      wacchoi: '7bb6-83IP',
+      created_at: 0,
+    },
+  ]
 
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datForNgScope() }))
-  await page.route(/\/api\/favorites\/.+\/reload$/, (route) => route.fulfill({ json: { res_count: 5, read_res: 0, status: 'active' } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+    route.fulfill({ json: datForNgScope() }),
+  )
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 5, read_res: 0, status: 'active' } }),
+  )
   await page.route('**/api/ng-ids', (route) => route.fulfill({ json: [] }))
   await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
   await page.route('**/api/ng-wacchoi', (route) => {
@@ -375,12 +418,26 @@ test('NG scope: same suffix + same board + same week are hidden (different prefi
 })
 
 test('NG scope: different week with same suffix is NOT hidden (誤爆しない)', async ({ page }) => {
-  const ngWacchoi = [{ suffix: '83IP', board: 'applism', week_key: '2024/12/26', wacchoi: '7bb6-83IP', created_at: 0 }]
+  const ngWacchoi = [
+    {
+      suffix: '83IP',
+      board: 'applism',
+      week_key: '2024/12/26',
+      wacchoi: '7bb6-83IP',
+      created_at: 0,
+    },
+  ]
 
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datForNgScope() }))
-  await page.route(/\/api\/favorites\/.+\/reload$/, (route) => route.fulfill({ json: { res_count: 5, read_res: 0, status: 'active' } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+    route.fulfill({ json: datForNgScope() }),
+  )
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 5, read_res: 0, status: 'active' } }),
+  )
   await page.route('**/api/ng-ids', (route) => route.fulfill({ json: [] }))
   await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
   await page.route('**/api/ng-wacchoi', (route) => {
@@ -407,21 +464,34 @@ test('取得済みスレから検索 shows wacchoi-search-result modal', async (
       thread_id: '9999999999',
       title: '別スレ',
       res: [
-        { num: 5, name: 'iPhone774G </b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>', mail: '', date: '2025/01/01', body: '検索ヒット', id: null },
+        {
+          num: 5,
+          name: 'iPhone774G </b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>',
+          mail: '',
+          date: '2025/01/01',
+          body: '検索ヒット',
+          id: null,
+        },
       ],
     },
   ]
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse() }))
-  await page.route(/\/api\/favorites\/.+\/reload$/, (route) => route.fulfill({ json: { res_count: 3, read_res: 0, status: 'active' } }))
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 3, read_res: 0, status: 'active' } }),
+  )
   await page.route('**/api/ng-ids', (route) => route.fulfill({ json: [] }))
   await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
   await page.route('**/api/ng-wacchoi', (route) => {
     if (route.request().method() === 'GET') route.fulfill({ json: [] })
     else route.fulfill({ json: { ok: true } })
   })
-  await page.route(/\/api\/boards\/.+\/wacchoi-search/, (route) => route.fulfill({ json: searchResult }))
+  await page.route(/\/api\/boards\/.+\/wacchoi-search/, (route) =>
+    route.fulfill({ json: searchResult }),
+  )
 
   await page.goto(THREAD_PATH)
   await expect(page.getByText('本文1')).toBeVisible()
@@ -479,7 +549,9 @@ test('week_key: 2025/01/09(木) starts a new week (week_key 2025/01/09)', async 
     ],
   }
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datThursday }))
-  await page.route(/\/api\/favorites\/.+\/reload$/, (route) => route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }))
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
+  )
   await page.route('**/api/ng-wacchoi', async (route) => {
     if (route.request().method() === 'POST') {
       addRequests.push(route.request().postDataJSON())
@@ -500,7 +572,9 @@ test('week_key: 2025/01/09(木) starts a new week (week_key 2025/01/09)', async 
   expect(addRequests[0].week_key).toBe('2025/01/09')
 })
 
-test('week_key: 2025/01/08(水) belongs to previous week (week_key 2025/01/02)', async ({ page }) => {
+test('week_key: 2025/01/08(水) belongs to previous week (week_key 2025/01/02)', async ({
+  page,
+}) => {
   const addRequests = []
   await setupRoutes(page)
   const datWed = {
@@ -528,7 +602,9 @@ test('week_key: 2025/01/08(水) belongs to previous week (week_key 2025/01/02)',
     ],
   }
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datWed }))
-  await page.route(/\/api\/favorites\/.+\/reload$/, (route) => route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }))
+  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
+    route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
+  )
   await page.route('**/api/ng-wacchoi', async (route) => {
     if (route.request().method() === 'POST') {
       addRequests.push(route.request().postDataJSON())

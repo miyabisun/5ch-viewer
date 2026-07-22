@@ -77,10 +77,7 @@ test('newest posts render first and older posts append below without moving the 
   await expect(posts.first()).toHaveAttribute('data-res', '120')
   await expect(posts.last()).toHaveAttribute('data-res', '100')
   await expect(page.getByTestId('thread-end')).toHaveText('おわり')
-  await expect(page.getByTestId('thread-end').locator('+ .res')).toHaveAttribute(
-    'data-res',
-    '120',
-  )
+  await expect(page.getByTestId('thread-end').locator('+ .res')).toHaveAttribute('data-res', '120')
   await expect(page.getByText('本文99', { exact: true })).toHaveCount(0)
   // The brief pre-position paint at the top must not mark the latest post read.
   // Only posts actually visible after the boundary is positioned may advance progress.
@@ -147,9 +144,7 @@ test('an entirely unread thread keeps one boundary after res 1', async ({ page }
   await expect(page.getByTestId('thread-end')).toHaveText('おわり')
 })
 
-test('progress tracking starts when an initially empty thread gains a post', async ({
-  page,
-}) => {
+test('progress tracking starts when an initially empty thread gains a post', async ({ page }) => {
   const emptyFav = { ...FAV, res_count: 0, read_res: 0 }
   let count = 0
   let savedProgress = null
@@ -177,9 +172,7 @@ test('progress tracking starts when an initially empty thread gains a post', asy
   await expect.poll(() => savedProgress, { timeout: 4000 }).toBe(1)
 })
 
-test('switching threads cancels the previous view restoration frames', async ({
-  page,
-}) => {
+test('switching threads cancels the previous view restoration frames', async ({ page }) => {
   const secondFav = {
     ...FAV,
     thread_id: '1771127146',
@@ -204,9 +197,7 @@ test('switching threads cancels the previous view restoration frames', async ({
       }
     }
   })
-  await page.route('**/api/favorites', (route) =>
-    route.fulfill({ json: [FAV, secondFav] }),
-  )
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV, secondFav] }))
   await page.route(/\/api\/favorites\/.+\/dat$/, (route) => {
     const fav = route.request().url().includes(secondFav.thread_id) ? secondFav : FAV
     route.fulfill({ json: datResponse(fav) })

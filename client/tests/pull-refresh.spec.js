@@ -34,9 +34,7 @@ function datResponse(count = 40) {
 // Registers all routes needed for the ThreadView to mount and load.
 function mockRoutes(page, opts = {}) {
   const { datCount = 40, reloadHandler } = opts
-  page.route('**/api/favorites', (route) =>
-    route.fulfill({ json: [FAV] }),
-  )
+  page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
   page.route('**/api/favorites/refresh', (route) =>
     route.fulfill({ json: { ok: true, boards: 0 } }),
   )
@@ -47,7 +45,9 @@ function mockRoutes(page, opts = {}) {
     page.route(/\/api\/favorites\/.+\/reload$/, reloadHandler)
   } else {
     page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
-      route.fulfill({ json: { res_count: datCount, read_res: 0, status: 'active' } }),
+      route.fulfill({
+        json: { res_count: datCount, read_res: 0, status: 'active' },
+      }),
     )
   }
 }
@@ -67,7 +67,9 @@ test.describe('footer refresh button', () => {
     expect(write.x).toBeLessThan(refresh.x)
   })
 
-  test('refresh button click fires a GET reload and marks only new reses unread', async ({ page }) => {
+  test('refresh button click fires a GET reload and marks only new reses unread', async ({
+    page,
+  }) => {
     const INITIAL_COUNT = 40
     const ADDED_COUNT = 2
 
@@ -80,11 +82,22 @@ test.describe('footer refresh button', () => {
     let datCallCount = 0
     page.route(/\/api\/favorites\/.+\/dat$/, (route) => {
       datCallCount++
-      route.fulfill({ json: datCallCount === 1 ? datResponse(INITIAL_COUNT) : datResponse(INITIAL_COUNT + ADDED_COUNT) })
+      route.fulfill({
+        json:
+          datCallCount === 1
+            ? datResponse(INITIAL_COUNT)
+            : datResponse(INITIAL_COUNT + ADDED_COUNT),
+      })
     })
     page.route(/\/api\/favorites\/.+\/reload$/, (route) => {
       reloadCallCount++
-      route.fulfill({ json: { res_count: INITIAL_COUNT + ADDED_COUNT, read_res: 0, status: 'active' } })
+      route.fulfill({
+        json: {
+          res_count: INITIAL_COUNT + ADDED_COUNT,
+          read_res: 0,
+          status: 'active',
+        },
+      })
     })
     page.route(/\/api\/favorites\/.+\/progress$/, (route) => {
       if (route.request().method() === 'GET') {
@@ -103,7 +116,9 @@ test.describe('footer refresh button', () => {
     await page.getByRole('button', { name: '更新' }).click()
 
     // Wait for the refresh to complete (new reses appear).
-    await expect(page.getByText(`本文${INITIAL_COUNT + ADDED_COUNT}`, { exact: true })).toBeVisible()
+    await expect(
+      page.getByText(`本文${INITIAL_COUNT + ADDED_COUNT}`, { exact: true }),
+    ).toBeVisible()
     expect(reloadCallCount).toBe(reloadsBefore + 1)
 
     // Old reses (num 1..INITIAL_COUNT) must NOT have the .unread class.
@@ -123,7 +138,9 @@ test.describe('footer refresh button', () => {
       reloadHandler: async (route) => {
         reloadCount++
         await new Promise((r) => setTimeout(r, 800))
-        route.fulfill({ json: { res_count: 40, read_res: 0, status: 'active' } })
+        route.fulfill({
+          json: { res_count: 40, read_res: 0, status: 'active' },
+        })
       },
     })
     await page.goto(THREAD_PATH)
@@ -144,18 +161,20 @@ test.describe('footer refresh button', () => {
     expect(reloadCount - countBefore).toBe(1)
   })
 
-  test('opening a thread without scrolling shows unread bar on unread reses (regression)', async ({ page }) => {
+  test('opening a thread without scrolling shows unread bar on unread reses (regression)', async ({
+    page,
+  }) => {
     // FAV has read_res=0, so all reses start as unread.
     const COUNT = 5
     page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
     page.route('**/api/favorites/refresh', (route) =>
       route.fulfill({ json: { ok: true, boards: 0 } }),
     )
-    page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-      route.fulfill({ json: datResponse(COUNT) }),
-    )
+    page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse(COUNT) }))
     page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
-      route.fulfill({ json: { res_count: COUNT, read_res: 0, status: 'active' } }),
+      route.fulfill({
+        json: { res_count: COUNT, read_res: 0, status: 'active' },
+      }),
     )
     page.route(/\/api\/favorites\/.+\/progress$/, (route) => {
       if (route.request().method() === 'GET') {

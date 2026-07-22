@@ -64,7 +64,9 @@ test.describe('phone: saved position beyond the available dat', () => {
       }),
     )
     await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
-      route.fulfill({ json: { res_count: COUNT, read_res: 50, status: 'active' } }),
+      route.fulfill({
+        json: { res_count: COUNT, read_res: 50, status: 'active' },
+      }),
     )
     await page.route(/\/api\/favorites\/.+\/progress$/, (route) => {
       if (route.request().method() === 'GET') {
@@ -98,7 +100,9 @@ test.describe('PC: unread badge decreases as user scrolls (onprogress)', () => {
       route.fulfill({ json: datResponse() }),
     )
     await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
-      route.fulfill({ json: { res_count: COUNT, read_res: FAV.read_res, status: 'active' } }),
+      route.fulfill({
+        json: { res_count: COUNT, read_res: FAV.read_res, status: 'active' },
+      }),
     )
     await page.route(/\/api\/favorites\/.+\/progress$/, (route) => {
       if (route.request().method() === 'GET') {
@@ -131,13 +135,15 @@ test('opening a short thread shows older posts naturally below the previous-read
   page,
 }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse() }),
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
   )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse() }))
   // Entry renders stored dat only (no reload); defensive mock, never fires on open.
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
-    route.fulfill({ json: { res_count: COUNT, read_res: FAV.read_res, status: 'active' } }),
+    route.fulfill({
+      json: { res_count: COUNT, read_res: FAV.read_res, status: 'active' },
+    }),
   )
   // progress GET/POST must not 405; respond to both so the page logic completes.
   await page.route(/\/api\/favorites\/.+\/progress$/, (route) => {

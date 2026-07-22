@@ -32,12 +32,54 @@ function datResponse() {
     read_res: 0,
     status: 'active',
     res: [
-      { num: 1, name: WACCHOI_NAME, mail: '', date: `2025/01/01(水) 00:00:00.00 ID:${LONG_ID}`, body: `本文1 ${LONG_URL}`, id: LONG_ID },
-      { num: 2, name: WACCHOI_NAME, mail: '', date: `2025/01/01(水) 00:01:00.00 ID:${LONG_ID}`, body: '&gt;&gt;1 本文2', id: LONG_ID },
-      { num: 3, name: '名無し', mail: '', date: '2025/01/01(水) 00:02:00.00 ID:c', body: '&gt;&gt;2 本文3', id: 'c' },
-      { num: 4, name: '名無し', mail: '', date: '2025/01/01(水) 00:03:00.00 ID:d', body: '&gt;&gt;3 本文4', id: 'd' },
-      { num: 5, name: '名無し', mail: '', date: '2025/01/01(水) 00:04:00.00 ID:e', body: '&gt;&gt;4 本文5', id: 'e' },
-      { num: 6, name: '名無し', mail: '', date: '2025/01/01(水) 00:05:00.00 ID:f', body: `&gt;&gt;5 ${LONG_URL}`, id: 'f' },
+      {
+        num: 1,
+        name: WACCHOI_NAME,
+        mail: '',
+        date: `2025/01/01(水) 00:00:00.00 ID:${LONG_ID}`,
+        body: `本文1 ${LONG_URL}`,
+        id: LONG_ID,
+      },
+      {
+        num: 2,
+        name: WACCHOI_NAME,
+        mail: '',
+        date: `2025/01/01(水) 00:01:00.00 ID:${LONG_ID}`,
+        body: '&gt;&gt;1 本文2',
+        id: LONG_ID,
+      },
+      {
+        num: 3,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01(水) 00:02:00.00 ID:c',
+        body: '&gt;&gt;2 本文3',
+        id: 'c',
+      },
+      {
+        num: 4,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01(水) 00:03:00.00 ID:d',
+        body: '&gt;&gt;3 本文4',
+        id: 'd',
+      },
+      {
+        num: 5,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01(水) 00:04:00.00 ID:e',
+        body: '&gt;&gt;4 本文5',
+        id: 'e',
+      },
+      {
+        num: 6,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01(水) 00:05:00.00 ID:f',
+        body: `&gt;&gt;5 ${LONG_URL}`,
+        id: 'f',
+      },
     ],
   }
 }
@@ -48,7 +90,14 @@ function searchResult() {
       thread_id: '1771127145',
       title: 'とても長いスレタイトルxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       res: [
-        { num: 1, name: '名無し', mail: '', date: `2025/01/01 ID:${LONG_ID}`, body: `検索ヒット本文 ${LONG_URL}`, id: LONG_ID },
+        {
+          num: 1,
+          name: '名無し',
+          mail: '',
+          date: `2025/01/01 ID:${LONG_ID}`,
+          body: `検索ヒット本文 ${LONG_URL}`,
+          id: LONG_ID,
+        },
       ],
     },
   ]
@@ -59,9 +108,7 @@ async function setupRoutes(page) {
   await page.route('**/api/favorites/refresh', (route) =>
     route.fulfill({ json: { ok: true, boards: 0 } }),
   )
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse() }),
-  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse() }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 6, read_res: 0, status: 'active' } }),
   )

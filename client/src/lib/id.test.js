@@ -6,9 +6,7 @@ import { extractId, stripId, buildIdStats } from './id.js'
 // ---------------------------------------------------------------------------
 describe('extractId', () => {
   it('extracts the ID key from a typical date string', () => {
-    expect(extractId('2025/01/01(水) 12:34:56.78 ID:klSUPSuq0')).toBe(
-      'klSUPSuq0',
-    )
+    expect(extractId('2025/01/01(水) 12:34:56.78 ID:klSUPSuq0')).toBe('klSUPSuq0')
   })
 
   it('returns null when no ID token is present', () => {
@@ -43,15 +41,11 @@ describe('extractId', () => {
 // ---------------------------------------------------------------------------
 describe('stripId', () => {
   it('removes the ID token and the preceding space', () => {
-    expect(stripId('2025/01/01(水) 12:34:56.78 ID:klSUPSuq0')).toBe(
-      '2025/01/01(水) 12:34:56.78',
-    )
+    expect(stripId('2025/01/01(水) 12:34:56.78 ID:klSUPSuq0')).toBe('2025/01/01(水) 12:34:56.78')
   })
 
   it('leaves a date without an ID unchanged (trim only)', () => {
-    expect(stripId('2025/01/01(水) 12:34:56.78')).toBe(
-      '2025/01/01(水) 12:34:56.78',
-    )
+    expect(stripId('2025/01/01(水) 12:34:56.78')).toBe('2025/01/01(水) 12:34:56.78')
   })
 
   it('returns empty string for empty/nullish input', () => {
@@ -62,16 +56,14 @@ describe('stripId', () => {
 
   it('keeps a single space when a trailing token follows the ID', () => {
     // 5ch date field: "date ID:xxx BE:123-2BP(1000)" -> "date BE:123-2BP(1000)"
-    expect(
-      stripId('2025/01/01(水) 12:34:56.78 ID:abc BE:123-2BP(1000)'),
-    ).toBe('2025/01/01(水) 12:34:56.78 BE:123-2BP(1000)')
+    expect(stripId('2025/01/01(水) 12:34:56.78 ID:abc BE:123-2BP(1000)')).toBe(
+      '2025/01/01(水) 12:34:56.78 BE:123-2BP(1000)',
+    )
   })
 
   it('removes ID at the end without leaving a trailing space', () => {
     // Already covered by the first test; kept explicit for regression clarity.
-    expect(stripId('2025/01/01(水) 12:34:56.78 ID:klSUPSuq0')).toBe(
-      '2025/01/01(水) 12:34:56.78',
-    )
+    expect(stripId('2025/01/01(水) 12:34:56.78 ID:klSUPSuq0')).toBe('2025/01/01(水) 12:34:56.78')
   })
 
   it('handles no leading space before ID (edge case)', () => {
@@ -93,7 +85,12 @@ describe('buildIdStats', () => {
 
   it('single res with ID -> total=1, order=1, colorLevel=none', () => {
     const stats = buildIdStats([makeRes(1, '2025/01/01 00:00:00 ID:aaa')])
-    expect(stats.get(1)).toEqual({ id: 'aaa', total: 1, order: 1, colorLevel: 'none' })
+    expect(stats.get(1)).toEqual({
+      id: 'aaa',
+      total: 1,
+      order: 1,
+      colorLevel: 'none',
+    })
   })
 
   it('two reses with same ID -> total=2, orders 1 and 2, colorLevel=l2', () => {
@@ -101,8 +98,16 @@ describe('buildIdStats', () => {
       makeRes(1, '2025/01/01 00:00:00 ID:aaa'),
       makeRes(2, '2025/01/01 00:01:00 ID:aaa'),
     ])
-    expect(stats.get(1)).toMatchObject({ total: 2, order: 1, colorLevel: 'l2' })
-    expect(stats.get(2)).toMatchObject({ total: 2, order: 2, colorLevel: 'l2' })
+    expect(stats.get(1)).toMatchObject({
+      total: 2,
+      order: 1,
+      colorLevel: 'l2',
+    })
+    expect(stats.get(2)).toMatchObject({
+      total: 2,
+      order: 2,
+      colorLevel: 'l2',
+    })
   })
 
   it('res without ID gets no entry in the map', () => {
@@ -129,9 +134,7 @@ describe('buildIdStats', () => {
   // colorLevel boundary tests (off-by-one coverage)
   // -------------------------------------------------------------------------
   function manyRes(n) {
-    return Array.from({ length: n }, (_, i) =>
-      makeRes(i + 1, `2025/01/01 00:0${i}:00 ID:sameID`),
-    )
+    return Array.from({ length: n }, (_, i) => makeRes(i + 1, `2025/01/01 00:0${i}:00 ID:sameID`))
   }
 
   it('total=1 -> colorLevel none', () => {

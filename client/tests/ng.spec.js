@@ -22,9 +22,30 @@ function datResponse(ngIds = []) {
     read_res: 0,
     status: 'active',
     res: [
-      { num: 1, name: '名無し', mail: '', date: '2025/01/01(水) 00:00:00.00 ID:target', body: '本文1', id: 'target' },
-      { num: 2, name: '名無し', mail: '', date: '2025/01/01(水) 00:01:00.00 ID:other', body: '本文2', id: 'other' },
-      { num: 3, name: '名無し', mail: '', date: '2025/01/01(水) 00:02:00.00 ID:target', body: '本文3', id: 'target' },
+      {
+        num: 1,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01(水) 00:00:00.00 ID:target',
+        body: '本文1',
+        id: 'target',
+      },
+      {
+        num: 2,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01(水) 00:01:00.00 ID:other',
+        body: '本文2',
+        id: 'other',
+      },
+      {
+        num: 3,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01(水) 00:02:00.00 ID:target',
+        body: '本文3',
+        id: 'target',
+      },
     ],
   }
 }
@@ -35,9 +56,7 @@ async function setupRoutes(page, { ngIds = [], searchResult = [] } = {}) {
   await page.route('**/api/favorites/refresh', (route) =>
     route.fulfill({ json: { ok: true, boards: 0 } }),
   )
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse() }),
-  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse() }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 3, read_res: 0, status: 'active' } }),
   )
@@ -48,12 +67,8 @@ async function setupRoutes(page, { ngIds = [], searchResult = [] } = {}) {
       route.fulfill({ json: { ok: true } })
     }
   })
-  await page.route(/\/api\/ng-ids\/.*/, (route) =>
-    route.fulfill({ json: { ok: true } }),
-  )
-  await page.route(/\/api\/boards\/.+\/id-search/, (route) =>
-    route.fulfill({ json: searchResult }),
-  )
+  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/boards\/.+\/id-search/, (route) => route.fulfill({ json: searchResult }))
 }
 
 test('left-click on ID badge opens id-list modal with all reses of that ID', async ({ page }) => {
@@ -88,7 +103,9 @@ test('id-list modal header shows ID and count', async ({ page }) => {
   await expect(page.locator('.modal')).toContainText('ID:target（2件）')
 })
 
-test('left-click opens id-list; right-click opens id-menu (both routes distinct)', async ({ page }) => {
+test('left-click opens id-list; right-click opens id-menu (both routes distinct)', async ({
+  page,
+}) => {
   await setupRoutes(page)
   await page.goto(THREAD_PATH)
 
@@ -217,14 +234,22 @@ test('NG post right-click opens its reason menu and removes the NG ID', async ({
   expect(decodeURIComponent(new URL(removeRequests[0]).pathname)).toBe('/api/ng-ids/target')
 })
 
-test('NG post long-press opens only its reason menu without toggling the body', async ({ page }) => {
+test('NG post long-press opens only its reason menu without toggling the body', async ({
+  page,
+}) => {
   await setupRoutes(page, { ngIds: ['target'] })
   await page.goto(THREAD_PATH)
 
   const ngHeader = page.locator('del.ng').first()
-  await ngHeader.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 1 })
+  await ngHeader.dispatchEvent('pointerdown', {
+    pointerType: 'touch',
+    pointerId: 1,
+  })
   await page.waitForTimeout(550)
-  await ngHeader.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 1 })
+  await ngHeader.dispatchEvent('pointerup', {
+    pointerType: 'touch',
+    pointerId: 1,
+  })
   await ngHeader.dispatchEvent('click')
 
   await expect(page.locator('[data-testid="ng-menu"]')).toBeVisible()
@@ -252,7 +277,14 @@ test('id-search shows results modal', async ({ page }) => {
       thread_id: '1771127145',
       title: 'NGテストスレ',
       res: [
-        { num: 1, name: '名無し', mail: '', date: '2025/01/01 ID:target', body: '検索ヒット本文', id: 'target' },
+        {
+          num: 1,
+          name: '名無し',
+          mail: '',
+          date: '2025/01/01 ID:target',
+          body: '検索ヒット本文',
+          id: 'target',
+        },
       ],
     },
   ]
@@ -333,9 +365,7 @@ test('NG body is hidden inside the anchor tree (anchorNode uses resHeadAndBody)'
   await page.route('**/api/favorites/refresh', (route) =>
     route.fulfill({ json: { ok: true, boards: 0 } }),
   )
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datWithAnchor }),
-  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datWithAnchor }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
   )
@@ -346,12 +376,8 @@ test('NG body is hidden inside the anchor tree (anchorNode uses resHeadAndBody)'
       route.fulfill({ json: { ok: true } })
     }
   })
-  await page.route(/\/api\/ng-ids\/.*/, (route) =>
-    route.fulfill({ json: { ok: true } }),
-  )
-  await page.route(/\/api\/boards\/.+\/id-search/, (route) =>
-    route.fulfill({ json: [] }),
-  )
+  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/boards\/.+\/id-search/, (route) => route.fulfill({ json: [] }))
 
   await page.goto(THREAD_PATH)
 
@@ -363,9 +389,9 @@ test('NG body is hidden inside the anchor tree (anchorNode uses resHeadAndBody)'
   await expect(page.locator('.modal')).toBeVisible()
 
   // The NG body text must NOT appear anywhere in the modal.
-  await expect(
-    page.locator('.modal').getByText('NG本文がここに表示されてはいけない'),
-  ).toHaveCount(0)
+  await expect(page.locator('.modal').getByText('NG本文がここに表示されてはいけない')).toHaveCount(
+    0,
+  )
 
   // The NG res header (del.ng) must appear inside the modal (struck-through header is shown).
   await expect(page.locator('.modal del.ng')).toHaveCount(1)
@@ -381,8 +407,22 @@ test('single-occurrence ID shows a clickable resid span', async ({ page }) => {
     read_res: 0,
     status: 'active',
     res: [
-      { num: 1, name: '名無し', mail: '', date: '2025/01/01 00:00:00 ID:uniq1', body: '本文A', id: 'uniq1' },
-      { num: 2, name: '名無し', mail: '', date: '2025/01/01 00:01:00 ID:uniq2', body: '本文B', id: 'uniq2' },
+      {
+        num: 1,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01 00:00:00 ID:uniq1',
+        body: '本文A',
+        id: 'uniq1',
+      },
+      {
+        num: 2,
+        name: '名無し',
+        mail: '',
+        date: '2025/01/01 00:01:00 ID:uniq2',
+        body: '本文B',
+        id: 'uniq2',
+      },
     ],
   }
 
@@ -390,9 +430,7 @@ test('single-occurrence ID shows a clickable resid span', async ({ page }) => {
   await page.route('**/api/favorites/refresh', (route) =>
     route.fulfill({ json: { ok: true, boards: 0 } }),
   )
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datUniqueIds }),
-  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datUniqueIds }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
   )
@@ -403,12 +441,8 @@ test('single-occurrence ID shows a clickable resid span', async ({ page }) => {
       route.fulfill({ json: { ok: true } })
     }
   })
-  await page.route(/\/api\/ng-ids\/.*/, (route) =>
-    route.fulfill({ json: { ok: true } }),
-  )
-  await page.route(/\/api\/boards\/.+\/id-search/, (route) =>
-    route.fulfill({ json: [] }),
-  )
+  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/boards\/.+\/id-search/, (route) => route.fulfill({ json: [] }))
 
   await page.goto(THREAD_PATH)
   await expect(page.getByText('本文A')).toBeVisible()

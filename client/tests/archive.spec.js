@@ -118,9 +118,7 @@ test('favorites menu has アーカイブ button above 削除', async ({ page }) 
   expect(archiveIndex).toBeLessThan(deleteIndex)
 })
 
-test('pressing アーカイブ sends PATCH .../archived with {archived:true}', async ({
-  page,
-}) => {
+test('pressing アーカイブ sends PATCH .../archived with {archived:true}', async ({ page }) => {
   await mockBase(page)
   await page.route('**/api/archives', (route) => route.fulfill({ json: [] }))
   const sent = []
@@ -205,7 +203,15 @@ test('clicking archive thread row calls onopen (navigates to thread)', async ({ 
         res_count: 10,
         read_res: 8,
         status: 'active',
-        res: [{ num: 1, name: '名無し', mail: '', date: '2025 ID:x', body: 'アーカイブ本文' }],
+        res: [
+          {
+            num: 1,
+            name: '名無し',
+            mail: '',
+            date: '2025 ID:x',
+            body: 'アーカイブ本文',
+          },
+        ],
       },
     }),
   )

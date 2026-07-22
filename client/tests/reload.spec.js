@@ -32,16 +32,14 @@ function datResponse(count) {
 // touches 5ch. No reload request fires on open, and the render is not blocked on
 // any network round-trip — even a deliberately-delayed reload response cannot
 // gate the first paint because reload is not called at all.
-test('opening a thread renders stored dat with zero reload requests', async ({
-  page,
-}) => {
+test('opening a thread renders stored dat with zero reload requests', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
 
   // Stored dat has 1 post; entry must render exactly this, unchanged.
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse(1) }),
-  )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse(1) }))
 
   // Reload is registered but must not be hit on entry. If it ever fires, delaying
   // it would expose an entry that blocks on the round-trip — here it should stay
@@ -50,7 +48,9 @@ test('opening a thread renders stored dat with zero reload requests', async ({
   await page.route(/\/api\/favorites\/.+\/reload$/, async (route) => {
     reloadCount += 1
     await new Promise((r) => setTimeout(r, 1000))
-    route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active', updated: true } })
+    route.fulfill({
+      json: { res_count: 2, read_res: 0, status: 'active', updated: true },
+    })
   })
 
   await page.goto('/')
@@ -72,11 +72,11 @@ test('opening a thread renders stored dat with zero reload requests', async ({
 // entry shows the stored dat (111), and the manual 更新 button runs the reload
 // (GET) that grows the dat to 117 and re-renders it. The heal path moved from
 // entry to the footer button; the drift-heal coverage (111 -> 117) is preserved.
-test('footer refresh grows the drifted dat (111 -> 117) via GET reload', async ({
-  page,
-}) => {
+test('footer refresh grows the drifted dat (111 -> 117) via GET reload', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
 
   // Stored dat is 111; the reload pulls the latest (117).
   let count = 111
@@ -110,10 +110,10 @@ test('footer refresh grows the drifted dat (111 -> 117) via GET reload', async (
 // The NavBar お気に入り tab is the back path now (always visible, sticky).
 test('favorites tab returns from a thread to the list', async ({ page }) => {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
-  await page.route('**/api/favorites/refresh', (route) => route.fulfill({ json: { ok: true, boards: 0 } }))
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
-    route.fulfill({ json: datResponse(1) }),
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
   )
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datResponse(1) }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 1, read_res: 0, status: 'active' } }),
   )

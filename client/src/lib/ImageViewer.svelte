@@ -75,7 +75,9 @@
 <div
   class="viewer-bg"
   role="presentation"
-  onclick={(e) => { if (e.target === e.currentTarget) onclose() }}
+  onclick={(e) => {
+    if (e.target === e.currentTarget) onclose()
+  }}
   use:imageSwipe={() => ({ onPrev: prev, onNext: next, onClose: onclose })}
 >
   <!-- × close button -->
@@ -111,14 +113,20 @@
       class="viewer-nav viewer-prev"
       aria-label="前の画像"
       disabled={currentIndex === 0}
-      onclick={(e) => { e.stopPropagation(); prev() }}
-    ><Icon name="chevron-left" size="28" /></button>
+      onclick={(e) => {
+        e.stopPropagation()
+        prev()
+      }}><Icon name="chevron-left" size="28" /></button
+    >
     <button
       class="viewer-nav viewer-next"
       aria-label="次の画像"
       disabled={currentIndex === images.length - 1}
-      onclick={(e) => { e.stopPropagation(); next() }}
-    ><Icon name="chevron-right" size="28" /></button>
+      onclick={(e) => {
+        e.stopPropagation()
+        next()
+      }}><Icon name="chevron-right" size="28" /></button
+    >
   {/if}
 
   <!-- Footer: position counter -->

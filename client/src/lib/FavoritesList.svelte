@@ -74,7 +74,13 @@
 {/each}
 
 {#if menu}
-  <ThreadMenu {menu} onclose={closeMenu} onremoved={onchange} onarchive={archive} onfindnext={findNext}>
+  <ThreadMenu
+    {menu}
+    onclose={closeMenu}
+    onremoved={onchange}
+    onarchive={archive}
+    onfindnext={findNext}
+  >
     {#snippet actions(f)}
       <div class="section-label">お気に入りレベル</div>
       <!--
@@ -95,8 +101,8 @@
             onclick={(e) => {
               e.preventDefault()
               setRating(f, r)
-            }}
-          >{r === 0 ? '☆' : '★'}</a>
+            }}>{r === 0 ? '☆' : '★'}</a
+          >
         {/each}
       </div>
     {/snippet}

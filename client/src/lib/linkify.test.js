@@ -92,7 +92,9 @@ describe('extractImageUrls', () => {
 
 describe('normalizeImagePath', () => {
   it('strips query and fragment', () => {
-    expect(normalizeImagePath('https://i.imgur.com/Abc123.jpg?w=1#y')).toBe('i.imgur.com/Abc123.jpg')
+    expect(normalizeImagePath('https://i.imgur.com/Abc123.jpg?w=1#y')).toBe(
+      'i.imgur.com/Abc123.jpg',
+    )
   })
 
   it('lowercases host but not path', () => {

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { extractWacchoi, wacchoiEnabled, buildWacchoiStats, linkifyWacchoi, extractWacchoiSuffix, wacchoiWeekKey } from './wacchoi.js'
+import {
+  extractWacchoi,
+  wacchoiEnabled,
+  buildWacchoiStats,
+  linkifyWacchoi,
+  extractWacchoiSuffix,
+  wacchoiWeekKey,
+} from './wacchoi.js'
 
 // ---------------------------------------------------------------------------
 // linkifyWacchoi
@@ -30,7 +37,9 @@ describe('linkifyWacchoi', () => {
     // The text content between tags ("alert(1)") survives, but the tag itself is gone.
     expect(result).toContain('alert(1)')
     // The wacchoi span is still present.
-    expect(result).toContain('<span class="wacchoi-badge" data-wacchoi="7bb6-83IP">7bb6-83IP</span>')
+    expect(result).toContain(
+      '<span class="wacchoi-badge" data-wacchoi="7bb6-83IP">7bb6-83IP</span>',
+    )
   })
 
   it('HTML-escapes double quotes in the name (XSS prevention)', () => {
@@ -74,7 +83,9 @@ describe('linkifyWacchoi', () => {
     const raw = 'foo (ﾜｯﾁｮｲ aabb-1234 [::]) (ﾜﾝｸﾛ ccdd-5678 [::])'
     const result = linkifyWacchoi(raw)
     // First token is span-ified.
-    expect(result).toContain('<span class="wacchoi-badge" data-wacchoi="aabb-1234">aabb-1234</span>')
+    expect(result).toContain(
+      '<span class="wacchoi-badge" data-wacchoi="aabb-1234">aabb-1234</span>',
+    )
     // Second token must remain plain text (not wrapped).
     expect(result).not.toContain('data-wacchoi="ccdd-5678"')
     expect(result).toContain('ccdd-5678')
@@ -180,10 +191,7 @@ describe('wacchoiEnabled', () => {
 
   it('uses the array head when no res has num===1', () => {
     // Edge case: partial thread load starting from res 5.
-    const res = [
-      makeRes(5, 'foo </b>(ﾜｯﾁｮｲ 1234-abcd [::1])<b>'),
-      makeRes(6, '名無しさん'),
-    ]
+    const res = [makeRes(5, 'foo </b>(ﾜｯﾁｮｲ 1234-abcd [::1])<b>'), makeRes(6, '名無しさん')]
     expect(wacchoiEnabled(res)).toBe(true)
   })
 
@@ -230,15 +238,20 @@ describe('buildWacchoiStats', () => {
       makeRes(2, 'foo </b>(ﾜｯﾁｮｲ aaaa-1111 [::1])<b>'),
     ]
     const stats = buildWacchoiStats(res, true)
-    expect(stats.get(1)).toMatchObject({ total: 2, order: 1, colorLevel: 'l2' })
-    expect(stats.get(2)).toMatchObject({ total: 2, order: 2, colorLevel: 'l2' })
+    expect(stats.get(1)).toMatchObject({
+      total: 2,
+      order: 1,
+      colorLevel: 'l2',
+    })
+    expect(stats.get(2)).toMatchObject({
+      total: 2,
+      order: 2,
+      colorLevel: 'l2',
+    })
   })
 
   it('res without wacchoi gets no entry in the map', () => {
-    const res = [
-      makeRes(1, '名無しさん'),
-      makeRes(2, 'bar </b>(ﾜｯﾁｮｲ bbbb-2222 [::1])<b>'),
-    ]
+    const res = [makeRes(1, '名無しさん'), makeRes(2, 'bar </b>(ﾜｯﾁｮｲ bbbb-2222 [::1])<b>')]
     const stats = buildWacchoiStats(res, true)
     expect(stats.has(1)).toBe(false)
     expect(stats.has(2)).toBe(true)
@@ -251,9 +264,21 @@ describe('buildWacchoiStats', () => {
       makeRes(3, 'a </b>(ﾜｯﾁｮｲ AAAA-1111 [::1])<b>'),
     ]
     const stats = buildWacchoiStats(res, true)
-    expect(stats.get(1)).toMatchObject({ wacchoi: 'AAAA-1111', total: 2, order: 1 })
-    expect(stats.get(3)).toMatchObject({ wacchoi: 'AAAA-1111', total: 2, order: 2 })
-    expect(stats.get(2)).toMatchObject({ wacchoi: 'BBBB-2222', total: 1, order: 1 })
+    expect(stats.get(1)).toMatchObject({
+      wacchoi: 'AAAA-1111',
+      total: 2,
+      order: 1,
+    })
+    expect(stats.get(3)).toMatchObject({
+      wacchoi: 'AAAA-1111',
+      total: 2,
+      order: 2,
+    })
+    expect(stats.get(2)).toMatchObject({
+      wacchoi: 'BBBB-2222',
+      total: 1,
+      order: 1,
+    })
   })
 
   // -------------------------------------------------------------------------

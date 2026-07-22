@@ -38,12 +38,7 @@
       アーカイブ
     </button>
   </div>
-  <button
-    class="btn icon-btn"
-    data-testid="theme-toggle"
-    aria-label="テーマ切替"
-    onclick={flip}
-  >
+  <button class="btn icon-btn" data-testid="theme-toggle" aria-label="テーマ切替" onclick={flip}>
     <Icon name={theme === 'dark' ? 'sun' : 'moon'} size="18" />
   </button>
 </nav>

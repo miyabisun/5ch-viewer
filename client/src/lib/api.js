@@ -35,7 +35,9 @@ export const api = {
   // unload path can reuse the same route via sendBeacon).
   getProgress: (s, b, t) => request('GET', `/api/favorites/${s}/${b}/${t}/progress`),
   setProgress: (s, b, t, readRes) =>
-    request('POST', `/api/favorites/${s}/${b}/${t}/progress`, { read_res: readRes }),
+    request('POST', `/api/favorites/${s}/${b}/${t}/progress`, {
+      read_res: readRes,
+    }),
   setRating: (s, b, t, rating) =>
     request('PATCH', `/api/favorites/${s}/${b}/${t}/rating`, { rating }),
   setArchived: (s, b, t, archived) =>
@@ -57,8 +59,7 @@ export const api = {
     ),
   wacchoiSearch: (s, b, suffix) =>
     request('GET', `/api/boards/${s}/${b}/wacchoi-search?suffix=${encodeURIComponent(suffix)}`),
-  post: (s, b, t, body) =>
-    request('POST', `/api/favorites/${s}/${b}/${t}/post`, body),
+  post: (s, b, t, body) => request('POST', `/api/favorites/${s}/${b}/${t}/post`, body),
   // Manual next-thread rescue: reads the board's subject.txt once and registers the
   // successor thread if it exists. Returns { found, thread_id, title } or { found: false }.
   findNext: (s, b, t) =>
