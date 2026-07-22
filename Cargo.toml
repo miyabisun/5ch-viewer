@@ -2,7 +2,7 @@
 # Rust 識別子としては viewer_of_5ch となり有効。
 [package]
 name = "viewer-of-5ch"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2021"
 
 [dependencies]
