@@ -403,15 +403,15 @@ pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.ok()?;
             let blob = fetch_image(&client, &url_clone).await?;
-            let size = blob.bytes.len() as i64;
-            let mime = blob.mime;
-            let bytes = blob.bytes;
-            tokio::task::spawn_blocking(move || {
+            let (size, mime) = tokio::task::spawn_blocking(move || {
+                let image = crate::image_cache::resize_image(blob.bytes, blob.mime);
+                let size = image.bytes.len() as i64;
                 crate::image_cache::write_verified(
                     std::path::Path::new(&image_cache_dir),
                     id,
-                    &bytes,
-                )
+                    &image.bytes,
+                )?;
+                Ok::<_, std::io::Error>((size, image.mime))
             })
             .await
             .ok()?

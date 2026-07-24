@@ -30,6 +30,7 @@ libc = "0.2"
 urlencoding = "2"
 scraper = "0.21"
 quick-xml = "0.36"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
 [lints.clippy]
 all = "warn"

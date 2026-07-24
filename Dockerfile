@@ -21,6 +21,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /app/target/release/viewer-of-5ch /usr/local/bin/
 COPY --from=backend /app/target/release/migrate-image-cache /usr/local/bin/
+COPY --from=backend /app/target/release/resize-image-cache /usr/local/bin/
 COPY --from=frontend /app/client/build /app/client/build
 WORKDIR /app
 ENV PORT=3000
