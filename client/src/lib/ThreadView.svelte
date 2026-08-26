@@ -11,6 +11,8 @@
     wacchoiWeekKey,
   } from './wacchoi.js'
   import { linkify, extractImageUrls, ANCHOR_RE } from './linkify.js'
+  import { scopedTo, findNgWord, isValidNgWord } from './ng.js'
+  import { resBodyText } from './res-text.js'
   import { copyText } from './clipboard.js'
   import Modal from './Modal.svelte'
   import ImageViewer from './ImageViewer.svelte'
@@ -20,11 +22,19 @@
     fav,
     onback,
     onprogress = () => {},
-    ngIds = new Set(),
+    ngIds = [],
     onngchange = () => {},
+    ngWords = [],
+    onngwordchange = () => {},
     ngWacchoi = [],
     onngwacchoichange = () => {},
   } = $props()
+
+  // NG IDs and NG words are stored per (server, board), so only this board's rules can
+  // hide a post here. Narrowing once keeps every per-res check board-scoped by
+  // construction — the same ID string on another board never matches.
+  const boardNgIds = $derived(new Set(scopedTo(ngIds, fav.server, fav.board).map((r) => r.ng_id)))
+  const boardNgWords = $derived(scopedTo(ngWords, fav.server, fav.board))
 
   let data = $state(null)
   // Newest-first timeline. The entry batch ends at the previous-read post;
@@ -225,6 +235,7 @@
       wacchoiListKey != null ||
       wacchoiMenu != null ||
       ngMenu != null ||
+      ngWordForm != null ||
       replyMenuResNum != null ||
       idSearchLoading ||
       idSearchResult != null ||
@@ -752,16 +763,23 @@
     return isWacchoiNgFor(resolveWacchoi(r), r.date)
   }
 
-  // Return the single reason presented for an NG post. ID takes precedence when
-  // a post matches both lists; removing it then naturally reveals the remaining
-  // wacchoi reason after the parent reloads the NG state.
+  // Return the single reason presented for an NG post, in a fixed precedence order.
+  // When a post matches several lists only the first is shown; removing it then reveals
+  // the next reason after the parent reloads the NG state.
   function ngReason(r) {
-    if (r.id && ngIds.has(r.id)) {
-      return { kind: 'id', label: 'NG ID', id: r.id }
+    const id = resolveId(r)
+    if (id && boardNgIds.has(id)) {
+      return { kind: 'id', label: 'NG ID', id }
     }
     const wacchoi = resolveWacchoi(r)
     if (isWacchoiNg(r)) {
       return { kind: 'wacchoi', label: 'NGワッチョイ', wacchoi, date: r.date }
+    }
+    // Matched against the display text, so a rule reads the same as what is on screen
+    // (no markup, entities decoded, <br> as newlines).
+    const word = findNgWord(resBodyText(r.body), boardNgWords)
+    if (word) {
+      return { kind: 'word', label: 'NG Word', word }
     }
     return null
   }
@@ -840,10 +858,10 @@
     closeIdMenu()
   }
 
-  // Add the ID to the NG list. Removal belongs exclusively to the NG post menu.
+  // Add the ID to this board's NG list. Removal belongs exclusively to the NG post menu.
   async function addNg(id) {
     try {
-      await api.addNgId(id)
+      await api.addNgId({ server: fav.server, board: fav.board, ng_id: id })
       onngchange()
     } catch (e) {
       console.error('[ng]', e)
@@ -879,8 +897,11 @@
     const target = ngMenu
     try {
       if (target.kind === 'id') {
-        await api.removeNgId(target.id)
+        await api.removeNgId({ server: fav.server, board: fav.board, ng_id: target.id })
         onngchange()
+      } else if (target.kind === 'word') {
+        await api.removeNgWord(target.word)
+        onngwordchange()
       } else {
         const suffix = extractWacchoiSuffix(target.wacchoi)
         const weekKey = wacchoiWeekKey(target.date)
@@ -936,17 +957,68 @@
     cardLongPressed = false
   }
 
+  // --- NG word modal ---
+  // Opened from the reply menu. `pattern` starts as the res's display text and is fully
+  // editable; `alsoId` additionally registers the poster's ID for this same board.
+  // null = closed.
+  let ngWordForm = $state(null)
+
+  function openNgWordForm(num) {
+    closeReplyMenu()
+    const r = resOf(num)
+    ngWordForm = {
+      kind: 'text',
+      pattern: resBodyText(r?.body),
+      // No ID on this post (some boards' OP) means there is nothing to also register,
+      // so the checkbox is disabled and off.
+      id: resolveId(r),
+      alsoId: resolveId(r) != null,
+      error: null,
+      submitting: false,
+    }
+  }
+
+  function closeNgWordForm() {
+    ngWordForm = null
+  }
+
+  // Save the rule for this board, plus the poster's ID when the checkbox is on.
+  // The pattern is validated by the same RegExp engine that will evaluate it, so a rule
+  // that cannot be saved is exactly a rule that could never have matched.
+  async function submitNgWord() {
+    if (ngWordForm == null || ngWordForm.submitting) return
+    const { kind, pattern, alsoId, id } = ngWordForm
+    if (!pattern) {
+      ngWordForm.error = 'パターンを入力してください'
+      return
+    }
+    if (!isValidNgWord(kind, pattern)) {
+      ngWordForm.error = '正規表現として解釈できません'
+      return
+    }
+    ngWordForm.submitting = true
+    ngWordForm.error = null
+    try {
+      await api.addNgWord({ server: fav.server, board: fav.board, kind, pattern })
+      onngwordchange()
+      if (alsoId && id) {
+        await api.addNgId({ server: fav.server, board: fav.board, ng_id: id })
+        onngchange()
+      }
+      closeNgWordForm()
+    } catch (e) {
+      console.error('[ng-word]', e)
+      ngWordForm.error = e.message
+      ngWordForm.submitting = false
+    }
+  }
+
   // Copy the res body as plain text to the clipboard, then close the reply menu.
   // Compensates for the touch selection loss caused by the selection-suppress CSS.
-  // The body is sanitized HTML with only <a>/<br>; convert <br> to newlines first
-  // (textContent alone would drop line breaks), then read textContent to decode
-  // entities and strip tags while preserving newlines.
+  // resBodyText turns the sanitized body HTML into the text on screen; NG word
+  // matching uses the same conversion so a copied body and a saved rule agree.
   async function copyBody(num) {
-    const r = resOf(num)
-    const html = (r?.body ?? '').replace(/<br\s*\/?>/gi, '\n')
-    const el = document.createElement('div')
-    el.innerHTML = html
-    await copyText(el.textContent ?? '')
+    await copyText(resBodyText(resOf(num)?.body))
     closeReplyMenu()
   }
 
@@ -1450,7 +1522,7 @@
       <div class="menu-title">ID:{idMenu}</div>
     {/snippet}
     <div class="menu" data-testid="id-menu">
-      {#if !ngIds.has(idMenu)}
+      {#if !boardNgIds.has(idMenu)}
         <button class="action" onclick={() => addNg(idMenu)}>NGIDに追加</button>
       {/if}
       <button class="action" onclick={() => copyId(idMenu)}>コピー</button>
@@ -1468,6 +1540,65 @@
     <div class="menu" data-testid="reply-menu">
       <button class="action" onclick={() => startReply(replyMenuResNum)}>返信する</button>
       <button class="action" onclick={() => copyBody(replyMenuResNum)}>本文をコピー</button>
+      <button class="action" onclick={() => openNgWordForm(replyMenuResNum)}>NG Word に追加</button>
+    </div>
+  </Modal>
+{/if}
+
+<!-- NG Word registration modal (opened from the reply menu).
+     The rule is saved for this board only and applies to every thread of it. -->
+{#if ngWordForm != null}
+  <Modal onclose={closeNgWordForm}>
+    {#snippet header()}
+      <div class="menu-title">NG Word に追加</div>
+    {/snippet}
+    <div class="ng-word-form" data-testid="ng-word-form">
+      <!-- Segmented control: literal substring (default) or regular expression. -->
+      <div class="segmented" role="group" aria-label="一致方法">
+        <button
+          class="segment"
+          class:selected={ngWordForm.kind === 'text'}
+          aria-pressed={ngWordForm.kind === 'text'}
+          onclick={() => {
+            ngWordForm.kind = 'text'
+            ngWordForm.error = null
+          }}>文字列</button
+        >
+        <button
+          class="segment"
+          class:selected={ngWordForm.kind === 'regex'}
+          aria-pressed={ngWordForm.kind === 'regex'}
+          onclick={() => {
+            ngWordForm.kind = 'regex'
+            ngWordForm.error = null
+          }}>正規表現</button
+        >
+      </div>
+      <textarea
+        class="ng-word-textarea input"
+        rows="5"
+        aria-label="NG Word"
+        bind:value={ngWordForm.pattern}
+        disabled={ngWordForm.submitting}></textarea>
+      <label class="ng-word-check">
+        <input
+          type="checkbox"
+          bind:checked={ngWordForm.alsoId}
+          disabled={ngWordForm.id == null || ngWordForm.submitting}
+        />
+        投稿者IDもNG
+      </label>
+      {#if ngWordForm.error}
+        <p class="error" role="alert">{ngWordForm.error}</p>
+      {/if}
+      <div class="ng-word-actions">
+        <button class="btn" onclick={closeNgWordForm} disabled={ngWordForm.submitting}
+          >キャンセル</button
+        >
+        <button class="btn ng-word-submit" onclick={submitNgWord} disabled={ngWordForm.submitting}
+          >追加</button
+        >
+      </div>
     </div>
   </Modal>
 {/if}
@@ -1831,6 +1962,75 @@
   .post-submit:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  /* NG Word form: same column rhythm as the post form. */
+  .ng-word-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 28rem;
+    max-width: 100%;
+  }
+  /* Segmented control: two equal segments sharing one bordered track, the divider
+     being the second segment's left border so no double hairline appears. The
+     selected segment is filled with the subtle accent tint; the control is chrome,
+     so it never uses a data color. */
+  .segmented {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .segment {
+    flex: 1;
+    padding: 8px;
+    border: none;
+    background: var(--surface-raised);
+    color: var(--muted);
+    font-size: 15px;
+    font-family: inherit;
+    font-weight: 500;
+    line-height: 1.2;
+    cursor: pointer;
+  }
+  .segment + .segment {
+    border-left: 1px solid var(--border);
+  }
+  .segment.selected {
+    background: var(--accent-subtle);
+    color: var(--on-surface);
+  }
+  .ng-word-textarea {
+    resize: vertical;
+  }
+  /* Checkbox row: body-size label next to the box (not a caption field label). */
+  .ng-word-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+  }
+  .ng-word-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .ng-word-actions .btn {
+    flex: 1;
+  }
+  /* Primary button of this modal: accent fill, matching the post modal's submit. */
+  .ng-word-submit {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--surface-raised);
+    font-weight: 600;
+  }
+  .ng-word-submit:hover:not(:disabled) {
+    background: var(--accent);
+  }
+  .ng-word-form .error {
+    margin: 0;
+    font-size: 14px;
   }
 
   /* Thumbnail strip: images below the body text. */

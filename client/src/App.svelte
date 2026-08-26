@@ -15,9 +15,13 @@
   let current = $state(null)
   let error = $state(null)
   let page = $state('favorites') // 'favorites' | 'register' | 'archive'
-  // Global NG ID set: loaded once on mount, updated on change via onngchange callback.
-  let ngIds = $state(new Set())
-  // Global NG wacchoi list: array of { suffix, board, week_key, wacchoi, created_at }.
+  // NG rules for every board, loaded once on mount and re-fetched on change via the
+  // onng*change callbacks. ThreadView narrows each list to the board it is showing.
+  // NG IDs: array of { server, board, ng_id, created_at }.
+  let ngIds = $state([])
+  // NG words: array of { server, board, kind, pattern, created_at }.
+  let ngWords = $state([])
+  // NG wacchoi list: array of { suffix, board, week_key, wacchoi, created_at }.
   // Matching is done client-side with (suffix + board + week_key) triple.
   let ngWacchoi = $state([])
   let loadSeq = 0
@@ -37,10 +41,17 @@
 
   async function loadNgIds() {
     try {
-      const list = await api.listNgIds()
-      ngIds = new Set(list.map((x) => x.ng_id))
+      ngIds = await api.listNgIds()
     } catch {
       /* non-critical; NG filtering just won't apply */
+    }
+  }
+
+  async function loadNgWords() {
+    try {
+      ngWords = await api.listNgWords()
+    } catch {
+      /* non-critical; NG word filtering just won't apply */
     }
   }
 
@@ -78,6 +89,7 @@
     // job (src/sync.rs). A browser pull-to-refresh just re-renders this way.
     load().then(() => applyRoute(route))
     loadNgIds()
+    loadNgWords()
     loadNgWacchoi()
 
     // Keep the favorites page in sync with SQLite only. This does not call the
@@ -172,6 +184,8 @@
           onprogress={onProgress}
           {ngIds}
           onngchange={loadNgIds}
+          {ngWords}
+          onngwordchange={loadNgWords}
           {ngWacchoi}
           onngwacchoichange={loadNgWacchoi}
         />

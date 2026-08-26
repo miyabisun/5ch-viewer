@@ -113,7 +113,9 @@ async function setupRoutes(page) {
     route.fulfill({ json: { res_count: 6, read_res: 0, status: 'active' } }),
   )
   await page.route('**/api/ng-ids', (route) => route.fulfill({ json: [] }))
-  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/ng-words(\?|$)/, (route) =>
+    route.fulfill({ json: route.request().method() === 'GET' ? [] : { ok: true } }),
+  )
   await page.route('**/api/ng-wacchoi', (route) => route.fulfill({ json: [] }))
   await page.route(/\/api\/ng-wacchoi\/.*/, (route) => route.fulfill({ json: { ok: true } }))
   await page.route(/\/api\/boards\/.+\/id-search/, (route) =>
@@ -209,6 +211,13 @@ test.describe('phone viewport (390x700): no modal has horizontal overflow', () =
     await page.locator('.wacchoi-badge').first().click({ button: 'right' })
     await page.getByRole('button', { name: '取得済みスレから検索' }).click()
     await expect(page.locator('[data-testid="wacchoi-search-result"]')).toBeVisible()
+    await expectNoHorizontalOverflow(page)
+  })
+
+  test('ng-word modal (segmented control + textarea + two actions)', async ({ page }) => {
+    await page.getByText('本文1').click({ button: 'right' })
+    await page.getByRole('button', { name: 'NG Word に追加' }).click()
+    await expect(page.locator('[data-testid="ng-word-form"]')).toBeVisible()
     await expectNoHorizontalOverflow(page)
   })
 

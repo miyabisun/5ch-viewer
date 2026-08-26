@@ -474,8 +474,11 @@ async fn ctl_refresh_board(
 /// Wipes all seeded data so each test starts clean (the :memory: DB persists for the process).
 async fn ctl_reset(State(app): State<AppState>) -> Json<bool> {
     let conn = app.db.lock().unwrap();
-    // own_posts has no FK to favorites, so it must be deleted explicitly.
+    // own_posts, ng_ids and ng_words have no FK to favorites, so they must be deleted
+    // explicitly or rules would leak from one test into the next.
     conn.execute("DELETE FROM own_posts", []).unwrap();
+    conn.execute("DELETE FROM ng_ids", []).unwrap();
+    conn.execute("DELETE FROM ng_words", []).unwrap();
     conn.execute("DELETE FROM favorites", []).unwrap();
     conn.execute("DELETE FROM image_cache", []).unwrap();
     drop(conn);

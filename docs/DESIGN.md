@@ -149,17 +149,19 @@ Domain components on top of the Sumi recipes:
   is a long-press-menu target: it keeps the unconditional
   `-webkit-touch-callout: none` per the touch policy above.
 - **Res card (thread view):** Sumi card; unread/own state shown by the 3px
-  left border (see Colors). NG posts (NG ID / NG wacchoi) replace the
-  original header with a muted, struck-through disclosure in the form
-  「N NG ID|NGワッチョイ」. The body starts hidden and
-  clicking the disclosure toggles it without restoring the original header.
+  left border (see Colors). NG posts (NG ID / NG wacchoi / NG Word) replace
+  the original header with a muted, struck-through disclosure in the form
+  「N NG ID|NGワッチョイ|NG Word」. A post matching several rules shows exactly
+  one reason, in that fixed order; removing it reveals the next. The body
+  starts hidden and clicking the disclosure toggles it without restoring the
+  original header.
   Right-click or a 500ms touch long-press anywhere on the NG card opens its
   dedicated one-action menu, 「[理由]から削除」. Removal is intentionally not
   offered from the original ID / wacchoi badge menus.
   **Res body context menu:** right-click (PC) or 500ms touch long-press
   on the body opens the reply menu — a standard Sumi context menu
-  (modal, full-width default `.action` buttons) with 返信する and
-  本文をコピー. The body keeps its unconditional element-level
+  (modal, full-width default `.action` buttons) with 返信する,
+  本文をコピー and NG Word に追加. The body keeps its unconditional element-level
   `-webkit-touch-callout: none`; touch selection suppression comes from
   the app-wide policy above. PC drag-selection is never suppressed —
   the body is Sumi's reading surface — and the menu's copy-body action
@@ -192,6 +194,21 @@ Domain components on top of the Sumi recipes:
   boundary remains after res 1; otherwise it is immediately before the
   entry-time read-position res. When the boundary is at res 1, the thread
   start divider is omitted so duplicate dividers never share one position.
+- **NG Word modal (thread view):** opened from the res body context menu.
+  Column form in the post-modal rhythm (8px gap, 28rem, `.input` recipe):
+  a **segmented control**, the pattern textarea prefilled with the res's
+  display text, an 投稿者IDもNG checkbox (on by default, disabled when the
+  post has no ID), an inline `.error` line, then キャンセル / 追加 as two
+  equal-width buttons — 追加 is the modal's single primary (accent fill),
+  matching the post modal's submit. The rule it writes is scoped to the
+  board, never to the thread.
+  **Segmented control:** two equal segments in one shared 1px `border`
+  track with a 6px radius; the divider is the second segment's left border
+  so no double hairline appears. The selected segment is filled with
+  `accent-subtle` and takes `on-surface` text; unselected segments stay
+  `surface-raised` with `muted` text. State is exposed as `aria-pressed`.
+  It is chrome, so it never takes a data color, and it is used only where
+  a choice has exactly two mutually exclusive values.
 - **Anchor tree modal:** depth-indented nodes with a 2px border-left guide;
   the pivot res is highlighted with an accent left border.
 - **ID / wacchoi badges:** caption-size, clickable (list modal), long-press

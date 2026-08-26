@@ -50,8 +50,15 @@ function datResponse(ngIds = []) {
   }
 }
 
-// Standard route setup shared across tests.
-async function setupRoutes(page, { ngIds = [], searchResult = [] } = {}) {
+// NG ID rules are scoped to a (server, board) pair, so the list endpoint returns the
+// scope with each row. Helper for the common "this thread's board" case.
+function scopedNgId(ng_id, { server = FAV.server, board = FAV.board } = {}) {
+  return { server, board, ng_id, created_at: 0 }
+}
+
+// Standard route setup shared across tests. `ngIds` takes full scoped rows so a test
+// can register an ID on another board.
+async function setupRoutes(page, { ngIds = [], ngWords = [], searchResult = [] } = {}) {
   await page.route('**/api/favorites', (route) => route.fulfill({ json: [FAV] }))
   await page.route('**/api/favorites/refresh', (route) =>
     route.fulfill({ json: { ok: true, boards: 0 } }),
@@ -60,14 +67,15 @@ async function setupRoutes(page, { ngIds = [], searchResult = [] } = {}) {
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 3, read_res: 0, status: 'active' } }),
   )
-  await page.route('**/api/ng-ids', (route) => {
-    if (route.request().method() === 'GET') {
-      route.fulfill({ json: ngIds.map((ng_id) => ({ ng_id, created_at: 0 })) })
-    } else {
-      route.fulfill({ json: { ok: true } })
-    }
+  // The DELETE route carries its key in the query string, so match on the path prefix.
+  await page.route(/\/api\/ng-ids(\?|$)/, (route) => {
+    if (route.request().method() === 'GET') route.fulfill({ json: ngIds })
+    else route.fulfill({ json: { ok: true } })
   })
-  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/ng-words(\?|$)/, (route) => {
+    if (route.request().method() === 'GET') route.fulfill({ json: ngWords })
+    else route.fulfill({ json: { ok: true } })
+  })
   await page.route(/\/api\/boards\/.+\/id-search/, (route) => route.fulfill({ json: searchResult }))
 }
 
@@ -149,7 +157,7 @@ test('right-click on ID badge opens the ID menu', async ({ page }) => {
 
 test('NG post: reason header is struck-through and click toggles the body', async ({ page }) => {
   // Simulate "target" already in the NG list.
-  await setupRoutes(page, { ngIds: ['target'] })
+  await setupRoutes(page, { ngIds: [scopedNgId('target')] })
   await page.goto(THREAD_PATH)
 
   await expect(page.getByText('本文1')).toHaveCount(0)
@@ -178,16 +186,14 @@ test('NG post: reason header is struck-through and click toggles the body', asyn
 test('NGID追加 adds ID to NG and the ID menu does not expose removal', async ({ page }) => {
   const addRequests = []
   await setupRoutes(page)
-  await page.route('**/api/ng-ids', async (route) => {
+  await page.route(/\/api\/ng-ids(\?|$)/, async (route) => {
     if (route.request().method() === 'POST') {
       addRequests.push(route.request().postDataJSON())
       route.fulfill({ json: { ok: true } })
     } else {
-      // First GET returns empty; second GET (after add) returns the new ID.
+      // First GET returns empty; second GET (after add) returns the new scoped ID.
       const call = addRequests.length
-      route.fulfill({
-        json: call > 0 ? [{ ng_id: 'target', created_at: 0 }] : [],
-      })
+      route.fulfill({ json: call > 0 ? [scopedNgId('target')] : [] })
     }
   })
 
@@ -202,7 +208,8 @@ test('NGID追加 adds ID to NG and the ID menu does not expose removal', async (
 
   // The API was called.
   await expect.poll(() => addRequests.length).toBe(1)
-  expect(addRequests[0]).toEqual({ ng_id: 'target' })
+  // The ID is registered for this thread's board only — never as a global rule.
+  expect(addRequests[0]).toEqual({ server: 'egg', board: 'applism', ng_id: 'target' })
 
   // Removal is available from the NG post menu instead of the now-hidden ID badge.
   await expect(page.locator('del.ng').first()).toBeVisible()
@@ -212,12 +219,12 @@ test('NGID追加 adds ID to NG and the ID menu does not expose removal', async (
 
 test('NG post right-click opens its reason menu and removes the NG ID', async ({ page }) => {
   const removeRequests = []
-  await setupRoutes(page, { ngIds: ['target'] })
-  await page.route(/\/api\/ng-ids\/.*/, async (route) => {
-    if (route.request().method() === 'DELETE') {
-      removeRequests.push(route.request().url())
-    }
-    await route.fulfill({ json: { ok: true } })
+  await setupRoutes(page, { ngIds: [scopedNgId('target')] })
+  await page.route(/\/api\/ng-ids(\?|$)/, async (route) => {
+    const method = route.request().method()
+    if (method === 'DELETE') removeRequests.push(route.request().url())
+    if (method === 'GET') await route.fulfill({ json: [scopedNgId('target')] })
+    else await route.fulfill({ json: { ok: true } })
   })
 
   await page.goto(THREAD_PATH)
@@ -231,13 +238,19 @@ test('NG post right-click opens its reason menu and removes the NG ID', async ({
 
   await page.getByRole('button', { name: 'NG IDから削除' }).click()
   await expect.poll(() => removeRequests.length).toBe(1)
-  expect(decodeURIComponent(new URL(removeRequests[0]).pathname)).toBe('/api/ng-ids/target')
+  const removed = new URL(removeRequests[0])
+  expect(removed.pathname).toBe('/api/ng-ids')
+  expect(Object.fromEntries(removed.searchParams)).toEqual({
+    server: 'egg',
+    board: 'applism',
+    ng_id: 'target',
+  })
 })
 
 test('NG post long-press opens only its reason menu without toggling the body', async ({
   page,
 }) => {
-  await setupRoutes(page, { ngIds: ['target'] })
+  await setupRoutes(page, { ngIds: [scopedNgId('target')] })
   await page.goto(THREAD_PATH)
 
   const ngHeader = page.locator('del.ng').first()
@@ -369,14 +382,11 @@ test('NG body is hidden inside the anchor tree (anchorNode uses resHeadAndBody)'
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
   )
-  await page.route('**/api/ng-ids', (route) => {
-    if (route.request().method() === 'GET') {
-      route.fulfill({ json: [{ ng_id: 'target', created_at: 0 }] })
-    } else {
-      route.fulfill({ json: { ok: true } })
-    }
+  await page.route(/\/api\/ng-ids(\?|$)/, (route) => {
+    if (route.request().method() === 'GET') route.fulfill({ json: [scopedNgId('target')] })
+    else route.fulfill({ json: { ok: true } })
   })
-  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/ng-words(\?|$)/, (route) => route.fulfill({ json: [] }))
   await page.route(/\/api\/boards\/.+\/id-search/, (route) => route.fulfill({ json: [] }))
 
   await page.goto(THREAD_PATH)
@@ -434,14 +444,11 @@ test('single-occurrence ID shows a clickable resid span', async ({ page }) => {
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
   )
-  await page.route('**/api/ng-ids', (route) => {
-    if (route.request().method() === 'GET') {
-      route.fulfill({ json: [] })
-    } else {
-      route.fulfill({ json: { ok: true } })
-    }
+  await page.route(/\/api\/ng-ids(\?|$)/, (route) => {
+    if (route.request().method() === 'GET') route.fulfill({ json: [] })
+    else route.fulfill({ json: { ok: true } })
   })
-  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/ng-words(\?|$)/, (route) => route.fulfill({ json: [] }))
   await page.route(/\/api\/boards\/.+\/id-search/, (route) => route.fulfill({ json: [] }))
 
   await page.goto(THREAD_PATH)

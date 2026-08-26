@@ -57,7 +57,9 @@ async function setupRoutes(page) {
       json: route.request().method() === 'GET' ? [] : { ok: true },
     }),
   )
-  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/ng-words(\?|$)/, (route) =>
+    route.fulfill({ json: route.request().method() === 'GET' ? [] : { ok: true } }),
+  )
   await page.route('**/api/ng-wacchoi', (route) =>
     route.fulfill({
       json: route.request().method() === 'GET' ? [] : { ok: true },

@@ -68,7 +68,9 @@ async function setupRoutes(page, { ngWacchoi = [] } = {}) {
       route.fulfill({ json: { ok: true } })
     }
   })
-  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/ng-words(\?|$)/, (route) =>
+    route.fulfill({ json: route.request().method() === 'GET' ? [] : { ok: true } }),
+  )
   await page.route('**/api/ng-wacchoi', (route) => {
     if (route.request().method() === 'GET') {
       route.fulfill({ json: ngWacchoi })
@@ -400,7 +402,9 @@ test('NG scope: same suffix + same board + same week are hidden (different prefi
     route.fulfill({ json: { res_count: 5, read_res: 0, status: 'active' } }),
   )
   await page.route('**/api/ng-ids', (route) => route.fulfill({ json: [] }))
-  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/ng-words(\?|$)/, (route) =>
+    route.fulfill({ json: route.request().method() === 'GET' ? [] : { ok: true } }),
+  )
   await page.route('**/api/ng-wacchoi', (route) => {
     if (route.request().method() === 'GET') route.fulfill({ json: ngWacchoi })
     else route.fulfill({ json: { ok: true } })
@@ -439,7 +443,9 @@ test('NG scope: different week with same suffix is NOT hidden (誤爆しない)'
     route.fulfill({ json: { res_count: 5, read_res: 0, status: 'active' } }),
   )
   await page.route('**/api/ng-ids', (route) => route.fulfill({ json: [] }))
-  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/ng-words(\?|$)/, (route) =>
+    route.fulfill({ json: route.request().method() === 'GET' ? [] : { ok: true } }),
+  )
   await page.route('**/api/ng-wacchoi', (route) => {
     if (route.request().method() === 'GET') route.fulfill({ json: ngWacchoi })
     else route.fulfill({ json: { ok: true } })
@@ -484,7 +490,9 @@ test('取得済みスレから検索 shows wacchoi-search-result modal', async (
     route.fulfill({ json: { res_count: 3, read_res: 0, status: 'active' } }),
   )
   await page.route('**/api/ng-ids', (route) => route.fulfill({ json: [] }))
-  await page.route(/\/api\/ng-ids\/.*/, (route) => route.fulfill({ json: { ok: true } }))
+  await page.route(/\/api\/ng-words(\?|$)/, (route) =>
+    route.fulfill({ json: route.request().method() === 'GET' ? [] : { ok: true } }),
+  )
   await page.route('**/api/ng-wacchoi', (route) => {
     if (route.request().method() === 'GET') route.fulfill({ json: [] })
     else route.fulfill({ json: { ok: true } })

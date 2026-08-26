@@ -44,9 +44,24 @@ export const api = {
     request('PATCH', `/api/favorites/${s}/${b}/${t}/archived`, { archived }),
   listArchives: () => request('GET', '/api/archives'),
   search: (q) => request('GET', `/api/search?q=${encodeURIComponent(q)}`),
+  // NG IDs and NG words are both scoped to a (server, board) pair — never global,
+  // never per-thread. The list endpoints return every board's rules; narrowing to the
+  // board on screen is the caller's job (lib/ng.js scopedTo).
   listNgIds: () => request('GET', '/api/ng-ids'),
-  addNgId: (ngId) => request('POST', '/api/ng-ids', { ng_id: ngId }),
-  removeNgId: (ngId) => request('DELETE', `/api/ng-ids/${encodeURIComponent(ngId)}`),
+  addNgId: ({ server, board, ng_id }) => request('POST', '/api/ng-ids', { server, board, ng_id }),
+  removeNgId: ({ server, board, ng_id }) =>
+    request(
+      'DELETE',
+      `/api/ng-ids?server=${encodeURIComponent(server)}&board=${encodeURIComponent(board)}&ng_id=${encodeURIComponent(ng_id)}`,
+    ),
+  listNgWords: () => request('GET', '/api/ng-words'),
+  addNgWord: ({ server, board, kind, pattern }) =>
+    request('POST', '/api/ng-words', { server, board, kind, pattern }),
+  removeNgWord: ({ server, board, kind, pattern }) =>
+    request(
+      'DELETE',
+      `/api/ng-words?server=${encodeURIComponent(server)}&board=${encodeURIComponent(board)}&kind=${encodeURIComponent(kind)}&pattern=${encodeURIComponent(pattern)}`,
+    ),
   idSearch: (s, b, ngId) =>
     request('GET', `/api/boards/${s}/${b}/id-search?id=${encodeURIComponent(ngId)}`),
   listNgWacchoi: () => request('GET', '/api/ng-wacchoi'),

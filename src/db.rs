@@ -46,8 +46,20 @@ pub const SCHEMA: &str = "
     );
 
     CREATE TABLE IF NOT EXISTS ng_ids (
-        ng_id      TEXT PRIMARY KEY,
-        created_at INTEGER DEFAULT (strftime('%s','now'))
+        server     TEXT NOT NULL,
+        board      TEXT NOT NULL,
+        ng_id      TEXT NOT NULL,
+        created_at INTEGER DEFAULT (strftime('%s','now')),
+        PRIMARY KEY (server, board, ng_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ng_words (
+        server     TEXT NOT NULL,
+        board      TEXT NOT NULL,
+        kind       TEXT NOT NULL,   -- 'text' (literal substring) or 'regex'
+        pattern    TEXT NOT NULL,   -- matched against the display text of a res body
+        created_at INTEGER DEFAULT (strftime('%s','now')),
+        PRIMARY KEY (server, board, kind, pattern)
     );
 
     CREATE TABLE IF NOT EXISTS own_posts (
@@ -106,6 +118,24 @@ pub fn migrate(conn: &Connection) {
 
     if !has_column(conn, "image_cache", "file_size") {
         panic!("image_cache has an unsupported schema; run `migrate-image-cache`");
+    }
+
+    // One-time reset: the legacy ng_ids table stored the ID string alone with no board
+    // scope, so the board a row came from cannot be recovered from the row itself. Drop
+    // the whole table and let SCHEMA recreate it with the (server, board, ng_id) key —
+    // guessing a board or fanning one ID out to every board would both be wrong.
+    // Idempotent: once the `board` column exists this branch never fires again, so a
+    // re-run cannot resurrect global rows. Only ng_ids is touched; ng_wacchoi and every
+    // other table keep their rows.
+    if !has_column(conn, "ng_ids", "board") {
+        tracing::warn!(
+            "ng_ids: legacy board-less schema found — deleting all NG IDs \
+             (the original board cannot be recovered); re-register them per board"
+        );
+        conn.execute_batch("DROP TABLE IF EXISTS ng_ids")
+            .expect("Failed to drop legacy ng_ids table");
+        conn.execute_batch(SCHEMA)
+            .expect("Failed to recreate ng_ids with the board-scoped schema");
     }
 
     // One-time migration: if any dat_blobs row still holds a Shift-JIS BLOB (typeof='blob'),
@@ -242,25 +272,175 @@ mod tests {
     }
 
     #[test]
-    fn ng_ids_table_exists_and_accepts_rows() {
+    fn ng_ids_are_scoped_per_board_and_insert_or_ignore_is_idempotent() {
         let conn = open_memory();
-        conn.execute("INSERT INTO ng_ids (ng_id) VALUES ('testUser123')", [])
-            .unwrap();
+        conn.execute(
+            "INSERT INTO ng_ids (server, board, ng_id) VALUES ('egg', 'applism', 'testUser123')",
+            [],
+        )
+        .unwrap();
+
+        // INSERT OR IGNORE on the same (server, board, ng_id) must be a no-op.
+        conn.execute(
+            "INSERT OR IGNORE INTO ng_ids (server, board, ng_id)
+             VALUES ('egg', 'applism', 'testUser123')",
+            [],
+        )
+        .unwrap();
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM ng_ids", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1);
 
-        // INSERT OR IGNORE must be idempotent (PRIMARY KEY conflict).
+        // The same ID on another board is a separate row — boards do not share NG IDs.
         conn.execute(
-            "INSERT OR IGNORE INTO ng_ids (ng_id) VALUES ('testUser123')",
+            "INSERT INTO ng_ids (server, board, ng_id) VALUES ('egg', 'other', 'testUser123')",
             [],
         )
         .unwrap();
-        let count2: i64 = conn
+        let per_board: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ng_ids WHERE server='egg' AND board='applism'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(per_board, 1);
+    }
+
+    #[test]
+    fn ng_words_are_scoped_per_board_and_kind_and_insert_or_ignore_is_idempotent() {
+        let conn = open_memory();
+        conn.execute(
+            "INSERT INTO ng_words (server, board, kind, pattern)
+             VALUES ('egg', 'applism', 'text', '荒らし')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO ng_words (server, board, kind, pattern)
+             VALUES ('egg', 'applism', 'text', '荒らし')",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ng_words", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "duplicate (scope, kind, pattern) must not add a row"
+        );
+
+        // Same pattern with a different kind, and same kind+pattern on another board,
+        // are both distinct rules.
+        conn.execute(
+            "INSERT INTO ng_words (server, board, kind, pattern)
+             VALUES ('egg', 'applism', 'regex', '荒らし')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ng_words (server, board, kind, pattern)
+             VALUES ('egg', 'other', 'text', '荒らし')",
+            [],
+        )
+        .unwrap();
+        let in_board: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ng_words WHERE server='egg' AND board='applism'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(in_board, 2);
+    }
+
+    /// Migration: the legacy board-less ng_ids table is reset (all rows dropped) because
+    /// the board of a global row cannot be recovered. Other NG data must survive.
+    #[test]
+    fn migration_resets_legacy_global_ng_ids_and_keeps_other_ng_data() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        // Legacy schema: ng_id alone is the primary key.
+        conn.execute_batch(
+            "CREATE TABLE ng_ids (
+                ng_id      TEXT PRIMARY KEY,
+                created_at INTEGER DEFAULT (strftime('%s','now'))
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ng_ids (ng_id) VALUES ('globalA'), ('globalB')",
+            [],
+        )
+        .unwrap();
+        // The rest of the current schema, including the NG data that must be preserved.
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO ng_wacchoi (suffix, board, week_key, wacchoi)
+             VALUES ('83IP', 'applism', '2025/12/25', '7bb6-83IP')",
+            [],
+        )
+        .unwrap();
+
+        assert!(
+            !has_column(&conn, "ng_ids", "board"),
+            "pre-condition: legacy ng_ids must not have a board column"
+        );
+
+        migrate(&conn);
+
+        // Every legacy global NG ID is gone and the table now demands a board scope.
+        let ng_id_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM ng_ids", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count2, 1);
+        assert_eq!(ng_id_count, 0, "legacy global NG IDs must all be deleted");
+        assert!(has_column(&conn, "ng_ids", "board"));
+        assert!(has_column(&conn, "ng_ids", "server"));
+
+        // NG wacchoi (and its row) is untouched by the ng_ids reset.
+        let wacchoi_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ng_wacchoi", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(wacchoi_count, 1, "ng_wacchoi rows must be preserved");
+    }
+
+    /// Migration: re-running it must not fail and must not delete board-scoped rows
+    /// registered after the reset (i.e. global NG IDs never come back).
+    #[test]
+    fn migration_is_idempotent_and_does_not_resurrect_global_ng_ids() {
+        let conn = open_memory();
+        migrate(&conn);
+        conn.execute(
+            "INSERT INTO ng_ids (server, board, ng_id) VALUES ('egg', 'applism', 'scoped')",
+            [],
+        )
+        .unwrap();
+
+        // Repeated runs are no-ops once the board column exists.
+        migrate(&conn);
+        migrate(&conn);
+
+        let rows: Vec<(String, String, String)> = {
+            let mut stmt = conn
+                .prepare("SELECT server, board, ng_id FROM ng_ids")
+                .unwrap();
+            let r = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            r
+        };
+        assert_eq!(
+            rows,
+            vec![(
+                "egg".to_string(),
+                "applism".to_string(),
+                "scoped".to_string()
+            )],
+            "board-scoped rows must survive repeated migrations"
+        );
     }
 
     #[test]

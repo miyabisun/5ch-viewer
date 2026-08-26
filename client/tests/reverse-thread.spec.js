@@ -63,6 +63,7 @@ async function setup(page, fav = FAV) {
     route.fulfill({ json: { ok: true } }),
   )
   await page.route('**/api/ng-ids', (route) => route.fulfill({ json: [] }))
+  await page.route(/\/api\/ng-words(\?|$)/, (route) => route.fulfill({ json: [] }))
   await page.route('**/api/ng-wacchoi', (route) => route.fulfill({ json: [] }))
 }
 

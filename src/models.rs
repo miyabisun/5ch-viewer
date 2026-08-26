@@ -63,9 +63,12 @@ pub struct ReloadResponse {
     pub updated: bool,
 }
 
-/// One NGID entry returned by the list endpoint.
+/// One NGID entry returned by the list endpoint. Scoped to a single (server, board):
+/// the same ID string on another board is a separate rule.
 #[derive(Debug, Serialize)]
 pub struct NgId {
+    pub server: String,
+    pub board: String,
     pub ng_id: String,
     pub created_at: i64,
 }
@@ -73,7 +76,29 @@ pub struct NgId {
 /// Request body for POST /api/ng-ids.
 #[derive(Debug, Deserialize)]
 pub struct AddNgRequest {
+    pub server: String,
+    pub board: String,
     pub ng_id: String,
+}
+
+/// One NG word entry returned by the list endpoint. Scoped to a single (server, board)
+/// and never tied to a thread. `kind` is `"text"` (literal substring) or `"regex"`.
+#[derive(Debug, Serialize)]
+pub struct NgWord {
+    pub server: String,
+    pub board: String,
+    pub kind: String,
+    pub pattern: String,
+    pub created_at: i64,
+}
+
+/// Request body for POST /api/ng-words.
+#[derive(Debug, Deserialize)]
+pub struct AddNgWordRequest {
+    pub server: String,
+    pub board: String,
+    pub kind: String,
+    pub pattern: String,
 }
 
 /// One thread's matching posts, returned by the id-search endpoint.

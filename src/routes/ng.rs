@@ -1,8 +1,18 @@
-//! NGID management routes, NG wacchoi routes, and board-level search.
+//! NGID management routes, NG word routes, NG wacchoi routes, and board-level search.
 //!
-//! NGID storage is global (not per-board or per-thread): a single `ng_ids` table holds
-//! all filtered IDs. NG filtering is applied client-side (ThreadView) — the server always
+//! NGID and NG word storage is scoped by `(server, board)` and never tied to a thread:
+//! a rule applies to every thread of that board (already cached or fetched later) and to
+//! no other board. NG filtering is applied client-side (ThreadView) — the server always
 //! returns full res arrays and the client hides NG posts in the display layer.
+//!
+//! NG word `kind` is `"text"` (literal substring of the displayed body) or `"regex"`.
+//! **Regex syntax is validated on the client, not here.** The engine that actually
+//! evaluates a stored pattern is the browser's `RegExp` (filtering is client-side), so
+//! that same engine is the single owner of "is this pattern valid". Re-checking with
+//! `regex-lite` would disagree in both directions — it has no look-around (rejecting
+//! patterns the browser runs fine) and accepts Rust-only syntax the browser refuses.
+//! The server therefore validates only what it can own: the scope, the kind, and that
+//! the pattern is non-empty.
 //!
 //! NG wacchoi storage is scoped by (suffix, board, week_key): `ng_wacchoi` table.
 //! The week_key is a Thursday-anchored week identifier computed client-side and stored
@@ -18,7 +28,9 @@
 use crate::error::AppError;
 use crate::fivech::refresh::read_blob_posts;
 use crate::fivech::url::validate_board;
-use crate::models::{AddNgRequest, AddNgWacchoiRequest, IdSearchThread, NgId, NgWacchoi};
+use crate::models::{
+    AddNgRequest, AddNgWacchoiRequest, AddNgWordRequest, IdSearchThread, NgId, NgWacchoi, NgWord,
+};
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::routing::{delete, get};
@@ -59,8 +71,11 @@ const SEARCH_MAX_PER_THREAD: usize = 50;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/api/ng-ids", get(list_ng).post(add_ng))
-        .route("/api/ng-ids/{ng_id}", delete(remove_ng))
+        .route("/api/ng-ids", get(list_ng).post(add_ng).delete(remove_ng))
+        .route(
+            "/api/ng-words",
+            get(list_ng_words).post(add_ng_word).delete(remove_ng_word),
+        )
         .route("/api/ng-wacchoi", get(list_ng_wacchoi).post(add_ng_wacchoi))
         .route("/api/ng-wacchoi", delete(remove_ng_wacchoi))
         .route("/api/boards/{server}/{board}/id-search", get(id_search))
@@ -70,45 +85,124 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-/// List all registered NGID entries (unordered; sorting is the frontend's job).
+/// List all registered NGID entries with their (server, board) scope
+/// (unordered; sorting and per-board filtering are the frontend's job).
 async fn list_ng(State(state): State<AppState>) -> Result<Json<Vec<NgId>>, AppError> {
     let conn = state.db.lock().unwrap();
-    let mut stmt = conn.prepare("SELECT ng_id, created_at FROM ng_ids")?;
+    let mut stmt = conn.prepare("SELECT server, board, ng_id, created_at FROM ng_ids")?;
     let rows = stmt
         .query_map([], |row| {
             Ok(NgId {
-                ng_id: row.get(0)?,
-                created_at: row.get(1)?,
+                server: row.get(0)?,
+                board: row.get(1)?,
+                ng_id: row.get(2)?,
+                created_at: row.get(3)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(rows))
 }
 
-/// Add a new NGID (INSERT OR IGNORE — duplicate is a silent no-op).
+/// Add a new NGID for one board (INSERT OR IGNORE — duplicate is a silent no-op).
 async fn add_ng(
     State(state): State<AppState>,
     Json(req): Json<AddNgRequest>,
 ) -> Result<Json<Value>, AppError> {
+    validate_board(&req.server, &req.board)?;
     validate_ng_id(&req.ng_id)?;
     let conn = state.db.lock().unwrap();
     conn.execute(
-        "INSERT OR IGNORE INTO ng_ids (ng_id) VALUES (?1)",
-        params![req.ng_id],
+        "INSERT OR IGNORE INTO ng_ids (server, board, ng_id) VALUES (?1, ?2, ?3)",
+        params![req.server, req.board, req.ng_id],
     )?;
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Remove an NGID. Returns 404 when the entry does not exist.
+#[derive(Deserialize)]
+struct RemoveNgQuery {
+    server: String,
+    board: String,
+    ng_id: String,
+}
+
+/// Remove an NGID from one board. Returns 404 when the entry does not exist.
+/// Query params (not a path segment) because the key is a triple, matching
+/// `DELETE /api/ng-wacchoi`.
 async fn remove_ng(
     State(state): State<AppState>,
-    Path(ng_id): Path<String>,
+    Query(q): Query<RemoveNgQuery>,
 ) -> Result<Json<Value>, AppError> {
-    validate_ng_id(&ng_id)?;
+    validate_board(&q.server, &q.board)?;
+    validate_ng_id(&q.ng_id)?;
     let conn = state.db.lock().unwrap();
-    let n = conn.execute("DELETE FROM ng_ids WHERE ng_id=?1", params![ng_id])?;
+    let n = conn.execute(
+        "DELETE FROM ng_ids WHERE server=?1 AND board=?2 AND ng_id=?3",
+        params![q.server, q.board, q.ng_id],
+    )?;
     if n == 0 {
         return Err(AppError::NotFound("ng_id not found".into()));
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+// --- NG word handlers ---
+
+/// List all registered NG word entries with their (server, board) scope
+/// (unordered; sorting and per-board filtering are the frontend's job).
+async fn list_ng_words(State(state): State<AppState>) -> Result<Json<Vec<NgWord>>, AppError> {
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare("SELECT server, board, kind, pattern, created_at FROM ng_words")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(NgWord {
+                server: row.get(0)?,
+                board: row.get(1)?,
+                kind: row.get(2)?,
+                pattern: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Json(rows))
+}
+
+/// Add a new NG word for one board (INSERT OR IGNORE — duplicate is a silent no-op).
+async fn add_ng_word(
+    State(state): State<AppState>,
+    Json(req): Json<AddNgWordRequest>,
+) -> Result<Json<Value>, AppError> {
+    validate_board(&req.server, &req.board)?;
+    validate_ng_word(&req.kind, &req.pattern)?;
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "INSERT OR IGNORE INTO ng_words (server, board, kind, pattern) VALUES (?1, ?2, ?3, ?4)",
+        params![req.server, req.board, req.kind, req.pattern],
+    )?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct RemoveNgWordQuery {
+    server: String,
+    board: String,
+    kind: String,
+    pattern: String,
+}
+
+/// Remove an NG word from one board. Returns 404 when the entry does not exist.
+async fn remove_ng_word(
+    State(state): State<AppState>,
+    Query(q): Query<RemoveNgWordQuery>,
+) -> Result<Json<Value>, AppError> {
+    validate_board(&q.server, &q.board)?;
+    validate_ng_word(&q.kind, &q.pattern)?;
+    let conn = state.db.lock().unwrap();
+    let n = conn.execute(
+        "DELETE FROM ng_words WHERE server=?1 AND board=?2 AND kind=?3 AND pattern=?4",
+        params![q.server, q.board, q.kind, q.pattern],
+    )?;
+    if n == 0 {
+        return Err(AppError::NotFound("ng_word not found".into()));
     }
     Ok(Json(json!({ "ok": true })))
 }
@@ -296,6 +390,22 @@ fn extract_wacchoi_suffix(name: &str) -> Option<String> {
 fn validate_ng_id(id: &str) -> Result<(), AppError> {
     if id.is_empty() || !NG_ID_RE.is_match(id) {
         return Err(AppError::BadRequest(format!("invalid ng_id: {id}")));
+    }
+    Ok(())
+}
+
+/// Validates an NG word rule: `kind` must be one of the two known kinds and `pattern`
+/// must be non-empty. Regex syntax is deliberately not checked here — see the module
+/// docs: the browser's `RegExp` evaluates stored patterns and is therefore the single
+/// owner of regex validity.
+fn validate_ng_word(kind: &str, pattern: &str) -> Result<(), AppError> {
+    if kind != "text" && kind != "regex" {
+        return Err(AppError::BadRequest(format!(
+            "invalid ng_word kind: {kind}"
+        )));
+    }
+    if pattern.is_empty() {
+        return Err(AppError::BadRequest("ng_word pattern is empty".into()));
     }
     Ok(())
 }
@@ -516,16 +626,24 @@ mod tests {
     }
 
     #[test]
-    fn insert_or_ignore_is_idempotent() {
-        let conn = setup();
-        conn.execute("INSERT OR IGNORE INTO ng_ids (ng_id) VALUES ('abc')", [])
-            .unwrap();
-        conn.execute("INSERT OR IGNORE INTO ng_ids (ng_id) VALUES ('abc')", [])
-            .unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM ng_ids", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(count, 1);
+    fn validate_ng_word_accepts_both_kinds_with_a_non_empty_pattern() {
+        assert!(validate_ng_word("text", "荒らし").is_ok());
+        assert!(validate_ng_word("regex", "^荒ら.*し$").is_ok());
+        // Regex syntax is the browser's to judge (see module docs): a pattern that
+        // regex-lite could not compile is still stored as-is.
+        assert!(validate_ng_word("regex", "(?<!foo)bar").is_ok());
+    }
+
+    #[test]
+    fn validate_ng_word_rejects_empty_pattern() {
+        assert!(validate_ng_word("text", "").is_err());
+        assert!(validate_ng_word("regex", "").is_err());
+    }
+
+    #[test]
+    fn validate_ng_word_rejects_unknown_kind() {
+        assert!(validate_ng_word("glob", "荒らし").is_err());
+        assert!(validate_ng_word("", "荒らし").is_err());
     }
 
     #[test]
