@@ -97,7 +97,8 @@ novel-server を踏襲し、**1 つの Rust バイナリ**でフロント配信�
 | tower-http 0.6 | 静的配信・トレーシング |
 | regex-lite / urlencoding / chrono / tracing / tracing-subscriber / thiserror / dotenvy | 補助 |
 
-リリースビルドは `lto=true / strip=true / codegen-units=1`（VPS 向け）。
+リリースビルドは `opt-level=3 / lto=false / strip=true / codegen-units=16`。
+小さなサイズ・メモリ増加を許容し、ビルド時間を優先する。
 
 ### フロントエンド
 - Svelte 5（SvelteKit 不使用）+ Vite。`client/build/` を Rust が静的配信、未マッチは

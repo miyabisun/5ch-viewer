@@ -22,7 +22,7 @@ bin/dev   # フロント watch build + cargo build + 起動（http://localhost:3
 ## 本番ビルド
 
 ```bash
-cd client && bun install && bun run build && cd ..
+cd client && bun install --frozen-lockfile && bun run build && cd ..
 cargo run --release
 ```
 
@@ -32,6 +32,11 @@ cargo run --release
 docker build -t viewer-of-5ch .
 docker run -p 3000:3000 -v viewer-of-5ch-data:/data viewer-of-5ch
 ```
+
+`v*.*.*` タグでイメージを GHCR へ公開する。タグは `Cargo.toml` のバージョンと
+一致させる。公開前に `.github/smoke-image.sh` で3実行ファイル・API・SPAを確認する。
+依存ビルドは cargo-chef で分離し、GHCR の製品イメージとは別の `build-cache` タグに
+Buildx の中間段階を保存する。ソースやバージョンだけの変更では依存を再利用する。
 
 ## 環境変数
 
