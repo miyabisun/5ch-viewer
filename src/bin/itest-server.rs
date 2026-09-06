@@ -586,7 +586,6 @@ async fn main() {
     conn.execute_batch(db::SCHEMA).unwrap();
 
     let config = Config {
-        bind_address: "127.0.0.1".into(),
         port: app_port,
         base_path: String::new(),
         db_path: ":memory:".into(),

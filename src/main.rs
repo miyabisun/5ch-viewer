@@ -18,7 +18,6 @@ async fn main() {
     }
 
     let config = Config::from_env();
-    let bind_address = config.bind_address.clone();
     let port = config.port;
     let conn = db::open(&config.db_path);
 
@@ -28,10 +27,10 @@ async fn main() {
 
     let app = routes::build_router(state);
 
-    let addr = format!("{bind_address}:{port}");
+    let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("Failed to bind");
-    tracing::info!("Server listening on http://{bind_address}:{port}");
+    tracing::info!("Server listening on http://0.0.0.0:{port}");
     axum::serve(listener, app).await.expect("Server error");
 }
