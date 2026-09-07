@@ -39,12 +39,14 @@ pub struct Res {
 /// Splits one dat line into its `<>`-separated fields, or `None` if it is empty or
 /// malformed (fewer than 4 fields). The single predicate shared by `parse_dat` (which
 /// builds posts) and `count_dat_posts` (which only counts), so the two never disagree.
-fn dat_fields(line: &str) -> Option<Vec<&str>> {
-    if line.is_empty() {
-        return None;
-    }
-    let f: Vec<&str> = line.split("<>").collect();
-    (f.len() >= 4).then_some(f)
+fn dat_fields(line: &str) -> Option<[&str; 4]> {
+    let mut fields = line.split("<>");
+    Some([
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+    ])
 }
 
 /// Parses dat content (already UTF-8 decoded) into an array of posts.
@@ -77,13 +79,8 @@ pub fn count_dat_posts(text: &str) -> i64 {
 
 /// Extracts the thread title from the first post (the 5th field).
 pub fn title_from_dat(text: &str) -> Option<String> {
-    let first = text.split('\n').next()?;
-    let f: Vec<&str> = first.split("<>").collect();
-    if f.len() >= 5 && !f[4].trim().is_empty() {
-        Some(f[4].trim().to_string())
-    } else {
-        None
-    }
+    let title = text.split('\n').next()?.split("<>").nth(4)?.trim();
+    (!title.is_empty()).then(|| title.to_string())
 }
 
 #[cfg(test)]
@@ -127,6 +124,25 @@ mod tests {
     fn title_none_when_absent() {
         let text = "名無し<>sage<>2025 ID:x<>本文\n";
         assert_eq!(title_from_dat(text), None);
+    }
+
+    #[test]
+    fn preserves_field_boundaries_and_original_line_numbers() {
+        let text = "broken\n\n<><><><> title <>ignored\nname<>mail<>date ID:x<>body\r\n";
+        let res = parse_dat(text);
+        assert_eq!(res.iter().map(|r| r.num).collect::<Vec<_>>(), vec![3, 4]);
+        assert_eq!((res[0].name.as_str(), res[0].body.as_str()), ("", ""));
+        assert_eq!(res[1].body, "body\r");
+        assert_eq!(res[1].id.as_deref(), Some("x"));
+        assert_eq!(count_dat_posts(text), 2);
+        assert_eq!(title_from_dat(text), None);
+        assert_eq!(
+            title_from_dat("<><><><> title <>ignored"),
+            Some("title".into())
+        );
+        for text in ["", "\n", "<>", "<><>", "<><><>", "a<>b<>c<>d<>e<>f"] {
+            assert_eq!(count_dat_posts(text), parse_dat(text).len() as i64);
+        }
     }
 
     // --- extract_id tests ---

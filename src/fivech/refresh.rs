@@ -174,7 +174,7 @@ pub fn persist_fetch(
         DatFetch::Replace { bytes } => {
             let dat_bytes = bytes.len() as i64;
             let text = http::decode_shift_jis(&bytes);
-            let res_count = parse_dat(&text).len() as i64;
+            let res_count = count_dat_posts(&text);
             let title = title_from_dat(&text).unwrap_or_default();
             let status = compute_status(res_count);
             tracing::info!(
