@@ -70,7 +70,7 @@ novel-server を踏襲し、**1 つの Rust バイナリ**でフロント配信�
 │  │  ┌──────────────────────────────────┐   │ │
 │  │  │ SQLite (WAL) : favorites/dat_blobs │  │ │
 │  │  └──────────────────────────────────┘   │ │
-│  │       ▼ reqwest (Range GET / subject)    │ │
+│  │       ▼ reqwest (HEAD / GET / subject)   │ │
 │  └───────┼─────────────────────────────────┘ │
 └──────────┼────────────────────────────────────┘
            ▼  *.5ch.io
@@ -118,37 +118,34 @@ novel-server を踏襲し、**1 つの Rust バイナリ**でフロント配信�
 - 本当に効くのは 2 点だけ:
   1. **無人のバックグラウンド監視の頻度**（誰も見ていなくても動くため、間隔と板単位
      グルーピングで抑える。8.3）
-  2. **転送量の最小化**（dat の Range 差分取得。回数でなく 1 回あたりの量を減らす）
+  2. **不要な本文取得の省略**（単一スレは HEAD サイズ比較、板同期は subject 件数比較）
 
 ### 6.2 アクセスのトリガー
 | トリガー | 問い合わせ |
 | --- | --- |
-| スレを開く / 下に引っ張ってリロード | 該当スレの dat を Range 差分取得 |
+| スレを開く | 保存済み dat を表示（5ch アクセスなし） |
+| スレ内の更新ボタン / 投稿成功後 | dat の HEAD サイズ比較、一致しなければ全文 GET（6.3） |
 | お気に入り登録 | 板の SETTING.TXT を 1 回（board_name 取得） |
 | スレタイ検索 | ff5ch.syoboi.jp をラップ（第三者） |
-| 更新ボタン（一括更新） | 板ごとに subject.txt を 1 回 + 伸びたスレの dat のみ DL |
-| バックグラウンド監視 | 更新ボタンと同じ経路（板 subject.txt 1 回 + 伸びた dat DL） |
+| バックグラウンド監視 | 板ごとに subject.txt を 1 回 + 件数比較で必要な dat を全文 GET（8.3） |
 
 一覧ページを開いただけでは 5ch へ一切アクセスしない（SQLite の内容だけで即描画）。
-一括チェック（subject + 伸びた dat）が走るのは更新ボタン押下時とバックグラウンド巡回のみ。
+板単位の一括チェックはバックグラウンド巡回が駆動する。一括更新 UI とスレを開く際の板先読みは撤去済み。
 ブラウザ標準の引っ張り更新はページ再読み込み＝再描画（GET /api/favorites のみ）になる。
 
-### 6.3 dat の Range 差分取得と整合性（4層防御）
+### 6.3 単一スレの reload と dat 保存
 
-`dat_bytes`（前回の Shift_JIS バイト数）を起点に `Range: bytes=N-` で増分を取得し、
-生 Shift_JIS の BLOB 末尾に追記する。あぼーん等で過去が書き換わると差分が壊れるため、
-**4 層で整合性を検証し、いずれか NG なら全取得でリペア**する:
+`GET …/{…}/reload` は dat への HEAD の `Content-Length` と保存済み `dat_bytes`
+（前回取得時の Shift_JIS バイト数）を比較する。保存サイズが正かつ一致する場合だけ
+本文 GET を省略し、不一致・保存サイズ不明・HEAD 失敗・ヘッダー欠落時は全文 GET へ進む。
+subject.txt は取得せず、板先読みも起動しない。
 
-1. **末尾6バイト境界一致** — `dat_bytes - 6` から取得し、先頭6バイトが前回 BLOB の末尾
-   6バイトと一致するか。dat 末尾は必ず改行終端（5ch-spec 参照）なので1バイトでは衝突
-   するため6バイト。
-2. **差分ヘッダー検証** — 増分を行分割し各行を `<>` で split。フィールド4未満／日付ID
-   欠損を弾く（サイズが偶然微増した壊れ差分を撃墜）。
-3. **res_count 退行検出** — 追記後の総レス数が前回を下回れば中間レス物理削除とみなす。
-4. **416 縮小検出** — サーバーサイズ ≤ N。Content-Range で同一サイズなら変化なし、
-   それ以外は全取得。
+取得中の重複ダウンロードを抑止し、取得した dat は Shift_JIS から UTF-8 に変換して
+保存 blob を全置換し、実レス数からメタデータを更新する。Range 差分取得・追記は行わない。
+検証シナリオは [testing.md](testing.md) を参照。
 
-実装: `fivech/http.rs::fetch_dat`、`fivech/dat.rs::validate_diff`、`routes/favorites.rs`。
+実装: [reload handler](../src/routes/favorites.rs)、[HEAD / dat 取得](../src/fivech/http.rs)、
+[保存処理](../src/fivech/refresh.rs)。
 
 ### 6.4 SSRF 対策（入力検証）
 `server`/`board`/`thread_id` がユーザー入力（URL 貼付・直接指定・検索結果）から URL
@@ -227,10 +224,11 @@ CREATE TABLE IF NOT EXISTS dat_blobs (
   分解。登録時に SETTING.TXT で board_name を取得。
 
 ### 8.3 スレッド監視・次スレ自動取得（sentinel 移植）
-バックグラウンドで `tokio::time::interval`（180 秒）により、更新ボタンと同じ板更新経路
+バックグラウンドで `tokio::time::interval`（180 秒）により、板更新経路
 （`refresh_board_with_subject`）を板ごとに実行:
 1. favorites を板単位にグループ化、板ごとに subject.txt を 1 回取得（共有）。
-2. subject 件数 > 保存 blob 件数のスレのみ dat を DL し、blob を置換。
+2. 非 archived・非 dead のスレを対象に、subject 件数 > 保存 blob 件数なら dat を全文取得し、blob を置換。
+   subject にスレがない場合も dat を取得する。subject 自体の取得失敗時はその板の更新を中止。
 3. `persist_fetch` が blob の実レス数から res_count/status/title を更新（唯一の書き手）。
 4. warned/dead で subject から次スレを検出し、見つかれば rating 継承で自動追加。
 
@@ -277,7 +275,7 @@ dead/archived でも呼べる。
 | POST | `/api/favorites` | 追加（URL 直接 or server/board/thread_id） |
 | DELETE | `/api/favorites/{server}/{board}/{thread_id}` | 削除 |
 | GET | `…/{…}/dat` | 保存済み dat（サニタイズ済みレス配列） |
-| POST | `…/{…}/reload` | Range 差分取得を実行 |
+| GET | `…/{…}/reload` | HEAD サイズ比較で必要なら dat 全文取得 |
 | PATCH | `…/{…}/progress` | 既読位置 `read_res` 更新 |
 | PATCH | `…/{…}/rating` | 星評価更新 |
 | POST | `…/{…}/find-next` | 次スレを手動検索（subject 1 回取得、見つかれば rating 継承で登録） |

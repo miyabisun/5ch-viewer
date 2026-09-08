@@ -4,7 +4,7 @@
 
 | 層 | コマンド | 何を検証するか | バックエンド |
 | --- | --- | --- | --- |
-| Rust 単体 | `cargo test` | パーサ / DB / reload ゲートのロジック | 実 DB(:memory:)・HTTP なし |
+| Rust 単体 | `cargo test` | パーサ / DB / dat 保存・板同期対象のロジック | 実 DB(:memory:)・HTTP なし |
 | フロント単体 | `cd client && bun run test` (vitest) | 純関数(name 整形 等) | なし |
 | フロント E2E(高速) | `cd client && bun run test:e2e` | UI 挙動。API は `page.route` で全モック | なし(モック) |
 | 総合テスト(full-stack) | `cd client && bun run test:integration` | Svelte → 実 Rust → 実 DB → 5ch モックの一気通貫 | 実 Rust + :memory: DB + 5ch モック |
@@ -30,8 +30,8 @@
 
 - アプリ本体: `routes::build_router` をそのまま使い、**インメモリ SQLite**(`:memory:`、
   単一 Connection なのでプロセス生存中は保持)で起動。`fivech_base_url` をモックへ向ける。
-  バックグラウンド同期(`start_sync`)は起動しない(60 秒ポーリングは総合テストの
-  決定性を損なうため。reload はテストが明示的に駆動する)。
+  バックグラウンド同期(`start_sync`、180 秒間隔)は起動しない
+  (総合テストの決定性を保つため。reload と板同期はテストが明示的に駆動する)。
 - モック 5ch: `subject.txt` / dat / `SETTING.TXT` を返す。レス数や dat 消失(404)を
   実行時に差し替え可能。
 
@@ -54,6 +54,8 @@ APP_PORT=3001 MOCK_PORT=3002 cargo run --bin itest-server
   `{ server, board, thread_id, title, res_count, blob_posts }`
   favorite と dat_blobs を投入。`res_count`(メタ)と `blob_posts`(実 blob のレス数)を
   別々に指定でき、**ドリフト**(メタ 117 / blob 111 など)を再現できる。
+- `POST /_control/refresh-board` `{ server, board }` — 板同期を非同期で起動する。
+  `refresh_board` → `refresh_board_with_subject` を呼び、保存結果はテストからポーリングする。
 
 モック側(`MOCK_PORT`):
 
@@ -63,12 +65,12 @@ APP_PORT=3001 MOCK_PORT=3002 cargo run --bin itest-server
   `gone: true` で dat を 404 にしてスレ落ちを再現。
 - `POST /_control/reset` — モックのスレ定義と subject ヒットカウンタを全消去。
 - `GET /_control/subject-hits/{board}` — その板の subject.txt が叩かれた回数を返す。
-  「板単位の先読み」が subject.txt を**板 1 回**に抑える(スレ数分叩かない)ことを
-  検証するためのカウンタ。
+  板同期が subject.txt を**板 1 回**に抑えることと、単一スレの reload では
+  subject.txt を取得しないことを検証するカウンタ。
 
 ## 総合テストの動かし方
 
-Playwright が 3 プロセス(Rust テストサーバー / 5ch モック / Vite dev)を自動起動する。
+Playwright が 2 プロセス(itest-server 内のアプリ・5ch モック / Vite dev)を自動起動する。
 
 ```
 cd client && bun run test:integration
@@ -82,15 +84,41 @@ cd client && bun run test:integration
 - 既存の高速 E2E(`playwright.config.js`、`testDir: ./tests`)とは設定・ディレクトリが
   分離(総合は `testDir: ./integration`)。互いに影響しない。
 
+### reload と板同期の取得条件
+
+- **単一スレの reload**: フッターの更新ボタン・投稿成功後に
+  `GET /api/favorites/{server}/{board}/{thread_id}/reload` を呼ぶ。
+  dat への HEAD の `Content-Length` と保存済み `dat_bytes` (取得時の Shift_JIS バイト数)を
+  比較し、保存サイズが正かつ一致すれば本文 GET を省略する。不一致・保存サイズ不明・
+  HEAD 失敗・ヘッダー欠落時は全文 GET へ進む。subject.txt は取得せず、板先読みも起動しない。
+  スレを開くだけなら保存済み dat を表示する。
+- **板同期**: `src/sync.rs` が `refresh_board_with_subject` を呼び、板ごとに subject.txt を
+  1 回取得する。非 archived・非 dead のお気に入りについて、subject の件数が
+  **保存 blob の実レス数**を超える場合に dat を全文取得する。subject にスレがなければ
+  dat 取得へ進むが、subject 自体の取得失敗時はその板の更新を中止する。
+  本番の一括更新 UI / `POST /api/favorites/refresh` は撤去済みで、総合テストは
+  `/_control/refresh-board` からこの経路を駆動する。
+
+両経路とも dat 取得中の重複ダウンロードを抑止し、取得できた本文は `persist_fetch` で
+blob 全置換・メタデータ更新を行う。実装は
+[reload handler](../src/routes/favorites.rs)、[HEAD / dat 取得](../src/fivech/http.rs)、
+[板更新・保存処理](../src/fivech/refresh.rs)、[バックグラウンド同期](../src/sync.rs)を参照。
+
+[reload.spec.js](../client/integration/reload.spec.js) は HEAD サイズ一致時の取得省略、
+増加時の取得、いずれも subject 取得が 0 回であることを検証する。
+[refresh.spec.js](../client/integration/refresh.spec.js) は同じ板の伸びた 3 スレを
+subject 1 回で更新し、subject 件数が blob と同じスレは取得しないことを検証する。
+
 ### 代表シナリオ:「111 止まり」の実フロー再現
 
-`client/integration/reload.spec.js`:
+[reload.spec.js](../client/integration/reload.spec.js):
 
 1. `seed-favorite` で メタ `res_count=117` / `blob_posts=111`(ドリフト状態)を投入。
-2. モックに subject=117 / dat=117 を設定。
-3. スレを開く → ビューアの reload(GET)が走る。
-4. ゲートは **blob のレス数(111)** を基準に判定し 117 > 111 で dat 取得 → blob 全置換。
-5. 画面に 117 レス目(本文117)が表示される。
+   `dat_bytes` は 111 レス分の Shift_JIS バイト数として保存される。
+2. モックに `res_count=117` / `dat_posts=117` を設定。
+3. スレを開き、フッターの「更新」を押す → ビューアの reload(GET)が走る。
+4. HEAD の `Content-Length` が保存済み `dat_bytes` と異なるため dat 全文取得 → blob 全置換。
+5. 更新後の保存済み dat を読み、画面に 117 レス目(本文117)が表示される。
 
-これにより「メタが先行ドリフトすると blob が更新されず 111 で止まる」バグを、
-モックでなく実バックエンドのフローで再現・防止する。
+これによりメタの件数が先行していても、HEAD 比較 → dat 取得 → DB 置換 → 表示まで
+実バックエンドとローカル 5ch モックを通して回復することを検証する。
