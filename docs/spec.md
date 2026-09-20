@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS dat_blobs (
 - 「下に引っ張ってリロード」で 6.3 の Range 差分取得を実行。
 - **既読位置の追跡**: 各レスを IntersectionObserver で監視し、画面を通過した最大レス
   番号を `read_res` 候補に。粒度は**レス番号単位**（端末非依存）。送信は debounce
-  （2 秒）で間引き、離脱時は `navigator.sendBeacon()` で確実に送る。正本はサーバー。
+  （2 秒）で間引き、離脱時は `navigator.sendBeacon()` で確実に送る。既読位置はサーバーで管理し、端末間で同期する。
 
 ### 8.2 スレッドの追加
 - **(A) スレタイ検索**: ff5ch.syoboi.jp をサーバーでラップ（CORS 回避、精度のため第三者を採用）。`GET /api/search`
