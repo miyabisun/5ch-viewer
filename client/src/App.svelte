@@ -4,7 +4,7 @@
   import { startAutoReload } from './lib/auto-reload.js'
   import { preserveReadProgress } from './lib/favorite-list.js'
   import { initTheme } from './lib/theme.js'
-  import { parseLocation, push, replace } from './lib/router.js'
+  import { parseLocation, push, replace, toPath } from './lib/router.js'
   import NavBar from './lib/NavBar.svelte'
   import FavoritesList from './lib/FavoritesList.svelte'
   import RegisterThread from './lib/RegisterThread.svelte'
@@ -87,7 +87,7 @@
     // Visiting the list makes NO 5ch access: render straight from SQLite (GET /api/favorites).
     // There is no manual refresh UI; subject.txt/dat updates are the background auto-crawl's
     // job (src/sync.rs). A browser pull-to-refresh just re-renders this way.
-    load().then(() => applyRoute(route))
+    load().then(() => applyRoute(parseLocation()))
     loadNgIds()
     loadNgWords()
     loadNgWacchoi()
@@ -98,7 +98,11 @@
       if (page === 'favorites') load()
     })
 
-    const onpop = () => applyRoute(parseLocation())
+    const onpop = () => {
+      const route = parseLocation()
+      // Same-URL image history must not reload the thread or reset its position.
+      if (toPath(route) !== toPath({ page, thread: current })) applyRoute(route)
+    }
     window.addEventListener('popstate', onpop)
     return () => {
       stopAutoReload()

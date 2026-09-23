@@ -6,6 +6,8 @@
 //
 // Paths are resolved relative to BASE_PATH (the server may be mounted under a sub-path).
 
+import { readImageEntry } from './image-history.js'
+
 const BASE = (window.__BASE_PATH__ || '').replace(/\/$/, '')
 
 // Strip the base prefix and return the leading-slash app path (e.g. "/egg/applism/123").
@@ -41,9 +43,12 @@ export function toPath({ page, thread }) {
 }
 
 export function push(route) {
-  history.pushState(null, '', toPath(route))
+  // Leaving an open image replaces its entry, retaining the underlying thread.
+  if (readImageEntry(history.state, location.pathname)) {
+    history.replaceState(null, '', toPath(route))
+  } else history.pushState(null, '', toPath(route))
 }
 
 export function replace(route) {
-  history.replaceState(null, '', toPath(route))
+  history.replaceState(history.state, '', toPath(route))
 }

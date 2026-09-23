@@ -221,6 +221,18 @@ Domain components on top of the Sumi recipes:
   exception to the token rule). The viewer overlay stays
   `user-select: none` unconditionally (both pointer types): it is a
   lightbox, not a reading surface, and its counter text is chrome.
+  Opening an image adds one History API entry at the same thread URL.
+  Browser/Android Back closes only the viewer, preserving the mounted
+  thread, scroll position, and any underlying anchor/ID popup. The next
+  Back follows normal page history. The close button, backdrop, Esc,
+  downward swipe, and transition to the image menu consume that same
+  entry once. Repeated close cannot skip the thread. Image navigation
+  updates the entry without adding another; Forward and page reload
+  restore the last selected image. If that image is no longer in the
+  stored thread, return to the underlying entry without an extra empty
+  Back step. App navigation away replaces the open image entry, so Back
+  returns to the thread with the viewer closed. Image-menu actions and
+  thumbnails inside popups use the same image history path.
 - **Sticky footer actions (thread view only):** the thread view is the
   only screen with a sticky footer; **the favorites list has no footer
   and no refresh affordance** — it is display-only, kept fresh by the
@@ -247,6 +259,8 @@ Domain components on top of the Sumi recipes:
   sticky title, saved posts still shown below) can therefore appear only
   after a failed manual refresh in the thread view — never on entry,
   and never on the favorites list (which has no fetch to fail).
+  Image-only Back/Forward does not re-enter or reload the thread: it
+  neither requests the stored dat again nor contacts 5ch.
 - **Pull-to-refresh:** there is **no custom pull gesture anywhere** —
   a pull is delegated to the browser's native gesture and is simply a
   full page reload. Because entry (list and thread alike) renders saved

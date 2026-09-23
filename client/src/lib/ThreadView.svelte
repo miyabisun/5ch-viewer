@@ -14,6 +14,8 @@
   import { scopedTo, findNgWord, isValidNgWord } from './ng.js'
   import { resBodyText } from './res-text.js'
   import { copyText } from './clipboard.js'
+  import { readImageEntry, withImageEntry } from './image-history.js'
+  import { toPath } from './router.js'
   import Modal from './Modal.svelte'
   import ImageViewer from './ImageViewer.svelte'
   import Icon from './Icon.svelte'
@@ -569,9 +571,10 @@
   let mosaicUrls = $state(new Set())
 
   // --- Image viewer state ---
-  // When open: { images: [...], initialIndex: number }
-  // images item: { href, path, url, resNum, indexInRes, globalIndex }
-  let imageViewerState = $state(null)
+  const imagePath = untrack(() => toPath({ thread: fav }))
+  let imageEntry = $state(readImageEntry(history.state, imagePath))
+  let closingImage = false
+  let pendingImageMenu = null
 
   // Flat list of all images across all res entries (built reactively from data).
   const allImages = $derived.by(() => {
@@ -586,10 +589,53 @@
     return out
   })
 
+  const imageViewerState = $derived.by(() => {
+    if (!imageEntry) return null
+    const index = allImages.findIndex(
+      (img) => img.resNum === imageEntry.resNum && img.indexInRes === imageEntry.indexInRes,
+    )
+    return index < 0 ? null : { images: allImages, initialIndex: index }
+  })
+
+  // A stored image can disappear from the dat between visits. Consume that
+  // unusable entry instead of leaving an invisible extra Back step.
+  $effect(() => {
+    if (data && imageEntry && !imageViewerState) untrack(closeImageViewer)
+  })
+
   function openImageViewer(resNum, indexInRes) {
+    if (closingImage) return
     const idx = allImages.findIndex((img) => img.resNum === resNum && img.indexInRes === indexInRes)
     if (idx === -1) return
-    imageViewerState = { images: allImages, initialIndex: idx }
+    const state = withImageEntry(history.state, imagePath, allImages[idx])
+    if (readImageEntry(history.state, imagePath)) history.replaceState(state, '')
+    else history.pushState(state, '')
+    imageEntry = readImageEntry(state, imagePath)
+  }
+
+  function rememberImage(image) {
+    if (!closingImage && readImageEntry(history.state, imagePath)) {
+      history.replaceState(withImageEntry(history.state, imagePath, image), '')
+    }
+  }
+
+  function closeImageViewer() {
+    if (closingImage) return
+    if (location.pathname === imagePath && readImageEntry(history.state, imagePath)) {
+      // Keep the overlay until traversal finishes: repeated close cannot go
+      // back twice and the underlying thumbnail cannot reopen it mid-traversal.
+      closingImage = true
+      history.back()
+    } else imageEntry = null
+  }
+
+  function onImageHistory() {
+    imageEntry = location.pathname === imagePath ? readImageEntry(history.state, imagePath) : null
+    closingImage = false
+    if (pendingImageMenu && location.pathname === imagePath && !imageEntry) {
+      imageMenu = pendingImageMenu
+    }
+    pendingImageMenu = null
   }
 
   // --- Image context menu ---
@@ -1065,6 +1111,8 @@
     idSearchTarget = null
   }
 </script>
+
+<svelte:window onpopstate={onImageHistory} />
 
 <!-- body is already sanitized on the server. linkify makes anchors clickable and URLs into links. -->
 <!-- resNum is used by the surrounding card's reply-menu handlers. -->
@@ -1632,12 +1680,12 @@
     images={imageViewerState.images}
     initialIndex={imageViewerState.initialIndex}
     {mosaicUrls}
-    onclose={() => {
-      imageViewerState = null
-    }}
+    onclose={closeImageViewer}
+    onchange={rememberImage}
     onImageMenu={(item) => {
-      imageViewerState = null
-      imageMenu = { url: item.url, mosaic: mosaicUrls.has(item.url) }
+      if (closingImage) return
+      pendingImageMenu = item
+      closeImageViewer()
     }}
   />
 {/if}

@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from 'svelte'
   import { imageSwipe } from './imageSwipe.js'
   import Icon from './Icon.svelte'
 
@@ -7,7 +8,14 @@
   // mosaicUrls: Set<string> (URLs with mosaic=1)
   // onclose: () => void
   // onImageMenu: ({ url, mosaic }) => void — opens the image context menu
-  let { images, initialIndex = 0, mosaicUrls = new Set(), onclose, onImageMenu } = $props()
+  let {
+    images,
+    initialIndex = 0,
+    mosaicUrls = new Set(),
+    onclose,
+    onImageMenu,
+    onchange,
+  } = $props()
 
   // We intentionally snapshot initialIndex into local state. The parent re-mounts
   // this component each time a viewer is opened (via {#if imageViewerState != null}),
@@ -20,14 +28,24 @@
   const isMosaic = $derived(mosaicUrls.has(current?.url))
 
   function prev() {
-    if (currentIndex > 0) currentIndex--
+    if (currentIndex > 0) {
+      currentIndex--
+      onchange(images[currentIndex])
+    }
   }
   function next() {
-    if (currentIndex < images.length - 1) currentIndex++
+    if (currentIndex < images.length - 1) {
+      currentIndex++
+      onchange(images[currentIndex])
+    }
   }
 
   // Keyboard navigation.
   function onKey(e) {
+    if (e.altKey || e.ctrlKey || e.metaKey) return
+    if (!['Escape', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return
+    e.preventDefault()
+    e.stopImmediatePropagation()
     if (e.key === 'Escape') onclose()
     else if (e.key === 'ArrowLeft') prev()
     else if (e.key === 'ArrowRight') next()
@@ -39,15 +57,23 @@
 
   function onImgPointerDown(e) {
     if (e.pointerType !== 'touch') return
+    const image = e.currentTarget
     longPressed = false
     longPressTimer = setTimeout(() => {
       longPressed = true
+      // Touchend still targets this image after it unmounts. Cancel only the
+      // long-press click, so finger-up cannot activate the new menu/scrim.
+      image.addEventListener('touchend', (event) => event.preventDefault(), {
+        once: true,
+        passive: false,
+      })
       openMenu()
     }, 500)
   }
   function cancelLongPress() {
     clearTimeout(longPressTimer)
   }
+  onDestroy(cancelLongPress)
   function onImgContextMenu(e) {
     e.preventDefault()
     openMenu()
@@ -67,7 +93,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydowncapture={onKey} />
 
 <!-- Full-screen backdrop. Clicking the backdrop (not the image) closes the viewer. -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
