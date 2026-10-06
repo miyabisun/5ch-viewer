@@ -642,6 +642,21 @@
   // { url: string, mosaic: boolean } | null
   let imageMenu = $state(null)
 
+  // Images are prefetched in the background after the dat arrives, so a thumbnail can 404
+  // before its image is cached. Reload it a few times before showing the failure cross.
+  const THUMB_RETRY_DELAYS = [2000, 4000, 8000, 16000]
+  function onThumbError(img) {
+    const attempt = Number(img.dataset.retry ?? 0)
+    if (attempt >= THUMB_RETRY_DELAYS.length) {
+      img.classList.add('thumb-missing')
+      return
+    }
+    img.dataset.retry = attempt + 1
+    setTimeout(() => {
+      if (img.isConnected) img.src = img.src
+    }, THUMB_RETRY_DELAYS[attempt])
+  }
+
   // Long-press detection for thumbnails (touch, 500ms).
   let imagePressTimer
   let imageLongPressed = false
@@ -1150,7 +1165,7 @@
             class="thumb"
             class:thumb-mosaic={isMosaic}
             loading="lazy"
-            onerror={(e) => e.currentTarget.classList.add('thumb-missing')}
+            onerror={(e) => onThumbError(e.currentTarget)}
           />
           <!-- Failed-load placeholder cross: shown via .thumb-missing + .thumb-error. -->
           <span class="thumb-error" aria-hidden="true"><Icon name="x" size="20" /></span>

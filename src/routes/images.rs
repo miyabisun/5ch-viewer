@@ -45,7 +45,19 @@ fn validate_mosaic_url(url: &str) -> Result<(), AppError> {
 /// `GET /api/images/{*path}` — serve a cached image file by its normalized URL path.
 /// Returns 404 when the metadata or corresponding regular file is missing.
 /// Cache-Control is set to immutable: images are content-addressed by URL (never change in place).
-async fn serve_image(
+/// Errors are `no-store`: a missing image is usually still being prefetched in the background.
+async fn serve_image(state: State<AppState>, path: Path<String>) -> Response {
+    let mut resp = load_image(state, path).await.into_response();
+    if !resp.status().is_success() {
+        resp.headers_mut().insert(
+            header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        );
+    }
+    resp
+}
+
+async fn load_image(
     State(state): State<AppState>,
     Path(path): Path<String>,
 ) -> Result<Response, AppError> {
@@ -126,4 +138,74 @@ async fn unset_mosaic(
         params![req.url],
     )?;
     Ok(Json(json!({ "ok": true })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use rusqlite::Connection;
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+
+    fn make_state(conn: Connection) -> AppState {
+        let cookies = "/tmp/fivech_images_test_cookies.json";
+        let jar = crate::fivech::cookie_jar::open(cookies);
+        AppState {
+            db: Arc::new(Mutex::new(conn)),
+            http: crate::state::build_http_client(jar.clone()),
+            image_http: crate::fivech::images::build_image_http_client(),
+            jar,
+            config: Config {
+                port: 3000,
+                base_path: String::new(),
+                db_path: ":memory:".to_string(),
+                image_cache_dir: "/tmp/fivech-images-test-missing".to_string(),
+                cookies_path: cookies.to_string(),
+                fivech_base_url: String::new(),
+            },
+            inflight: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    async fn get(rows: &[(&str, &str)]) -> Vec<Response> {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::db::SCHEMA).unwrap();
+        for (path, mime) in rows {
+            conn.execute(
+                "INSERT INTO image_cache (url, path, mime, file_size) VALUES (?1, ?2, ?3, 10)",
+                params![format!("https://{path}"), path, mime],
+            )
+            .unwrap();
+        }
+        let state = make_state(conn);
+        let mut out = Vec::new();
+        for path in [
+            "i.example/none.png",
+            "i.example/bad.png",
+            "i.example/gone.png",
+        ] {
+            out.push(
+                serve_image(State(state.clone()), Path(path.to_string()))
+                    .await
+                    .into_response(),
+            );
+        }
+        out
+    }
+
+    /// A missing image is usually still being prefetched, so its 404 must not be cached
+    /// by the browser or an edge (Cloudflare caches extension-typed 404s by default).
+    #[tokio::test]
+    async fn not_found_images_are_not_cacheable() {
+        let responses = get(&[
+            ("i.example/bad.png", "text/html"),
+            ("i.example/gone.png", "image/png"),
+        ])
+        .await;
+        for resp in responses {
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+            assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+        }
+    }
 }
