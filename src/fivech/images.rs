@@ -84,14 +84,15 @@ pub struct ImageBlob {
 
 /// Builds the image HTTP client (separate UA from the main 5ch client, no cookie jar).
 ///
-/// The UA names this app instead of posing as a browser: CDNs challenge stale
-/// browser UAs with a 403 HTML page (content-central.rakuten.net blocked Chrome/133).
+/// The UA is the current stable Chrome on Windows, the most common browser UA. Keep the
+/// major version current: a stale one gets a 403 HTML challenge from CDNs
+/// (content-central.rakuten.net blocked Chrome/133).
 ///
 /// Redirect policy: follows up to 5 hops, re-validates each redirect destination
 /// with `is_safe_host` to prevent SSRF via open redirects. Non-http/https schemes
 /// (file://, gopher://, ftp://, etc.) are rejected immediately.
 pub fn build_image_http_client() -> Client {
-    const IMAGE_UA: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+    const IMAGE_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
     Client::builder()
         .user_agent(IMAGE_UA)
         .timeout(std::time::Duration::from_secs(5))
