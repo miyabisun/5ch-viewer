@@ -8,6 +8,14 @@
 | フロント単体 | `cd client && bun run test` (vitest) | 純関数(name 整形 等) | なし |
 | フロント E2E(高速) | `cd client && bun run test:e2e` | UI 挙動。API は `page.route` で全モック | なし(モック) |
 | 総合テスト(full-stack) | `cd client && bun run test:integration` | Svelte → 実 Rust → 実 DB → 5ch モックの一気通貫 | 実 Rust + :memory: DB + 5ch モック |
+| 配布イメージ | `docker build -t viewer-of-5ch:test . && bash tests/smoke-image.sh viewer-of-5ch:test` | API・SPA・同梱実行ファイルの起動と依存 | 新規コンテナ(本番データなし) |
+
+commit 前に手元で format・lint と上の各層を通す。CI は tag からイメージを作って公開するだけで、検査はしない。
+
+```
+cargo fmt --check && cargo clippy --locked --all-targets --all-features -- -D warnings && cargo test
+cd client && bun run format:check && bun run test && bun run test:e2e && bun run test:integration
+```
 
 「テスト緑 = 実機で直る」を担保するのが総合テスト。reload ゲート / dat 取得 / DB 全置換 /
 お気に入り表示など、バックエンドが絡む回帰は総合テスト側で実フロー検証する。

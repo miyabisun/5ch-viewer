@@ -85,4 +85,5 @@ Node.js・npm・Bashも使える環境では、`bin/dev`でフロントを監視
 テスト方法は[テスト構成](docs/testing.md)、実装の設計資料は[仕様書](docs/spec.md)にあります。
 
 配布イメージは、Cargoの版と一致する`v*.*.*`タグからCIで作ります。
-[release workflow](.github/workflows/release.yml)でAPI・SPA・実行ファイルの確認後にGHCRへ公開します。
+[release workflow](.github/workflows/release.yml)はタグと版の一致を照合してGHCRへ公開します。
+公開前の確認は[テスト構成](docs/testing.md)の手順を手元で通します。
