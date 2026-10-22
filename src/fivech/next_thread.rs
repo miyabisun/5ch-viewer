@@ -4,7 +4,8 @@ use crate::fivech::subject::SubjectEntry;
 use regex_lite::Regex;
 use std::sync::LazyLock;
 
-static NUMBER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d+").unwrap());
+static NUMBER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d+").expect("hard-coded regex is valid"));
 
 /// Removes all whitespace (half-width space, full-width U+3000, tabs, …) from a string.
 /// Context matching is done on whitespace-stripped forms so a thread starter's spacing

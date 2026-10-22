@@ -7,6 +7,7 @@
 use crate::error::AppError;
 use crate::fivech::images::normalize_image_path;
 use crate::models::MosaicRequest;
+use crate::state::lock;
 use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderName, StatusCode};
@@ -34,7 +35,7 @@ fn validate_mosaic_url(url: &str) -> Result<(), AppError> {
             "url must start with http:// or https://".into(),
         ));
     }
-    if url.chars().any(|c| c.is_control()) {
+    if url.chars().any(char::is_control) {
         return Err(AppError::BadRequest(
             "url contains control characters".into(),
         ));
@@ -62,7 +63,7 @@ async fn load_image(
     Path(path): Path<String>,
 ) -> Result<Response, AppError> {
     let row: Option<(i64, String, i64)> = {
-        let conn = state.db.lock().unwrap();
+        let conn = lock(&state.db);
         conn.query_row(
             "SELECT id, mime, file_size FROM image_cache WHERE path=?1 AND file_size IS NOT NULL",
             params![path],
@@ -86,11 +87,11 @@ async fn load_image(
             .await
             .map_err(|e| AppError::Internal(format!("image read task failed: {e}")))?
             .map_err(|_| AppError::NotFound(format!("image file is unavailable: {path}")))?;
-            let content_type: axum::http::HeaderValue = mime
-                .parse()
-                .unwrap_or_else(|_| "application/octet-stream".parse().unwrap());
-            let cache_control: axum::http::HeaderValue =
-                "public, max-age=31536000, immutable".parse().unwrap();
+            let content_type = axum::http::HeaderValue::from_str(&mime).unwrap_or(
+                axum::http::HeaderValue::from_static("application/octet-stream"),
+            );
+            let cache_control =
+                axum::http::HeaderValue::from_static("public, max-age=31536000, immutable");
             Ok((
                 StatusCode::OK,
                 [
@@ -117,7 +118,7 @@ async fn set_mosaic(
 ) -> Result<Json<Value>, AppError> {
     validate_mosaic_url(&req.url)?;
     let path = normalize_image_path(&req.url).unwrap_or_default();
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     conn.execute(
         "INSERT INTO image_cache (url, path, mosaic) VALUES (?1, ?2, 1)
          ON CONFLICT(url) DO UPDATE SET mosaic = 1",
@@ -132,7 +133,7 @@ async fn unset_mosaic(
     Json(req): Json<MosaicRequest>,
 ) -> Result<Json<Value>, AppError> {
     validate_mosaic_url(&req.url)?;
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     conn.execute(
         "UPDATE image_cache SET mosaic = 0 WHERE url = ?1",
         params![req.url],

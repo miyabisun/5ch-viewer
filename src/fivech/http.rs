@@ -1,5 +1,5 @@
 //! HTTP access to 5ch.
-//! - User-Agent is the client's default (contains Monazilla; state::USER_AGENT).
+//! - User-Agent is the client's default (contains Monazilla; `state::USER_AGENT`).
 //! - Always `Accept-Encoding: identity` so compression doesn't break Content-Length.
 //! - Retry on 5xx, do not retry on 404.
 
@@ -11,11 +11,12 @@ use std::time::Duration;
 
 const MAX_ATTEMPTS: u32 = 4;
 const HEAD_MAX_ATTEMPTS: u32 = 2; // HEAD failures fall back to full GET; fewer retries needed
-const RETRY_DELAY: Duration = Duration::from_millis(2000);
+const RETRY_DELAY: Duration = Duration::from_secs(2);
 /// 5ch host. Migrated from 5ch.net to 5ch.io in 2026-03 (the old net domain was revoked).
 const HOST_SUFFIX: &str = "5ch.io";
 
-/// Decodes a Shift_JIS byte sequence to UTF-8 (invalid bytes are replaced).
+/// Decodes a `Shift_JIS` byte sequence to UTF-8 (invalid bytes are replaced).
+#[must_use]
 pub fn decode_shift_jis(bytes: &[u8]) -> String {
     let (cow, _, _) = encoding_rs::SHIFT_JIS.decode(bytes);
     cow.into_owned()
@@ -86,6 +87,11 @@ async fn get(client: &Client, url: &str) -> Result<Response, AppError> {
 }
 
 /// Fetches and parses subject.txt.
+///
+/// # Errors
+///
+/// `BadRequest` for an invalid server/board, `Upstream` when 5ch cannot be reached
+/// or answers with a non-success status.
 pub async fn fetch_subject(
     client: &Client,
     base: &str,
@@ -105,7 +111,7 @@ pub async fn fetch_subject(
     Ok(parse_subject_txt(&decode_shift_jis(&bytes)))
 }
 
-/// Fetches BBS_TITLE (the board's display name) from SETTING.TXT. Returns the board ID on failure.
+/// Fetches `BBS_TITLE` (the board's display name) from SETTING.TXT. Returns the board ID on failure.
 pub async fn fetch_board_name(client: &Client, base: &str, server: &str, board: &str) -> String {
     // SSRF defense-in-depth: on invalid server/board, fall back to the board ID without any request.
     if validate_ref(server, board, "0").is_err() {
@@ -171,6 +177,11 @@ pub async fn head_dat_content_length(
 /// Fetches the entire dat (no Range / no diff).
 /// Returns the full body on success, Gone on 404. Take-or-skip gating is the caller's
 /// responsibility (HEAD Content-Length for single-thread reload, subject.txt for board refresh).
+///
+/// # Errors
+///
+/// `BadRequest` for an invalid thread reference, `Upstream` when 5ch cannot be reached
+/// or answers with an unexpected status.
 pub async fn fetch_dat(
     client: &Client,
     base: &str,

@@ -14,6 +14,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 pub fn build_router(state: AppState) -> Router {
     let base_path = state.config.base_path.clone();
+    let fallback_base_path = base_path.clone();
 
     let sub = Router::new()
         .merge(favorites::routes())
@@ -24,15 +25,15 @@ pub fn build_router(state: AppState) -> Router {
         .nest_service("/assets", ServeDir::new("client/build/assets"))
         .nest_service("/favicon.svg", ServeFile::new("client/build/favicon.svg"))
         .fallback(get(move || {
-            let bp = base_path.clone();
+            let bp = fallback_base_path.clone();
             async move { spa_fallback(&bp) }
         }))
-        .with_state(state.clone());
+        .with_state(state);
 
-    if state.config.base_path.is_empty() {
+    if base_path.is_empty() {
         sub
     } else {
-        Router::new().nest(&state.config.base_path, sub)
+        Router::new().nest(&base_path, sub)
     }
 }
 

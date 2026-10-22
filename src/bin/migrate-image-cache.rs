@@ -69,7 +69,7 @@ fn migrate_image_cache(conn: &mut Connection, root: &Path) -> Result<MigrationOu
         let size = match blob {
             Some(bytes) => {
                 write_verified(root, id, &bytes)?;
-                Some(bytes.len() as i64)
+                Some(viewer_of_5ch::db::to_i64(bytes.len()))
             }
             None => None,
         };
@@ -115,7 +115,7 @@ fn main() -> Result<(), AnyError> {
             "image_cache migration completed: filesystem files verified and schema replaced"
         ),
         MigrationOutcome::Audited => {
-            println!("image_cache already uses the filesystem schema; audit succeeded")
+            println!("image_cache already uses the filesystem schema; audit succeeded");
         }
     }
     Ok(())

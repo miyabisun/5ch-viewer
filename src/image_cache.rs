@@ -132,12 +132,22 @@ pub fn resize_image(bytes: Vec<u8>, mime: String) -> ResizedImage {
     }
 }
 
-/// Returns the stable, exFAT-safe relative path for a positive SQLite image id.
-pub fn relative_path(id: i64) -> String {
-    assert!(id > 0, "image cache id must be positive");
-    format!("{:04x}/{:08x}", (id - 1) / SHARD_SIZE, id)
+fn shard_name(id: i64) -> String {
+    format!("{:04x}", (id - 1) / SHARD_SIZE)
 }
 
+/// Returns the stable, exFAT-safe relative path for a positive SQLite image id.
+///
+/// # Panics
+///
+/// Panics if `id` is not positive; SQLite rowids of cached images always are.
+#[must_use]
+pub fn relative_path(id: i64) -> String {
+    assert!(id > 0, "image cache id must be positive");
+    format!("{}/{id:08x}", shard_name(id))
+}
+
+#[must_use]
 pub fn absolute_path(root: &Path, id: i64) -> PathBuf {
     root.join(relative_path(id))
 }
@@ -214,7 +224,7 @@ fn create_temp_file(
         let path = parent.join(format!(".{id:08x}.{process_id}.{sequence}.tmp"));
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => return Ok((path, file)),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),
         }
     }
@@ -233,6 +243,8 @@ impl ShardLock {
         use std::os::fd::AsRawFd;
         let file = File::open(parent)?;
         // Advisory locking is shared by every app/migration writer and released on crash.
+        // SAFETY: `file` is open for the whole call, so the descriptor is valid; flock does not
+        // touch Rust-owned memory.
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
             Ok(Self(file))
         } else {
@@ -245,6 +257,7 @@ impl ShardLock {
 impl Drop for ShardLock {
     fn drop(&mut self) {
         use std::os::fd::AsRawFd;
+        // SAFETY: `self.0` is still open until this drop finishes, so the descriptor is valid.
         let _ = unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
     }
 }
@@ -254,6 +267,11 @@ static SHARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Writes and syncs a private temporary file, then atomically publishes it while
 /// holding the shard lock. Metadata is published only after this returns.
+///
+/// # Errors
+///
+/// Fails when `bytes` exceeds `MAX_IMAGE_BYTES`, a path component is not a real directory,
+/// a different file already exists for `id`, or any filesystem step fails.
 pub fn write_verified(root: &Path, id: i64, bytes: &[u8]) -> io::Result<()> {
     if bytes.len() as u64 > MAX_IMAGE_BYTES {
         return Err(io::Error::new(
@@ -264,7 +282,7 @@ pub fn write_verified(root: &Path, id: i64, bytes: &[u8]) -> io::Result<()> {
 
     ensure_directory(root)?;
     let final_path = absolute_path(root, id);
-    let parent = final_path.parent().expect("cache path has parent");
+    let parent = &root.join(shard_name(id));
     ensure_directory(parent)?;
 
     #[cfg(unix)]
@@ -310,7 +328,7 @@ pub fn write_verified(root: &Path, id: i64, bytes: &[u8]) -> io::Result<()> {
             Err(error) => return Err(error),
         }
         fs::rename(&temp_path, &final_path)?;
-        if read_verified(root, id, bytes.len() as i64)? != bytes {
+        if read_verified(root, id, crate::db::to_i64(bytes.len()))? != bytes {
             let _ = fs::remove_file(&final_path);
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -338,6 +356,11 @@ fn validate_replace_target(path: &Path) -> io::Result<()> {
 
 /// Atomically replaces an existing cache file. Intended for offline maintenance;
 /// unlike `write_verified`, this never creates the final cache entry.
+///
+/// # Errors
+///
+/// Fails when `bytes` exceeds `MAX_IMAGE_BYTES`, the target is missing or not a single-link
+/// regular file, or any filesystem step fails.
 pub fn replace_verified(root: &Path, id: i64, bytes: &[u8]) -> io::Result<()> {
     if bytes.len() as u64 > MAX_IMAGE_BYTES {
         return Err(io::Error::new(
@@ -348,7 +371,7 @@ pub fn replace_verified(root: &Path, id: i64, bytes: &[u8]) -> io::Result<()> {
 
     ensure_directory(root)?;
     let final_path = absolute_path(root, id);
-    let parent = final_path.parent().expect("cache path has parent");
+    let parent = &root.join(shard_name(id));
     ensure_directory(parent)?;
 
     #[cfg(unix)]
@@ -367,7 +390,7 @@ pub fn replace_verified(root: &Path, id: i64, bytes: &[u8]) -> io::Result<()> {
         // Recheck immediately before rename so symlinks and hard links are never replaced.
         validate_replace_target(&final_path)?;
         fs::rename(&temp_path, &final_path)?;
-        if read_verified(root, id, bytes.len() as i64)? != bytes {
+        if read_verified(root, id, crate::db::to_i64(bytes.len()))? != bytes {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "cache replacement verification failed",
@@ -389,31 +412,44 @@ fn sync_parent(_parent: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Reports whether the cached file for `id` exists with the recorded size.
+///
+/// # Errors
+///
+/// Fails when a path component is not a real directory or the file cannot be inspected.
 pub fn audit_file(root: &Path, id: i64, file_size: Option<i64>) -> io::Result<bool> {
-    let Some(expected) = file_size.filter(|size| *size >= 0) else {
+    let Some(expected) = file_size.and_then(|size| u64::try_from(size).ok()) else {
         return Ok(false);
     };
     validate_directory(root)?;
     let path = absolute_path(root, id);
-    validate_directory(path.parent().expect("cache path has parent"))?;
+    validate_directory(&root.join(shard_name(id)))?;
     let meta = fs::symlink_metadata(path)?;
     Ok(meta.file_type().is_file()
         && is_single_link(&meta)
-        && meta.len() == expected as u64
+        && meta.len() == expected
         && meta.len() <= MAX_IMAGE_BYTES)
 }
 
 /// Opens without following the final symlink on Unix and reads from that same handle.
+///
+/// # Errors
+///
+/// Fails when `expected_size` is out of range, the file is not a single-link regular file
+/// of that size, it changes while being read, or it cannot be read.
 pub fn read_verified(root: &Path, id: i64, expected_size: i64) -> io::Result<Vec<u8>> {
-    if !(0..=MAX_IMAGE_BYTES as i64).contains(&expected_size) {
+    let Some(expected_size) = u64::try_from(expected_size)
+        .ok()
+        .filter(|size| *size <= MAX_IMAGE_BYTES)
+    else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "invalid cached image size",
         ));
-    }
+    };
     let path = absolute_path(root, id);
     validate_directory(root)?;
-    validate_directory(path.parent().expect("cache path has parent"))?;
+    validate_directory(&root.join(shard_name(id)))?;
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -423,16 +459,16 @@ pub fn read_verified(root: &Path, id: i64, expected_size: i64) -> io::Result<Vec
     }
     let mut file = options.open(path)?;
     let meta = file.metadata()?;
-    if !meta.is_file() || !is_single_link(&meta) || meta.len() != expected_size as u64 {
+    if !meta.is_file() || !is_single_link(&meta) || meta.len() != expected_size {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "cached image metadata mismatch",
         ));
     }
-    let mut bytes = Vec::with_capacity(expected_size as usize);
+    let mut bytes = Vec::with_capacity(usize::try_from(expected_size).unwrap_or_default());
     file.read_to_end(&mut bytes)?;
     let after = file.metadata()?;
-    if bytes.len() as i64 != expected_size || after.len() != meta.len() {
+    if bytes.len() as u64 != expected_size || after.len() != meta.len() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "cached image changed while reading",
@@ -443,10 +479,15 @@ pub fn read_verified(root: &Path, id: i64, expected_size: i64) -> io::Result<Vec
 
 /// Reads a cache file using its on-disk size rather than SQLite metadata. This is
 /// used by offline repair after a crash between atomic replacement and DB update.
+///
+/// # Errors
+///
+/// Fails when the file is not a single-link regular file within `MAX_IMAGE_BYTES`,
+/// it changes while being read, or it cannot be read.
 pub fn read_current_verified(root: &Path, id: i64) -> io::Result<Vec<u8>> {
     let path = absolute_path(root, id);
     validate_directory(root)?;
-    validate_directory(path.parent().expect("cache path has parent"))?;
+    validate_directory(&root.join(shard_name(id)))?;
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -462,7 +503,7 @@ pub fn read_current_verified(root: &Path, id: i64) -> io::Result<Vec<u8>> {
             "cached image is not a valid single-link regular file",
         ));
     }
-    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    let mut bytes = Vec::with_capacity(usize::try_from(meta.len()).unwrap_or_default());
     file.read_to_end(&mut bytes)?;
     let after = file.metadata()?;
     if bytes.len() as u64 != meta.len() || after.len() != meta.len() {
@@ -487,6 +528,11 @@ pub struct BulkResizeReport {
 
 /// Processes every filesystem-backed image cache row. Each file publication and
 /// each metadata update is individually durable, making the operation rerunnable.
+///
+/// # Errors
+///
+/// Returns the database error when the cache rows cannot be listed; per-row failures are
+/// collected in the report instead.
 pub fn resize_cache(
     conn: &Connection,
     root: &Path,
@@ -527,7 +573,7 @@ pub fn resize_cache(
         };
 
         let transformed = resize_image(original, mime);
-        let actual_size = transformed.bytes.len() as i64;
+        let actual_size = crate::db::to_i64(transformed.bytes.len());
         let mut actions = Vec::new();
         if transformed.resized {
             if dry_run {
@@ -556,8 +602,7 @@ pub fn resize_cache(
             if dry_run {
                 report.metadata_repaired += 1;
                 actions.push(format!(
-                    "would repair metadata {:?} -> {actual_size}",
-                    recorded_size
+                    "would repair metadata {recorded_size:?} -> {actual_size}"
                 ));
             }
             if !dry_run {
@@ -568,8 +613,7 @@ pub fn resize_cache(
                     Ok(_) => {
                         report.metadata_repaired += 1;
                         actions.push(format!(
-                            "repaired metadata {:?} -> {actual_size}",
-                            recorded_size
+                            "repaired metadata {recorded_size:?} -> {actual_size}"
                         ));
                     }
                     Err(error) => {
@@ -763,7 +807,7 @@ mod tests {
         );
         assert_eq!(read_current_verified(&root, 2).unwrap(), small);
         for id in 1..=3 {
-            let disk_size = read_current_verified(&root, id).unwrap().len() as i64;
+            let disk_size = crate::db::to_i64(read_current_verified(&root, id).unwrap().len());
             let db_size = conn
                 .query_row("SELECT file_size FROM image_cache WHERE id=?1", [id], |r| {
                     r.get::<_, i64>(0)
@@ -798,6 +842,25 @@ mod tests {
         write_verified(&root, 1, b"abc").unwrap();
         assert!(write_verified(&root, 1, b"xyz").is_err());
         assert_eq!(read_verified(&root, 1, 3).unwrap(), b"abc");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sizes_outside_the_cache_limit_are_rejected_before_reading() {
+        let root = test_root("image-cache-size-range");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
+        write_verified(&root, 1, b"abc").unwrap();
+        let too_large = i64::try_from(MAX_IMAGE_BYTES).unwrap() + 1;
+        for size in [-1, too_large] {
+            let error = read_verified(&root, 1, size).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert_eq!(error.to_string(), "invalid cached image size");
+        }
+        assert!(!audit_file(&root, 1, None).unwrap());
+        assert!(!audit_file(&root, 1, Some(-1)).unwrap());
+        assert!(!audit_file(&root, 1, Some(4)).unwrap());
+        assert!(audit_file(&root, 1, Some(3)).unwrap());
         let _ = fs::remove_dir_all(root);
     }
 

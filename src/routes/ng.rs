@@ -2,7 +2,7 @@
 //!
 //! NGID and NG word storage is scoped by `(server, board)` and never tied to a thread:
 //! a rule applies to every thread of that board (already cached or fetched later) and to
-//! no other board. NG filtering is applied client-side (ThreadView) — the server always
+//! no other board. NG filtering is applied client-side (`ThreadView`) — the server always
 //! returns full res arrays and the client hides NG posts in the display layer.
 //!
 //! NG word `kind` is `"text"` (literal substring of the displayed body) or `"regex"`.
@@ -14,13 +14,13 @@
 //! The server therefore validates only what it can own: the scope, the kind, and that
 //! the pattern is non-empty.
 //!
-//! NG wacchoi storage is scoped by (suffix, board, week_key): `ng_wacchoi` table.
-//! The week_key is a Thursday-anchored week identifier computed client-side and stored
+//! NG wacchoi storage is scoped by (suffix, board, `week_key)`: `ng_wacchoi` table.
+//! The `week_key` is a Thursday-anchored week identifier computed client-side and stored
 //! as an opaque string — the server validates but does not interpret it.
 //!
 //! ID search (`GET /api/boards/{server}/{board}/id-search?id=xxx`) scans locally-cached
 //! dat blobs for a given ID and returns matching posts grouped by thread. No 5ch access
-//! is performed — this is a pure in-memory scan of the existing dat_blobs cache.
+//! is performed — this is a pure in-memory scan of the existing `dat_blobs` cache.
 //!
 //! Wacchoi search (`GET /api/boards/{server}/{board}/wacchoi-search?suffix=zzzz`) scans
 //! locally-cached dat blobs for posts whose wacchoi suffix matches, grouped by thread.
@@ -31,6 +31,7 @@ use crate::fivech::url::validate_board;
 use crate::models::{
     AddNgRequest, AddNgWacchoiRequest, AddNgWordRequest, IdSearchThread, NgId, NgWacchoi, NgWord,
 };
+use crate::state::lock;
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::routing::{delete, get};
@@ -43,12 +44,14 @@ use std::sync::LazyLock;
 
 // Allowlist for ng_id values: alphanumeric + common base64/ID symbols.
 // Prevents PRIMARY KEY pollution and log injection without being overly restrictive.
-static NG_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9+/._=\-]+$").unwrap());
+static NG_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z0-9+/._=\-]+$").expect("hard-coded regex is valid"));
 
 // Wacchoi suffix: exactly 4 chars from [\w+] (alphanumeric, underscore, or '+').
 // Matches the last 4 chars of the xxyy-zzzz token (after the hyphen).
 // '+' appears in some wacchoi tokens so the character class includes it.
-static SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\w+]{4}$").unwrap());
+static SUFFIX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\w+]{4}$").expect("hard-coded regex is valid"));
 
 // Wacchoi token in a name string: [\w+]{4}-[\w+]{4} inside parentheses.
 // Mirrors client/src/lib/wacchoi.js WACCHOI_RE (which uses JS lookbehind/lookahead;
@@ -63,8 +66,10 @@ static SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\w+]{4}$").u
 //   (?:.*?[^\w+])?  -- optional: any prefix ending with a non-[\w+] separator
 //   ([\w+]{4}-[\w+]{4})  -- the token (captured as group 1; group 2 = suffix)
 //   (?:[^\w+].*?)?  -- optional: any suffix starting with a non-[\w+] separator
-static WACCHOI_NAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\((?:.*?[^\w+])?([\w+]{4}-([\w+]{4}))(?:[^\w+].*?)?\)").unwrap());
+static WACCHOI_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\((?:.*?[^\w+])?([\w+]{4}-([\w+]{4}))(?:[^\w+].*?)?\)")
+        .expect("hard-coded regex is valid")
+});
 
 // Maximum posts per thread in search results (DoS guard).
 const SEARCH_MAX_PER_THREAD: usize = 50;
@@ -88,7 +93,7 @@ pub fn routes() -> Router<AppState> {
 /// List all registered NGID entries with their (server, board) scope
 /// (unordered; sorting and per-board filtering are the frontend's job).
 async fn list_ng(State(state): State<AppState>) -> Result<Json<Vec<NgId>>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let mut stmt = conn.prepare("SELECT server, board, ng_id, created_at FROM ng_ids")?;
     let rows = stmt
         .query_map([], |row| {
@@ -110,7 +115,7 @@ async fn add_ng(
 ) -> Result<Json<Value>, AppError> {
     validate_board(&req.server, &req.board)?;
     validate_ng_id(&req.ng_id)?;
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     conn.execute(
         "INSERT OR IGNORE INTO ng_ids (server, board, ng_id) VALUES (?1, ?2, ?3)",
         params![req.server, req.board, req.ng_id],
@@ -134,7 +139,7 @@ async fn remove_ng(
 ) -> Result<Json<Value>, AppError> {
     validate_board(&q.server, &q.board)?;
     validate_ng_id(&q.ng_id)?;
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let n = conn.execute(
         "DELETE FROM ng_ids WHERE server=?1 AND board=?2 AND ng_id=?3",
         params![q.server, q.board, q.ng_id],
@@ -150,7 +155,7 @@ async fn remove_ng(
 /// List all registered NG word entries with their (server, board) scope
 /// (unordered; sorting and per-board filtering are the frontend's job).
 async fn list_ng_words(State(state): State<AppState>) -> Result<Json<Vec<NgWord>>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let mut stmt = conn.prepare("SELECT server, board, kind, pattern, created_at FROM ng_words")?;
     let rows = stmt
         .query_map([], |row| {
@@ -173,7 +178,7 @@ async fn add_ng_word(
 ) -> Result<Json<Value>, AppError> {
     validate_board(&req.server, &req.board)?;
     validate_ng_word(&req.kind, &req.pattern)?;
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     conn.execute(
         "INSERT OR IGNORE INTO ng_words (server, board, kind, pattern) VALUES (?1, ?2, ?3, ?4)",
         params![req.server, req.board, req.kind, req.pattern],
@@ -196,7 +201,7 @@ async fn remove_ng_word(
 ) -> Result<Json<Value>, AppError> {
     validate_board(&q.server, &q.board)?;
     validate_ng_word(&q.kind, &q.pattern)?;
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let n = conn.execute(
         "DELETE FROM ng_words WHERE server=?1 AND board=?2 AND kind=?3 AND pattern=?4",
         params![q.server, q.board, q.kind, q.pattern],
@@ -233,8 +238,8 @@ async fn id_search(
 
 /// Scans all locally-cached dat blobs for the given `server`/`board` and returns posts
 /// matching `keep`, grouped by thread (only threads with ≥1 match). Per-thread results are
-/// capped at `SEARCH_MAX_PER_THREAD` (DoS guard) and bodies are HTML-sanitized for `{@html}`.
-/// No 5ch access is performed — pure scan of the existing dat_blobs cache.
+/// capped at `SEARCH_MAX_PER_THREAD` (`DoS` guard) and bodies are HTML-sanitized for `{@html}`.
+/// No 5ch access is performed — pure scan of the existing `dat_blobs` cache.
 fn board_post_search(
     state: &AppState,
     server: &str,
@@ -243,7 +248,7 @@ fn board_post_search(
 ) -> Result<Vec<IdSearchThread>, AppError> {
     // Collect favorites for this board (all statuses — dead threads still have cached blobs).
     let thread_rows: Vec<(String, String)> = {
-        let conn = state.db.lock().unwrap();
+        let conn = lock(&state.db);
         let mut stmt =
             conn.prepare("SELECT thread_id, title FROM favorites WHERE server=?1 AND board=?2")?;
         let rows = stmt
@@ -255,7 +260,7 @@ fn board_post_search(
     let mut results: Vec<IdSearchThread> = Vec::new();
     for (thread_id, title) in thread_rows {
         let posts = {
-            let conn = state.db.lock().unwrap();
+            let conn = lock(&state.db);
             read_blob_posts(&conn, server, board, &thread_id)?
         };
 
@@ -288,7 +293,7 @@ fn board_post_search(
 
 /// List all registered NG wacchoi entries.
 async fn list_ng_wacchoi(State(state): State<AppState>) -> Result<Json<Vec<NgWacchoi>>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let mut stmt =
         conn.prepare("SELECT suffix, board, week_key, wacchoi, created_at FROM ng_wacchoi")?;
     let rows = stmt
@@ -315,7 +320,7 @@ async fn add_ng_wacchoi(
     // board validation reuses the same SEGMENT_RE as validate_board (no thread_id needed).
     crate::fivech::url::validate_board("dummy", &req.board)
         .map_err(|_| AppError::BadRequest(format!("invalid board: {}", req.board)))?;
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     conn.execute(
         "INSERT OR IGNORE INTO ng_wacchoi (suffix, board, week_key, wacchoi)
          VALUES (?1, ?2, ?3, ?4)",
@@ -340,7 +345,7 @@ async fn remove_ng_wacchoi(
     validate_week_key(&q.week_key)?;
     crate::fivech::url::validate_board("dummy", &q.board)
         .map_err(|_| AppError::BadRequest(format!("invalid board: {}", q.board)))?;
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let n = conn.execute(
         "DELETE FROM ng_wacchoi WHERE suffix=?1 AND board=?2 AND week_key=?3",
         params![q.suffix, q.board, q.week_key],
@@ -376,7 +381,7 @@ async fn wacchoi_search(
 
 /// Extracts the wacchoi suffix (the 4 chars after the hyphen in xxyy-zzzz) from a raw
 /// dat name string. The name may still contain HTML tags like </b>…<b> (dat format).
-/// The WACCHOI_NAME_RE regex targets the parenthesised token, so tags outside the
+/// The `WACCHOI_NAME_RE` regex targets the parenthesised token, so tags outside the
 /// parentheses are harmless — no tag stripping needed before matching.
 /// Returns None when no wacchoi token is present.
 fn extract_wacchoi_suffix(name: &str) -> Option<String> {
@@ -386,7 +391,7 @@ fn extract_wacchoi_suffix(name: &str) -> Option<String> {
         .map(|m| m.as_str().to_string())
 }
 
-/// Validates an ng_id value: must be non-empty and match the allowlist pattern.
+/// Validates an `ng_id` value: must be non-empty and match the allowlist pattern.
 fn validate_ng_id(id: &str) -> Result<(), AppError> {
     if id.is_empty() || !NG_ID_RE.is_match(id) {
         return Err(AppError::BadRequest(format!("invalid ng_id: {id}")));
@@ -420,7 +425,7 @@ fn validate_suffix(suffix: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Validates a week_key: must be non-empty, not contain control characters, and be
+/// Validates a `week_key`: must be non-empty, not contain control characters, and be
 /// at most 64 characters (the client generates a date-based string like "2026/06/11").
 fn validate_week_key(week_key: &str) -> Result<(), AppError> {
     if week_key.is_empty() || week_key.len() > 64 {
@@ -428,7 +433,7 @@ fn validate_week_key(week_key: &str) -> Result<(), AppError> {
             "invalid week_key: {week_key}"
         )));
     }
-    if week_key.chars().any(|c| c.is_control()) {
+    if week_key.chars().any(char::is_control) {
         return Err(AppError::BadRequest(format!(
             "invalid week_key: {week_key}"
         )));

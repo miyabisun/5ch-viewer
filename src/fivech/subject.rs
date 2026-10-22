@@ -6,8 +6,9 @@ use std::sync::LazyLock;
 
 // Since the greedy `.+` consumes up to the last `(`, parentheses within the
 // title are treated as part of the title (only the trailing `(number)` is resCount).
-static SUBJECT_LINE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(\d+)\.dat<>(.+)\((\d+)\)$").unwrap());
+static SUBJECT_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(\d+)\.dat<>(.+)\((\d+)\)$").expect("hard-coded regex is valid")
+});
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubjectEntry {

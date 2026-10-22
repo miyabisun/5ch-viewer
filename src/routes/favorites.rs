@@ -10,6 +10,7 @@ use crate::models::{
     AddRequest, ArchivedRequest, DatResponse, Favorite, PostRequest, ProgressRequest,
     RatingRequest, ReloadResponse,
 };
+use crate::state::lock;
 use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::routing::{delete, get, patch, post};
@@ -89,17 +90,17 @@ fn list_favorites(conn: &rusqlite::Connection, archived: i64) -> Result<Vec<Favo
 
 /// List active favorites.
 async fn list(State(state): State<AppState>) -> Result<Json<Vec<Favorite>>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     Ok(Json(list_favorites(&conn, 0)?))
 }
 
 /// List archived favorites.
 async fn list_archives(State(state): State<AppState>) -> Result<Json<Vec<Favorite>>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     Ok(Json(list_favorites(&conn, 1)?))
 }
 
-/// Add. Accepts a direct url or server/board/thread_id, and fetches board_name from SETTING.TXT.
+/// Add. Accepts a direct url or `server/board/thread_id`, and fetches `board_name` from SETTING.TXT.
 async fn add(
     State(state): State<AppState>,
     Json(req): Json<AddRequest>,
@@ -109,7 +110,7 @@ async fn add(
         http::fetch_board_name(&state.http, &state.config.fivech_base_url, &server, &board).await;
     let title = req.title.unwrap_or_default();
     {
-        let conn = state.db.lock().unwrap();
+        let conn = lock(&state.db);
         conn.execute(
             "INSERT OR IGNORE INTO favorites (server, board, thread_id, board_name, title)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -146,7 +147,7 @@ async fn remove(
     Path((server, board, thread_id)): ThreadPath,
 ) -> Result<Json<Value>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let n = conn.execute(
         "DELETE FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
         params![server, board, thread_id],
@@ -157,13 +158,13 @@ async fn remove(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Read position: GET the saved read_res for a thread (viewer semantics).
+/// Read position: GET the saved `read_res` for a thread (viewer semantics).
 async fn get_progress(
     State(state): State<AppState>,
     Path((server, board, thread_id)): ThreadPath,
 ) -> Result<Json<Value>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let read_res: i64 = conn
         .query_row(
             "SELECT read_res FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -175,7 +176,7 @@ async fn get_progress(
     Ok(Json(json!({ "read_res": read_res })))
 }
 
-/// Read position: POST saves read_res. POST (not PATCH) so the client can use
+/// Read position: POST saves `read_res`. POST (not PATCH) so the client can use
 /// navigator.sendBeacon on unload, which only issues POST.
 async fn post_progress(
     State(state): State<AppState>,
@@ -183,7 +184,7 @@ async fn post_progress(
     Json(req): Json<ProgressRequest>,
 ) -> Result<Json<Value>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let n = save_progress(&conn, &server, &board, &thread_id, req.read_res)?;
     if n == 0 {
         return Err(AppError::NotFound("favorite not found".into()));
@@ -191,8 +192,8 @@ async fn post_progress(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Saves the read position, monotonically. read_res is the max res number the viewer
-/// has read; MAX() guards against stale writes from another device (an open tab that
+/// Saves the read position, monotonically. `read_res` is the max res number the viewer
+/// has read; `MAX()` guards against stale writes from another device (an open tab that
 /// debounces/beacons a lower value) rolling the position backward. Returns the number
 /// of updated rows (0 = not found).
 fn save_progress(
@@ -218,7 +219,7 @@ async fn patch_rating(
     if !(0..=5).contains(&req.rating) {
         return Err(AppError::BadRequest("rating は 0〜5".into()));
     }
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let n = conn.execute(
         "UPDATE favorites SET rating=?4, updated_at=strftime('%s','now')
          WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -236,8 +237,8 @@ async fn patch_archived(
     Json(req): Json<ArchivedRequest>,
 ) -> Result<Json<Value>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
-    let archived: i64 = if req.archived { 1 } else { 0 };
-    let conn = state.db.lock().unwrap();
+    let archived: i64 = i64::from(req.archived);
+    let conn = lock(&state.db);
     let n = set_archived(&conn, &server, &board, &thread_id, archived)?;
     if n == 0 {
         return Err(AppError::NotFound("favorite not found".into()));
@@ -266,7 +267,7 @@ async fn get_dat(
     Path((server, board, thread_id)): ThreadPath,
 ) -> Result<Json<DatResponse>, AppError> {
     validate_ref(&server, &board, &thread_id)?;
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let (title, res_count, read_res, status) = conn
         .query_row(
             "SELECT title, res_count, read_res, status FROM favorites
@@ -315,7 +316,7 @@ async fn get_dat(
 ///
 /// Uses a HEAD request to check the dat's Content-Length instead of fetching subject.txt,
 /// so only one dat URL is hit (lightweight). If Content-Length matches the stored
-/// dat_bytes the dat is unchanged and the fetch is skipped. Any mismatch (or HEAD failure)
+/// `dat_bytes` the dat is unchanged and the fetch is skipped. Any mismatch (or HEAD failure)
 /// triggers a full GET. This also means writes are detected immediately after posting
 /// without needing a `?force` parameter.
 async fn reload(
@@ -328,7 +329,7 @@ async fn reload(
     //    dat_bytes=0 means the column was not yet populated (migration or first fetch);
     //    treat it as "unknown" and always fall through to a full GET.
     let stored_dat_bytes: i64 = {
-        let conn = state.db.lock().unwrap();
+        let conn = lock(&state.db);
         conn.query_row(
             "SELECT COALESCE(db.dat_bytes, 0)
              FROM favorites f
@@ -355,7 +356,7 @@ async fn reload(
 
     // 3. Gate: skip the full GET when we have a known stored size AND HEAD confirms no change.
     if stored_dat_bytes > 0 && head_content_length == Some(stored_dat_bytes) {
-        let conn = state.db.lock().unwrap();
+        let conn = lock(&state.db);
         conn.execute(
             "UPDATE favorites SET updated_at=strftime('%s','now')
              WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -375,28 +376,27 @@ async fn reload(
 
     // 4. Fetch the entire dat (await without holding the lock).
     //    Claim the dat so a concurrent board prefetch does not double-download it.
-    let updated = match state.claim_dat(&(server.clone(), board.clone(), thread_id.clone())) {
-        Some(_guard) => {
-            let fetch = http::fetch_dat(
-                &state.http,
-                &state.config.fivech_base_url,
-                &server,
-                &board,
-                &thread_id,
-            )
-            .await?;
-            // Persist: full UTF-8 TEXT replace + metadata recompute, or mark dead on Gone.
-            refresh::persist_fetch(&state, &server, &board, &thread_id, fetch)?
-        }
-        None => {
-            tracing::info!(
-                "[reload] {server}/{board}/{thread_id}: dat already in flight (prefetch), skipping duplicate fetch"
-            );
-            false
-        }
+    let updated = if let Some(_guard) =
+        state.claim_dat(&(server.clone(), board.clone(), thread_id.clone()))
+    {
+        let fetch = http::fetch_dat(
+            &state.http,
+            &state.config.fivech_base_url,
+            &server,
+            &board,
+            &thread_id,
+        )
+        .await?;
+        // Persist: full UTF-8 TEXT replace + metadata recompute, or mark dead on Gone.
+        refresh::persist_fetch(&state, &server, &board, &thread_id, fetch)?
+    } else {
+        tracing::info!(
+            "[reload] {server}/{board}/{thread_id}: dat already in flight (prefetch), skipping duplicate fetch"
+        );
+        false
     };
 
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let (res_count, read_res, status) = read_meta(&conn, &server, &board, &thread_id)?;
     Ok(Json(ReloadResponse {
         res_count,
@@ -406,10 +406,10 @@ async fn reload(
     }))
 }
 
-/// Posts a message to 5ch and saves the result in own_posts.
+/// Posts a message to 5ch and saves the result in `own_posts`.
 ///
 /// Does not require the thread to be in favorites (a user can post without adding).
-/// SSRF validation is delegated to post::post_message (called first).
+/// SSRF validation is delegated to `post::post_message` (called first).
 async fn post_message(
     State(state): State<AppState>,
     Path((server, board, thread_id)): ThreadPath,
@@ -437,7 +437,7 @@ async fn post_message(
 
     // Persist the own post (no FK to favorites — user can post to any thread).
     {
-        let conn = state.db.lock().unwrap();
+        let conn = lock(&state.db);
         conn.execute(
             "INSERT OR REPLACE INTO own_posts
              (server, board, thread_id, res_num, body, name, mail, poster_id)
@@ -464,7 +464,7 @@ async fn post_message(
 
 /// Manual "find next thread" rescue: fetches the board's subject.txt once and, if the next
 /// thread (Part number +1) is present, registers it (INSERT OR IGNORE) inheriting the source
-/// thread's rating and board_name. This is the user-initiated counterpart to the background
+/// thread's rating and `board_name`. This is the user-initiated counterpart to the background
 /// sync auto-add; it exists because a thread can go dead before its successor is posted, after
 /// which background polling stops. dead/archived source threads are eligible (that is the
 /// whole point of the rescue), so status/archived are not filtered here.
@@ -479,7 +479,7 @@ async fn find_next(
 
     // Source favorite: title drives the search; rating/board_name are inherited on insert.
     let (title, rating, board_name): (String, i64, String) = {
-        let conn = state.db.lock().unwrap();
+        let conn = lock(&state.db);
         conn.query_row(
             "SELECT title, rating, board_name FROM favorites
              WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -494,7 +494,7 @@ async fn find_next(
         http::fetch_subject(&state.http, &state.config.fivech_base_url, &server, &board).await?;
 
     let next = {
-        let conn = state.db.lock().unwrap();
+        let conn = lock(&state.db);
         match register_next_thread(
             &conn,
             &server,
@@ -522,9 +522,9 @@ async fn find_next(
 /// inheriting `rating` and `board_name` (INSERT OR IGNORE — no duplicates). Returns the matched
 /// next thread, or None when the successor is not yet posted.
 ///
-/// res_count is intentionally omitted from the INSERT (schema DEFAULT 0): favorites.res_count
+/// `res_count` is intentionally omitted from the INSERT (schema DEFAULT 0): `favorites.res_count`
 /// only ever reflects the stored blob's real post count, so the next thread enters at 0 and
-/// gains a real count once the poll downloads its dat and persist_fetch writes the blob count.
+/// gains a real count once the poll downloads its dat and `persist_fetch` writes the blob count.
 /// Seeding subject's count here would violate that invariant.
 fn register_next_thread(
     conn: &rusqlite::Connection,
@@ -556,7 +556,7 @@ fn register_next_thread(
 }
 
 /// Reads the raw dat text and returns URLs whose mosaic flag is set to 1.
-/// Extracts image URLs from the dat, then queries image_cache for mosaic=1 matches.
+/// Extracts image URLs from the dat, then queries `image_cache` for mosaic=1 matches.
 fn query_mosaic_urls(
     conn: &rusqlite::Connection,
     server: &str,
@@ -572,9 +572,8 @@ fn query_mosaic_urls(
         )
         .optional()?;
 
-    let raw = match raw {
-        Some(r) => r,
-        None => return Ok(vec![]),
+    let Some(raw) = raw else {
+        return Ok(vec![]);
     };
 
     let urls = extract_image_urls(&raw);
@@ -599,7 +598,7 @@ fn query_mosaic_urls(
     Ok(mosaic_urls)
 }
 
-/// Reads the favorite's current res_count / read_res / status.
+/// Reads the favorite's current `res_count` / `read_res` / status.
 fn read_meta(
     conn: &rusqlite::Connection,
     server: &str,
@@ -656,9 +655,9 @@ mod tests {
         .unwrap()
     }
 
-    /// Verifies that replace_blob stores the dat as TEXT (UTF-8) and that it parses correctly
+    /// Verifies that `replace_blob` stores the dat as TEXT (UTF-8) and that it parses correctly
     /// without any Shift-JIS decoding step. The column type must be "text", and reading via
-    /// r.get::<String> must succeed.
+    /// `r.get::`<String> must succeed.
     #[test]
     fn replace_blob_stores_text_and_parses() {
         let conn = setup();
@@ -689,9 +688,9 @@ mod tests {
         assert_eq!(res[1].body, "本文2");
     }
 
-    /// INVARIANT: register_next_thread (the "find next thread" rescue's insert) registers the
-    /// next thread with res_count=0 (schema default), NOT the subject's reported count. res_count
-    /// only ever reflects the stored blob; the poll downloads the dat and persist_fetch writes
+    /// INVARIANT: `register_next_thread` (the "find next thread" rescue's insert) registers the
+    /// next thread with `res_count=0` (schema default), NOT the subject's reported count. `res_count`
+    /// only ever reflects the stored blob; the poll downloads the dat and `persist_fetch` writes
     /// the real count later.
     #[test]
     fn register_next_thread_uses_zero_res_count() {
@@ -747,7 +746,7 @@ mod tests {
         assert_eq!(rating, 4, "next thread must inherit the source rating");
     }
 
-    /// Reads the stored read_res of the fixture favorite.
+    /// Reads the stored `read_res` of the fixture favorite.
     fn read_read_res(conn: &Connection) -> i64 {
         conn.query_row(
             "SELECT read_res FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -757,7 +756,7 @@ mod tests {
         .unwrap()
     }
 
-    /// save_progress is monotonic: a stale, lower read_res (e.g. from another device's
+    /// `save_progress` is monotonic: a stale, lower `read_res` (e.g. from another device's
     /// open tab) must NOT roll the saved position backward.
     #[test]
     fn save_progress_does_not_regress() {
@@ -776,7 +775,7 @@ mod tests {
         assert_eq!(read_read_res(&conn), 40);
     }
 
-    /// From the initial state (read_res=0) save_progress advances normally.
+    /// From the initial state (`read_res=0`) `save_progress` advances normally.
     #[test]
     fn save_progress_advances_from_zero() {
         let conn = setup();
@@ -796,8 +795,8 @@ mod tests {
     }
 
     /// Regression: when subject reports no new posts, the reload skip path must NOT recompute
-    /// status. A thread that turned 'warned' by res_count must keep 'warned' across no-growth
-    /// reloads. The skip path only touches updated_at, so the stored status is preserved.
+    /// status. A thread that turned 'warned' by `res_count` must keep 'warned' across no-growth
+    /// reloads. The skip path only touches `updated_at`, so the stored status is preserved.
     #[test]
     fn skip_path_preserves_res_count_derived_status() {
         let conn = setup();
@@ -847,7 +846,7 @@ mod tests {
         assert_eq!(rows[0].thread_id, THREAD);
     }
 
-    /// list_archives equivalent: only archived=1 favorites are returned.
+    /// `list_archives` equivalent: only archived=1 favorites are returned.
     #[test]
     fn list_archives_returns_only_archived() {
         let conn = setup();
@@ -876,7 +875,7 @@ mod tests {
         assert_eq!(rows[0].thread_id, THREAD);
     }
 
-    /// patch_archived (via set_archived, the function the handler calls): archived
+    /// `patch_archived` (via `set_archived`, the function the handler calls): archived
     /// toggles true→false→true without error.
     #[test]
     fn patch_archived_toggles_bidirectionally() {
@@ -953,9 +952,9 @@ mod tests {
         assert_eq!(res[0].body, "新本文");
     }
 
-    /// get_dat own-post marking: after INSERT into own_posts, the matching res must have
+    /// `get_dat` own-post marking: after INSERT into `own_posts`, the matching res must have
     /// r.own = true and all other reses must have r.own = false.
-    /// This directly tests the query + loop in the get_dat handler (without HTTP).
+    /// This directly tests the query + loop in the `get_dat` handler (without HTTP).
     #[test]
     fn get_dat_marks_own_posts() {
         let conn = setup();
@@ -994,7 +993,7 @@ mod tests {
         assert!(!res[2].own, "res 3 must NOT be own");
     }
 
-    /// Inserting the same own_post twice (INSERT OR REPLACE) must not create duplicates.
+    /// Inserting the same `own_post` twice (INSERT OR REPLACE) must not create duplicates.
     #[test]
     fn own_post_insert_or_replace_is_idempotent() {
         let conn = setup();

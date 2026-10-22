@@ -1,13 +1,14 @@
 //! Background monitoring. Per board it runs the SAME board-refresh path as the manual refresh
 //! button (one subject.txt read + a dat DL for every thread that grew past its stored blob),
 //! then uses the fetched subject entries to determine end-of-thread and auto-add the next
-//! thread. res_count is written only by persist_fetch (blob-derived); this poller never writes
-//! res_count from subject.txt — see the invariant note on process_thread.
+//! thread. `res_count` is written only by `persist_fetch` (blob-derived); this poller never writes
+//! `res_count` from subject.txt — see the invariant note on `process_thread`.
 
 use crate::error::AppError;
 use crate::fivech::next_thread::find_next_thread;
 use crate::fivech::refresh::{self, compute_status};
 use crate::fivech::subject::SubjectEntry;
+use crate::state::lock;
 use crate::state::AppState;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -17,12 +18,12 @@ use std::time::Duration;
 // so total 5ch access is lower. 3 min keeps unread-reflection latency practical while bounding
 // per-board subject reads. tokio's interval fires the first tick immediately, so a poll runs at
 // startup and dats are already warm by the first visit.
-const INTERVAL: Duration = Duration::from_secs(180);
+const INTERVAL: Duration = Duration::from_mins(3);
 
-/// Watch query shared by run_once() and its tests.
+/// Watch query shared by `run_once()` and its tests.
 ///
 /// Non-archived favorites only. active/warned are always watched. dead threads keep being
-/// watched — but for next-thread search ONLY (see try_add_next_thread) — for a bounded 7-day
+/// watched — but for next-thread search ONLY (see `try_add_next_thread`) — for a bounded 7-day
 /// window (604800s) after their last real update. This closes the "next thread posted after
 /// the current thread went dead" race without polling dead-only boards forever (5ch access
 /// policy). Once the next thread is registered it enters as an active row and keeps the board
@@ -55,7 +56,7 @@ struct Watch {
 
 async fn run_once(state: &AppState) -> Result<(), AppError> {
     let watches: Vec<Watch> = {
-        let conn = state.db.lock().unwrap();
+        let conn = lock(&state.db);
         let mut stmt = conn.prepare(WATCH_QUERY)?;
         let rows = stmt
             .query_map([], |r| {
@@ -126,23 +127,20 @@ fn process_thread(
     // just above). Because a growing subject count means the blob grows too, the grown dat is
     // fetched and persist_fetch stamps the blob-derived res_count/status/title. This is what
     // kills the "res_count drifts from the blob" class of bug by construction.
-    let in_danger = match found {
-        Some(e) => {
-            let status = compute_status(e.res_count);
-            // Enter danger zone at warned (res>=980), not only at dead.
-            status == "warned" || status == "dead"
+    let in_danger = if let Some(e) = found {
+        let status = compute_status(e.res_count);
+        // Enter danger zone at warned (res>=980), not only at dead.
+        status == "warned" || status == "dead"
+    } else {
+        let conn = lock(&state.db);
+        if let Err(err) = conn.execute(
+            "UPDATE favorites SET status='dead', updated_at=strftime('%s','now')
+             WHERE server=?1 AND board=?2 AND thread_id=?3",
+            rusqlite::params![server, board, w.thread_id],
+        ) {
+            tracing::error!("[sync] mark dead {server}/{board}/{}: {err}", w.thread_id);
         }
-        None => {
-            let conn = state.db.lock().unwrap();
-            if let Err(err) = conn.execute(
-                "UPDATE favorites SET status='dead', updated_at=strftime('%s','now')
-                 WHERE server=?1 AND board=?2 AND thread_id=?3",
-                rusqlite::params![server, board, w.thread_id],
-            ) {
-                tracing::error!("[sync] mark dead {server}/{board}/{}: {err}", w.thread_id);
-            }
-            true
-        }
+        true
     };
 
     if !in_danger {
@@ -154,10 +152,10 @@ fn process_thread(
 }
 
 /// Finds and (if new) registers the next thread for `w` from the already-fetched subject
-/// entries. Shared by process_thread (active/warned) and the dead read-only path in run_once.
+/// entries. Shared by `process_thread` (active/warned) and the dead read-only path in `run_once`.
 /// Does a pure string match — no additional 5ch HTTP requests. None = next thread not yet
 /// posted; skip. Only writes the newly-inserted next-thread row; never mutates the `w` row
-/// (so the dead path stays read-only and never touches updated_at, keeping the 7-day window
+/// (so the dead path stays read-only and never touches `updated_at`, keeping the 7-day window
 /// bounded per the 5ch access policy).
 ///
 /// The search title prefers the DB-stored title, falling back to what subject.txt reports
@@ -169,21 +167,21 @@ fn try_add_next_thread(
     w: &Watch,
     entries: &[SubjectEntry],
 ) {
-    let title = if !w.title.is_empty() {
-        w.title.clone()
-    } else {
+    let title = if w.title.is_empty() {
         entries
             .iter()
             .find(|e| e.thread_id == w.thread_id)
             .map(|e| e.title.clone())
             .unwrap_or_default()
+    } else {
+        w.title.clone()
     };
     if title.is_empty() {
         return;
     }
 
     if let Some(next) = find_next_thread(&title, entries) {
-        let conn = state.db.lock().unwrap();
+        let conn = lock(&state.db);
         let board_name: String = conn
             .query_row(
                 "SELECT board_name FROM favorites WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -284,7 +282,7 @@ mod tests {
         .unwrap();
     }
 
-    /// WATCH_QUERY semantics: non-archived active/warned are always watched; a recently-dead
+    /// `WATCH_QUERY` semantics: non-archived active/warned are always watched; a recently-dead
     /// (updated within 7 days) non-archived thread is ALSO watched (for next-thread search);
     /// a stale dead thread (updated >7 days ago) and any archived thread are excluded.
     #[test]
@@ -320,8 +318,8 @@ mod tests {
 
     /// Archived threads that become dead must not trigger next-thread insertion.
     /// This verifies the root cause: because archived = 0 filter excludes them from
-    /// WATCH_QUERY, process_thread is never called for archived threads and the
-    /// INSERT OR IGNORE in find_next_thread cannot fire.
+    /// `WATCH_QUERY`, `process_thread` is never called for archived threads and the
+    /// INSERT OR IGNORE in `find_next_thread` cannot fire.
     #[test]
     fn archived_dead_thread_does_not_auto_add_next() {
         let conn = setup();
@@ -355,10 +353,10 @@ mod tests {
         );
     }
 
-    /// INVARIANT: process_thread must NOT write res_count from subject.txt. res_count reflects
-    /// the stored blob's real post count (persist_fetch is its only writer). A subject entry
-    /// showing more posts than the blob must not, on its own, move favorites.res_count — the dat
-    /// download + persist_fetch is what moves it. This is the design that kills the res_count/blob
+    /// INVARIANT: `process_thread` must NOT write `res_count` from subject.txt. `res_count` reflects
+    /// the stored blob's real post count (`persist_fetch` is its only writer). A subject entry
+    /// showing more posts than the blob must not, on its own, move `favorites.res_count` — the dat
+    /// download + `persist_fetch` is what moves it. This is the design that kills the `res_count/blob`
     /// drift class of bug (the old stuck-at-111 bug).
     #[test]
     fn process_thread_does_not_write_res_count_from_subject() {
@@ -397,9 +395,9 @@ mod tests {
         assert_eq!(res_count, 10, "subject count alone must not move res_count");
     }
 
-    /// INVARIANT: an auto-added next thread is registered with res_count=0 (schema default),
-    /// NOT the subject's reported count. Its res_count only becomes non-zero once the poll
-    /// downloads its dat and persist_fetch writes the blob count.
+    /// INVARIANT: an auto-added next thread is registered with `res_count=0` (schema default),
+    /// NOT the subject's reported count. Its `res_count` only becomes non-zero once the poll
+    /// downloads its dat and `persist_fetch` writes the blob count.
     #[test]
     fn process_thread_registers_next_thread_with_zero_res_count() {
         let conn = setup();
@@ -636,9 +634,9 @@ mod tests {
 
     // --- try_add_next_thread on a dead row (read-only) tests ---
 
-    /// try_add_next_thread must register the next thread (rating inherited) WITHOUT mutating the
-    /// dead source row's res_count / status / updated_at (read-only invariant; touching
-    /// updated_at would extend the 7-day watch window indefinitely).
+    /// `try_add_next_thread` must register the next thread (rating inherited) WITHOUT mutating the
+    /// dead source row's `res_count` / status / `updated_at` (read-only invariant; touching
+    /// `updated_at` would extend the 7-day watch window indefinitely).
     #[test]
     fn dead_row_search_adds_next_and_leaves_dead_row_untouched() {
         let conn = setup();
@@ -692,7 +690,7 @@ mod tests {
         assert_eq!(res_count, 1002, "dead row res_count must not change");
         assert_eq!(status, "dead", "dead row status must not change");
         assert_eq!(
-            updated_at, 1700000000,
+            updated_at, 1_700_000_000,
             "dead row updated_at must not change"
         );
     }

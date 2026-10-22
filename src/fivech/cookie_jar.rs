@@ -20,6 +20,9 @@ use url::Url;
 /// cookie lifetime observed in practice.
 const SESSION_COOKIE_MAX_AGE_DAYS: i64 = 3;
 
+/// A jar access panicked mid-update, so the stored cookies may be inconsistent.
+const POISONED: &str = "cookie jar lock holder panicked; the jar may be inconsistent";
+
 /// Thread-safe, serialisable cookie jar.
 pub struct PersistentJar {
     inner: RwLock<cookie_store::CookieStore>,
@@ -39,6 +42,7 @@ impl Default for PersistentJar {
 
 impl PersistentJar {
     /// Creates an empty jar.
+    #[must_use]
     pub fn new() -> Self {
         PersistentJar {
             inner: RwLock::new(cookie_store::CookieStore::new()),
@@ -48,6 +52,7 @@ impl PersistentJar {
     /// Loads a previously saved jar from `path`. Returns an empty jar on any I/O error
     /// (first run, deleted file, corrupt JSON) — the consequence is a one-time confirmation
     /// two-step on the next post, after which the fresh cookies are saved.
+    #[must_use]
     pub fn load(path: &str) -> Self {
         let store = std::fs::File::open(path)
             .ok()
@@ -65,6 +70,10 @@ impl PersistentJar {
     /// Serialises the jar to `path` (JSON). Called after a successful post so the
     /// acorn/MonaTicket cookies survive process restarts.
     /// Non-fatal: logs a warning and returns `false` on failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a previous jar access panicked while holding the lock.
     pub fn save(&self, path: &str) -> bool {
         // Ensure the parent directory exists (e.g. ./data/).
         if let Some(parent) = std::path::Path::new(path).parent() {
@@ -82,7 +91,7 @@ impl PersistentJar {
                 return false;
             }
         };
-        match cookie_store::serde::json::save(&self.inner.read().unwrap(), &mut f) {
+        match cookie_store::serde::json::save(&self.inner.read().expect(POISONED), &mut f) {
             Ok(()) => true,
             Err(e) => {
                 tracing::warn!("[cookie_jar] save {path}: json: {e}");
@@ -109,7 +118,7 @@ impl CookieStore for PersistentJar {
                 let mut c = std::str::from_utf8(val.as_bytes())
                     .ok()
                     .and_then(|s| cookie::Cookie::parse(s).ok())
-                    .map(|c| c.into_owned())?;
+                    .map(cookie_store::RawCookie::into_owned)?;
                 // If neither Expires nor Max-Age is set, the cookie is a session cookie.
                 // Apply a default Max-Age so the JSON serialiser keeps it.
                 if c.max_age().is_none() && c.expires().is_none() {
@@ -120,7 +129,7 @@ impl CookieStore for PersistentJar {
             .collect();
         self.inner
             .write()
-            .unwrap()
+            .expect(POISONED)
             .store_response_cookies(cookies.into_iter(), url);
     }
 
@@ -128,7 +137,7 @@ impl CookieStore for PersistentJar {
         let s = self
             .inner
             .read()
-            .unwrap()
+            .expect(POISONED)
             .get_request_values(url)
             .map(|(name, value)| format!("{name}={value}"))
             .collect::<Vec<_>>()
@@ -146,6 +155,7 @@ impl CookieStore for PersistentJar {
 pub type SharedJar = Arc<PersistentJar>;
 
 /// Builds a new `SharedJar`, loading from `path` when it exists.
+#[must_use]
 pub fn open(path: &str) -> SharedJar {
     Arc::new(PersistentJar::load(path))
 }
@@ -218,7 +228,7 @@ mod tests {
 
     /// Regression: `cookie_store::serde::json::save` silently drops session cookies
     /// (no Max-Age/Expires). The `set_cookies` implementation must patch such cookies
-    /// with a fixed Max-Age so they survive save()/load() round-trips.
+    /// with a fixed Max-Age so they survive `save()/load()` round-trips.
     ///
     /// This test simulates the real 5ch behaviour where `acorn` is sent as a session
     /// cookie without any Expires or Max-Age field.

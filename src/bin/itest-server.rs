@@ -7,21 +7,21 @@
 //!      reprogrammed at runtime via `POST /_control/thread`.
 //!   2. The real app router (`routes::build_router`) on an in-memory SQLite DB, with
 //!      `fivech_base_url` pointed at the mock so every dat/subject fetch hits it instead
-//!      of 5ch.io. SSRF validation, Monazilla UA, Shift_JIS and identity all stay live.
+//!      of 5ch.io. SSRF validation, Monazilla UA, `Shift_JIS` and identity all stay live.
 //!
-//! Ports (override via env): APP_PORT=3001, MOCK_PORT=3002. The DB is `:memory:` and a
+//! Ports (override via env): `APP_PORT=3001`, `MOCK_PORT=3002`. The DB is `:memory:` and a
 //! single shared Connection, so it survives for the whole process and is thrown away on
 //! exit — production data is never touched.
 //!
 //! Control protocol (used by tests via the app server's `/_control/*` proxy or directly
 //! against the mock):
-//!   POST /_control/thread  { server, board, thread_id, title, res_count, dat_posts, gone }
-//!     - res_count : number reported in subject.txt for this thread
-//!     - dat_posts : number of posts the dat returns (full body)
+//!   POST /_control/thread  { server, board, `thread_id`, title, `res_count`, `dat_posts`, gone }
+//!     - `res_count` : number reported in subject.txt for this thread
+//!     - `dat_posts` : number of posts the dat returns (full body)
 //!     - gone      : when true, the dat endpoint returns 404 (thread dropped)
-//!   POST /_control/seed-favorite { server, board, thread_id, title, res_count, blob_posts }
-//!     - inserts a favorite + a dat_blobs row with `blob_posts` posts, and sets the
-//!       favorite's metadata res_count to `res_count` (to reproduce drift: meta=117,
+//!   POST /_control/seed-favorite { server, board, `thread_id`, title, `res_count`, `blob_posts` }
+//!     - inserts a favorite + a `dat_blobs` row with `blob_posts` posts, and sets the
+//!       favorite's metadata `res_count` to `res_count` (to reproduce drift: meta=117,
 //!       blob=111).
 
 use axum::extract::{Path as AxPath, Query, State};
@@ -32,9 +32,11 @@ use axum::{Json, Router};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::sync::{Arc, Mutex};
 use viewer_of_5ch::config::Config;
-use viewer_of_5ch::state::AppState;
+use viewer_of_5ch::error::AppError;
+use viewer_of_5ch::state::{lock, AppState};
 use viewer_of_5ch::{db, routes};
 
 /// One thread's scenario inside the mock 5ch server.
@@ -62,7 +64,7 @@ struct MockInner {
     /// How many times /test/bbs.cgi has been called in the current test scenario.
     /// Used to implement the two-step confirmation flow:
     ///   call 1 → confirmation page (x-chx-error: 0000 Confirmation)
-    ///   call 2 → success (x-resnum: <next_res_num>)
+    ///   call 2 → success (x-resnum: <`next_res_num`>)
     bbs_cgi_call_count: u64,
     /// The res number that bbs.cgi will report on the second (success) call.
     bbs_cgi_next_res: i64,
@@ -85,7 +87,7 @@ fn sjis(text: &str) -> Vec<u8> {
 
 /// Builds a dat body as UTF-8 text with `n` posts. The first post carries the thread title.
 /// Optionally embeds `image_urls` into the body of post 1 (space-separated).
-/// Used for DB seeding (dat_blobs.raw is UTF-8 TEXT).
+/// Used for DB seeding (`dat_blobs.raw` is UTF-8 TEXT).
 fn build_dat_text(title: &str, n: i64) -> String {
     build_dat_text_with_images(title, n, &[])
 }
@@ -99,14 +101,16 @@ fn build_dat_text_with_images(title: &str, n: i64, image_urls: &[String]) -> Str
         } else {
             String::new()
         };
-        s.push_str(&format!(
-            "名無し<>sage<>2025/01/01 00:00 ID:abc{i}<>本文{i}{image_suffix}<>{title_field}\n"
-        ));
+        writeln!(
+            s,
+            "名無し<>sage<>2025/01/01 00:00 ID:abc{i}<>本文{i}{image_suffix}<>{title_field}"
+        )
+        .expect("writing into a String is infallible");
     }
     s
 }
 
-/// Builds a dat body as Shift_JIS bytes with `n` posts. The first post carries the thread title.
+/// Builds a dat body as `Shift_JIS` bytes with `n` posts. The first post carries the thread title.
 /// Used for mock HTTP responses that mimic the real 5ch server (which always returns Shift-JIS).
 fn build_dat_sjis(title: &str, n: i64) -> Vec<u8> {
     sjis(&build_dat_text(title, n))
@@ -142,14 +146,12 @@ struct SeedCtl {
 // ---- mock 5ch handlers -----------------------------------------------------
 
 async fn mock_subject(State(mock): State<MockState>, AxPath(board): AxPath<String>) -> Response {
-    let mut inner = mock.lock().unwrap();
+    let mut inner = lock(&mock);
     *inner.subject_hits.entry(board.clone()).or_insert(0) += 1;
     let mut lines = String::new();
     for t in inner.threads.values().filter(|t| t.board == board) {
-        lines.push_str(&format!(
-            "{}.dat<>{} ({})\n",
-            t.thread_id, t.title, t.res_count
-        ));
+        writeln!(lines, "{}.dat<>{} ({})", t.thread_id, t.title, t.res_count)
+            .expect("writing into a String is infallible");
     }
     (StatusCode::OK, sjis(&lines)).into_response()
 }
@@ -159,7 +161,7 @@ async fn mock_dat(
     AxPath((board, file)): AxPath<(String, String)>,
 ) -> Response {
     let thread_id = file.trim_end_matches(".dat").to_string();
-    let inner = mock.lock().unwrap();
+    let inner = lock(&mock);
     match inner.threads.get(&(board.clone(), thread_id.clone())) {
         Some(t) if !t.gone => {
             let dat_text = build_dat_text_with_images(&t.title, t.dat_posts, &t.image_urls);
@@ -171,13 +173,12 @@ async fn mock_dat(
 }
 
 async fn mock_setting(State(mock): State<MockState>, AxPath(board): AxPath<String>) -> Response {
-    let inner = mock.lock().unwrap();
+    let inner = lock(&mock);
     let name = inner
         .threads
         .values()
         .find(|t| t.board == board)
-        .map(|t| t.board.clone())
-        .unwrap_or_else(|| board.clone());
+        .map_or_else(|| board.clone(), |t| t.board.clone());
     (StatusCode::OK, sjis(&format!("BBS_TITLE={name}\n"))).into_response()
 }
 
@@ -196,7 +197,7 @@ async fn mock_bbs_cgi(
     Query(params): Query<HashMap<String, String>>,
     body: axum::body::Bytes,
 ) -> Response {
-    let mut inner = mock.lock().unwrap();
+    let mut inner = lock(&mock);
     let count = inner.bbs_cgi_call_count;
     inner.bbs_cgi_call_count += 1;
 
@@ -210,10 +211,7 @@ async fn mock_bbs_cgi(
     if count > 0 && has_feature && is_guid {
         let res_num = inner.bbs_cgi_next_res;
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-resnum",
-            HeaderValue::from_str(&res_num.to_string()).unwrap(),
-        );
+        headers.insert("x-resnum", HeaderValue::from(res_num));
         headers.insert("x-posterid", HeaderValue::from_static("TestPosterID1"));
         headers.insert(
             "x-postdate",
@@ -224,7 +222,7 @@ async fn mock_bbs_cgi(
                     .unwrap_or_default()
                     .as_secs()
             ))
-            .unwrap(),
+            .expect("a decimal timestamp is a valid header value"),
         );
         // Set a mock acorn cookie (session cookie without Max-Age, like real 5ch).
         headers.insert(
@@ -260,7 +258,7 @@ struct BbsCgiCtl {
 /// Programs the bbs.cgi mock: sets the res number to return on success.
 /// Call this before the post test to prime the mock.
 async fn ctl_bbs_cgi(State(mock): State<MockState>, Json(c): Json<BbsCgiCtl>) -> Json<bool> {
-    let mut inner = mock.lock().unwrap();
+    let mut inner = lock(&mock);
     inner.bbs_cgi_next_res = c.next_res;
     inner.bbs_cgi_call_count = 0;
     Json(true)
@@ -273,14 +271,14 @@ struct BbsCgiStatus {
 }
 
 async fn ctl_bbs_cgi_status(State(mock): State<MockState>) -> Json<BbsCgiStatus> {
-    let inner = mock.lock().unwrap();
+    let inner = lock(&mock);
     Json(BbsCgiStatus {
         call_count: inner.bbs_cgi_call_count,
     })
 }
 
 async fn ctl_thread(State(mock): State<MockState>, Json(c): Json<ThreadCtl>) -> Json<bool> {
-    mock.lock().unwrap().threads.insert(
+    lock(&mock).threads.insert(
         (c.board.clone(), c.thread_id.clone()),
         MockThread {
             board: c.board,
@@ -306,13 +304,13 @@ async fn ctl_subject_hits(
     State(mock): State<MockState>,
     AxPath(board): AxPath<String>,
 ) -> Json<u64> {
-    let inner = mock.lock().unwrap();
+    let inner = lock(&mock);
     Json(inner.subject_hits.get(&board).copied().unwrap_or(0))
 }
 
 /// Clears programmed threads and hit counters so each test starts from a clean mock.
 async fn ctl_mock_reset(State(mock): State<MockState>) -> Json<bool> {
-    let mut inner = mock.lock().unwrap();
+    let mut inner = lock(&mock);
     inner.threads.clear();
     inner.subject_hits.clear();
     inner.bbs_cgi_call_count = 0;
@@ -347,7 +345,7 @@ async fn mock_image(
     AxPath(file): AxPath<String>,
 ) -> Response {
     let (size_override, content_type) = {
-        let mut inner = mock.lock().unwrap();
+        let mut inner = lock(&mock);
         // Only count GET requests; HEAD is the preflight size-check and should not affect hit counts.
         if method == Method::GET {
             *inner.image_hits.entry(file.clone()).or_insert(0) += 1;
@@ -356,36 +354,43 @@ async fn mock_image(
         // Use content-type override when set; otherwise derive from file extension.
         let ct = if let Some(ct_override) = inner.image_content_type_overrides.get(&file) {
             ct_override.clone()
-        } else if file.ends_with(".jpg") || file.ends_with(".jpeg") {
-            "image/jpeg".to_string()
-        } else if file.ends_with(".gif") {
-            "image/gif".to_string()
-        } else if file.ends_with(".webp") {
-            "image/webp".to_string()
         } else {
-            "image/png".to_string()
+            let ext = std::path::Path::new(&file)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase);
+            match ext.as_deref() {
+                Some("jpg" | "jpeg") => "image/jpeg",
+                Some("gif") => "image/gif",
+                Some("webp") => "image/webp",
+                _ => "image/png",
+            }
+            .to_string()
         };
         (size, ct)
     };
 
+    let Ok(content_type) = HeaderValue::from_str(&content_type) else {
+        return (StatusCode::BAD_REQUEST, "invalid content type override").into_response();
+    };
     if let Some(size) = size_override {
         // Large body: serve zeros to trigger the 5MB guard in the image downloader.
         let body = vec![0u8; size];
         let mut resp_headers = HeaderMap::new();
-        resp_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
-        resp_headers.insert(header::CONTENT_LENGTH, size.to_string().parse().unwrap());
+        resp_headers.insert(header::CONTENT_TYPE, content_type);
+        resp_headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
         return (StatusCode::OK, resp_headers, body).into_response();
     }
 
     // Normal response: serve the tiny PNG bytes.
     let mut resp_headers = HeaderMap::new();
-    resp_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+    resp_headers.insert(header::CONTENT_TYPE, content_type);
     (StatusCode::OK, resp_headers, TINY_PNG.to_vec()).into_response()
 }
 
 /// Returns how many times a specific image file has been requested.
 async fn ctl_image_hits(State(mock): State<MockState>, AxPath(file): AxPath<String>) -> Json<u64> {
-    let inner = mock.lock().unwrap();
+    let inner = lock(&mock);
     Json(inner.image_hits.get(&file).copied().unwrap_or(0))
 }
 
@@ -398,7 +403,7 @@ struct ImageSizeCtl {
 /// Programs the mock image server to return a body of `size` bytes for `file`.
 /// Used to test the 5MB size limit guard.
 async fn ctl_image_size(State(mock): State<MockState>, Json(c): Json<ImageSizeCtl>) -> Json<bool> {
-    let mut inner = mock.lock().unwrap();
+    let mut inner = lock(&mock);
     inner.image_size_overrides.insert(c.file, c.size);
     Json(true)
 }
@@ -415,7 +420,7 @@ async fn ctl_image_content_type(
     State(mock): State<MockState>,
     Json(c): Json<ImageContentTypeCtl>,
 ) -> Json<bool> {
-    let mut inner = mock.lock().unwrap();
+    let mut inner = lock(&mock);
     inner
         .image_content_type_overrides
         .insert(c.file, c.content_type);
@@ -424,7 +429,10 @@ async fn ctl_image_content_type(
 
 // ---- app-side control (seeds the in-memory DB) -----------------------------
 
-async fn ctl_seed(State(app): State<AppState>, Json(c): Json<SeedCtl>) -> Json<bool> {
+async fn ctl_seed(
+    State(app): State<AppState>,
+    Json(c): Json<SeedCtl>,
+) -> Result<Json<bool>, AppError> {
     let title = if c.title.is_empty() {
         "テストスレ".to_string()
     } else {
@@ -433,22 +441,20 @@ async fn ctl_seed(State(app): State<AppState>, Json(c): Json<SeedCtl>) -> Json<b
     // Build UTF-8 dat text for DB storage (dat_blobs.raw is TEXT, Shift-JIS decoded once on write).
     let dat_text = build_dat_text(&title, c.blob_posts);
     // Compute the Shift-JIS byte length so the HEAD gate has an accurate baseline.
-    let dat_bytes = build_dat_sjis(&title, c.blob_posts).len() as i64;
-    let conn = app.db.lock().unwrap();
+    let dat_bytes = viewer_of_5ch::db::to_i64(build_dat_sjis(&title, c.blob_posts).len());
+    let conn = lock(&app.db);
     conn.execute(
         "INSERT OR REPLACE INTO favorites
          (server, board, thread_id, board_name, title, res_count, status)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active')",
         params![c.server, c.board, c.thread_id, c.board, title, c.res_count],
-    )
-    .unwrap();
+    )?;
     conn.execute(
         "INSERT OR REPLACE INTO dat_blobs (server, board, thread_id, raw, dat_bytes)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![c.server, c.board, c.thread_id, dat_text, dat_bytes],
-    )
-    .unwrap();
-    Json(true)
+    )?;
+    Ok(Json(true))
 }
 
 #[derive(Deserialize)]
@@ -472,20 +478,21 @@ async fn ctl_refresh_board(
 }
 
 /// Wipes all seeded data so each test starts clean (the :memory: DB persists for the process).
-async fn ctl_reset(State(app): State<AppState>) -> Json<bool> {
-    let conn = app.db.lock().unwrap();
+async fn ctl_reset(State(app): State<AppState>) -> Result<Json<bool>, AppError> {
+    let conn = lock(&app.db);
     // own_posts, ng_ids and ng_words have no FK to favorites, so they must be deleted
     // explicitly or rules would leak from one test into the next.
-    conn.execute("DELETE FROM own_posts", []).unwrap();
-    conn.execute("DELETE FROM ng_ids", []).unwrap();
-    conn.execute("DELETE FROM ng_words", []).unwrap();
-    conn.execute("DELETE FROM favorites", []).unwrap();
-    conn.execute("DELETE FROM image_cache", []).unwrap();
+    conn.execute("DELETE FROM own_posts", [])?;
+    conn.execute("DELETE FROM ng_ids", [])?;
+    conn.execute("DELETE FROM ng_words", [])?;
+    conn.execute("DELETE FROM favorites", [])?;
+    conn.execute("DELETE FROM image_cache", [])?;
     drop(conn);
     let image_root = std::path::Path::new(&app.config.image_cache_dir);
     let _ = std::fs::remove_dir_all(image_root);
-    std::fs::create_dir(image_root).unwrap();
-    Json(true) // dat_blobs cascade-deletes via the favorites FK
+    std::fs::create_dir(image_root)
+        .map_err(|e| AppError::Internal(format!("recreate image cache dir: {e}")))?;
+    Ok(Json(true)) // dat_blobs cascade-deletes via the favorites FK
 }
 
 #[derive(Deserialize)]
@@ -497,10 +504,13 @@ struct SeedImageCtl {
     mosaic: i64,
 }
 
-/// Seeds an image_cache row directly (bypasses the HTTP download pipeline).
+/// Seeds an `image_cache` row directly (bypasses the HTTP download pipeline).
 /// Used by tests that need to verify the serve endpoint without hitting external URLs.
 /// A minimal 1×1 PNG is written to the filesystem cache so the serve path is exercised.
-async fn ctl_seed_image(State(app): State<AppState>, Json(c): Json<SeedImageCtl>) -> Json<bool> {
+async fn ctl_seed_image(
+    State(app): State<AppState>,
+    Json(c): Json<SeedImageCtl>,
+) -> Result<Json<bool>, AppError> {
     // Minimal PNG: 1×1 pixel, RGB.
     let tiny_png: Vec<u8> = vec![
         0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
@@ -510,32 +520,35 @@ async fn ctl_seed_image(State(app): State<AppState>, Json(c): Json<SeedImageCtl>
         0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
     let id = {
-        let conn = app.db.lock().unwrap();
+        let conn = lock(&app.db);
         conn.execute(
             "INSERT OR IGNORE INTO image_cache (url, path, mosaic) VALUES (?1, ?2, ?3)",
             params![c.url, c.path, c.mosaic],
-        )
-        .unwrap();
+        )?;
         conn.query_row(
             "SELECT id FROM image_cache WHERE url=?1",
             params![c.url],
             |r| r.get::<_, i64>(0),
-        )
-        .unwrap()
+        )?
     };
     viewer_of_5ch::image_cache::write_verified(
         std::path::Path::new(&app.config.image_cache_dir),
         id,
         &tiny_png,
     )
-    .unwrap();
-    let conn = app.db.lock().unwrap();
+    .map_err(|e| AppError::Internal(format!("write seeded image: {e}")))?;
+    let conn = lock(&app.db);
     conn.execute(
         "UPDATE image_cache SET path=?1, mime=?2, file_size=?3, mosaic=?4 WHERE id=?5",
-        params![c.path, c.mime, tiny_png.len() as i64, c.mosaic, id],
-    )
-    .unwrap();
-    Json(true)
+        params![
+            c.path,
+            c.mime,
+            viewer_of_5ch::db::to_i64(tiny_png.len()),
+            c.mosaic,
+            id
+        ],
+    )?;
+    Ok(Json(true))
 }
 
 #[tokio::main]
@@ -582,8 +595,9 @@ async fn main() {
 
     // 2. Real app server (in-memory DB, pointed at the mock for 5ch access).
     let conn = Connection::open_in_memory().expect("open :memory:");
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    conn.execute_batch(db::SCHEMA).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("enable foreign keys");
+    conn.execute_batch(db::SCHEMA).expect("create schema");
 
     let config = Config {
         port: app_port,

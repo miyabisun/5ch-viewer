@@ -12,16 +12,17 @@ use std::sync::LazyLock;
 // Matches any <a ...> tag (with attributes) followed by its content and </a>.
 // Used to locate anchor elements whose href determines keep-vs-strip behaviour.
 static ANCHOR_TAG_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)<a\b([^>]*?)>(.*?)</a>").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)<a\b([^>]*?)>(.*?)</a>").expect("hard-coded regex is valid"));
 
 // Extracts the value of the href attribute from the attribute string of an <a> tag.
-static HREF_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?i)\bhref\s*=\s*"([^"]*)""#).unwrap());
+static HREF_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\bhref\s*=\s*"([^"]*)""#).expect("hard-coded regex is valid")
+});
 
 // Matches ttp:// or ttps:// at the start of a href value (5ch broken-scheme URLs).
 static TTP_HREF_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Replaces ttp(s):// inside href="..." attributes only.
-    Regex::new(r#"(?i)(href\s*=\s*")ttps?://"#).unwrap()
+    Regex::new(r#"(?i)(href\s*=\s*")ttps?://"#).expect("hard-coded regex is valid")
 });
 
 static SANITIZER: LazyLock<Builder<'static>> = LazyLock::new(|| {
@@ -107,7 +108,7 @@ mod tests {
         assert!(!out.contains("alert"));
         assert!(!out.contains("onclick"));
         // p is not allowed so the tag is removed, but the text remains
-        assert!(out.contains("x"));
+        assert!(out.contains('x'));
     }
 
     #[test]

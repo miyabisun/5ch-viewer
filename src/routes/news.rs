@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use crate::state::lock;
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::{header, HeaderMap};
@@ -36,7 +37,7 @@ async fn get_news(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
     let rows = {
-        let conn = state.db.lock().unwrap();
+        let conn = lock(&state.db);
         let mut stmt = conn.prepare(
             "SELECT server, board, board_name, thread_id, title,
                     res_count, read_res, rating, status, updated_at
@@ -229,8 +230,26 @@ mod tests {
     #[tokio::test]
     async fn news_includes_only_threads_with_unread_posts() {
         let conn = setup();
-        insert_favorite(&conn, "1001", "未読あり", 100, 50, 0, "active", 1700000000);
-        insert_favorite(&conn, "1002", "既読済み", 100, 100, 0, "active", 1700000001);
+        insert_favorite(
+            &conn,
+            "1001",
+            "未読あり",
+            100,
+            50,
+            0,
+            "active",
+            1_700_000_000,
+        );
+        insert_favorite(
+            &conn,
+            "1002",
+            "既読済み",
+            100,
+            100,
+            0,
+            "active",
+            1_700_000_001,
+        );
 
         let feed = get_news_feed(&make_state(conn)).await;
         assert_eq!(item_ids(&feed), vec!["egg/applism/1001"]);
@@ -239,8 +258,8 @@ mod tests {
     #[tokio::test]
     async fn news_excludes_unstarred_threads() {
         let conn = setup();
-        insert_favorite(&conn, "1001", "星あり", 100, 50, 0, "active", 1700000000);
-        insert_favorite(&conn, "1002", "星なし", 100, 50, 0, "active", 1700000001);
+        insert_favorite(&conn, "1001", "星あり", 100, 50, 0, "active", 1_700_000_000);
+        insert_favorite(&conn, "1002", "星なし", 100, 50, 0, "active", 1_700_000_001);
         conn.execute(
             "UPDATE favorites SET rating = 0 WHERE thread_id = '1002'",
             [],
@@ -262,7 +281,7 @@ mod tests {
             50,
             1,
             "active",
-            1700000000,
+            1_700_000_000,
         );
         insert_favorite(
             &conn,
@@ -272,7 +291,7 @@ mod tests {
             50,
             0,
             "active",
-            1700000001,
+            1_700_000_001,
         );
 
         let feed = get_news_feed(&make_state(conn)).await;
@@ -291,7 +310,7 @@ mod tests {
             900,
             0,
             "dead",
-            1700000000,
+            1_700_000_000,
         );
 
         let feed = get_news_feed(&make_state(conn)).await;
@@ -302,9 +321,9 @@ mod tests {
     #[tokio::test]
     async fn news_sorted_by_updated_at_desc() {
         let conn = setup();
-        insert_favorite(&conn, "old", "古い", 10, 5, 0, "active", 1700000000);
-        insert_favorite(&conn, "new", "新しい", 10, 5, 0, "active", 1700002000);
-        insert_favorite(&conn, "mid", "中間", 10, 5, 0, "active", 1700001000);
+        insert_favorite(&conn, "old", "古い", 10, 5, 0, "active", 1_700_000_000);
+        insert_favorite(&conn, "new", "新しい", 10, 5, 0, "active", 1_700_002_000);
+        insert_favorite(&conn, "mid", "中間", 10, 5, 0, "active", 1_700_001_000);
 
         let feed = get_news_feed(&make_state(conn)).await;
         assert_eq!(
@@ -324,7 +343,7 @@ mod tests {
             800,
             0,
             "active",
-            1700000000,
+            1_700_000_000,
         );
         conn.execute(
             "UPDATE favorites SET rating = 2 WHERE thread_id = '1771127145'",
@@ -363,7 +382,7 @@ mod tests {
     #[tokio::test]
     async fn news_respects_base_path_in_urls() {
         let conn = setup();
-        insert_favorite(&conn, "1001", "スレ", 10, 5, 0, "active", 1700000000);
+        insert_favorite(&conn, "1001", "スレ", 10, 5, 0, "active", 1_700_000_000);
         let mut state = make_state(conn);
         state.config.base_path = "/5ch".to_string();
 

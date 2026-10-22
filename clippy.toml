@@ -1,0 +1,3 @@
+allow-unwrap-in-tests = true
+# Keep the default list (".."); SQLite is a product name, not code.
+doc-valid-idents = ["SQLite", ".."]

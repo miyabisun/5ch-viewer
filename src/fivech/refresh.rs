@@ -1,6 +1,6 @@
 //! Board-level prefetch: refresh every favorite of a board with a single subject.txt read.
 //!
-//! subject.txt reports the res_count of *all* threads on a board at once, so one read tells
+//! subject.txt reports the `res_count` of *all* threads on a board at once, so one read tells
 //! us which favorites grew. We then bulk-download only the dats that actually changed and
 //! replace their blobs. This keeps the 5ch connection cost (the dominant term) minimal:
 //! subject.txt is hit once per board (never once per thread), and dats are fetched only for
@@ -15,6 +15,7 @@ use crate::error::AppError;
 use crate::fivech::dat::{count_dat_posts, parse_dat, title_from_dat};
 use crate::fivech::http::{self, DatFetch};
 use crate::fivech::subject::SubjectEntry;
+use crate::state::lock;
 use crate::state::AppState;
 use rusqlite::{params, OptionalExtension};
 use std::collections::HashMap;
@@ -29,6 +30,7 @@ const RES_DEAD: i64 = 1002;
 /// the count we already hold in the blob. When subject is unavailable or the thread is absent
 /// from it (`None`), we cannot prove "no change", so we fetch (a 404 dat is handled as Gone).
 /// Shared by the individual reload and the board prefetch so the two gates never disagree.
+#[must_use]
 pub fn needs_fetch(subject_count: Option<i64>, stored_res_count: i64) -> bool {
     match subject_count {
         Some(sc) => sc > stored_res_count,
@@ -36,7 +38,7 @@ pub fn needs_fetch(subject_count: Option<i64>, stored_res_count: i64) -> bool {
     }
 }
 
-/// One favorite considered for refresh: its id and the res_count actually held in the blob.
+/// One favorite considered for refresh: its id and the `res_count` actually held in the blob.
 struct BoardThread {
     thread_id: String,
     /// Posts parsed from the stored dat blob (the self-healing baseline; see the reload gate).
@@ -122,12 +124,9 @@ pub async fn refresh_board_with_subject(
 /// double-download. Errors are logged, not swallowed.
 pub async fn refresh_thread(state: &AppState, server: &str, board: &str, thread_id: &str) -> bool {
     let key = (server.to_string(), board.to_string(), thread_id.to_string());
-    let _guard = match state.claim_dat(&key) {
-        Some(g) => g,
-        None => {
-            tracing::debug!("[refresh] {server}/{board}/{thread_id}: already in flight, skip");
-            return false;
-        }
+    let Some(_guard) = state.claim_dat(&key) else {
+        tracing::debug!("[refresh] {server}/{board}/{thread_id}: already in flight, skip");
+        return false;
     };
 
     let fetch = match http::fetch_dat(
@@ -154,6 +153,10 @@ pub async fn refresh_thread(state: &AppState, server: &str, board: &str, thread_
 }
 
 /// Persists a dat fetch result: full blob replace + metadata recompute, or mark dead on Gone.
+///
+/// # Errors
+///
+/// Returns the database error when a write fails.
 pub fn persist_fetch(
     state: &AppState,
     server: &str,
@@ -163,7 +166,7 @@ pub fn persist_fetch(
 ) -> Result<bool, AppError> {
     match fetch {
         DatFetch::Gone => {
-            let conn = state.db.lock().unwrap();
+            let conn = lock(&state.db);
             conn.execute(
                 "UPDATE favorites SET status='dead', updated_at=strftime('%s','now')
                  WHERE server=?1 AND board=?2 AND thread_id=?3",
@@ -172,7 +175,7 @@ pub fn persist_fetch(
             Ok(false)
         }
         DatFetch::Replace { bytes } => {
-            let dat_bytes = bytes.len() as i64;
+            let dat_bytes = crate::db::to_i64(bytes.len());
             let text = http::decode_shift_jis(&bytes);
             let res_count = count_dat_posts(&text);
             let title = title_from_dat(&text).unwrap_or_default();
@@ -180,7 +183,7 @@ pub fn persist_fetch(
             tracing::info!(
                 "[refresh] {server}/{board}/{thread_id}: fetched {res_count} posts, replacing blob"
             );
-            let conn = state.db.lock().unwrap();
+            let conn = lock(&state.db);
             replace_blob(&conn, server, board, thread_id, &text, dat_bytes)?;
             conn.execute(
                 "UPDATE favorites SET res_count=?4, status=?5,
@@ -205,7 +208,7 @@ pub fn persist_fetch(
     }
 }
 
-/// Reads every non-dead, non-archived favorite of a board with its stored blob res_count.
+/// Reads every non-dead, non-archived favorite of a board with its stored blob `res_count`.
 /// Archived threads are excluded: archiving means "stop tracking", so no 5ch dat fetches
 /// should be triggered for them (aligned with the project's 5ch-access-reduction policy).
 fn collect_board_threads(
@@ -213,7 +216,7 @@ fn collect_board_threads(
     server: &str,
     board: &str,
 ) -> Result<Vec<BoardThread>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let conn = lock(&state.db);
     let mut stmt = conn.prepare(
         "SELECT thread_id FROM favorites
          WHERE server=?1 AND board=?2 AND status != 'dead' AND archived = 0",
@@ -233,10 +236,14 @@ fn collect_board_threads(
     Ok(out)
 }
 
-/// Replaces the raw in dat_blobs entirely (inserts if absent). Always stores the full
+/// Replaces the raw in `dat_blobs` entirely (inserts if absent). Always stores the full
 /// UTF-8-decoded body, so a subsequent read never needs Shift-JIS decoding.
 /// `dat_bytes` is the original Shift-JIS byte length of the dat, used by the HEAD gate
 /// to detect changes without downloading the full body.
+///
+/// # Errors
+///
+/// Returns the database error when the write fails.
 pub fn replace_blob(
     conn: &rusqlite::Connection,
     server: &str,
@@ -273,6 +280,10 @@ fn read_blob_raw(
 /// Reads the stored dat text and parses it into posts (empty when no blob exists). The single
 /// source of truth for "what posts do we actually hold", so the reload gate and the prefetch
 /// gate never disagree on the stored count.
+///
+/// # Errors
+///
+/// Returns the database error when the read fails.
 pub fn read_blob_posts(
     conn: &rusqlite::Connection,
     server: &str,
@@ -287,21 +298,24 @@ pub fn read_blob_posts(
 /// Counts the posts in the stored dat without allocating them (0 when no blob exists). The
 /// cheap path for the reload/prefetch gate's baseline, which only needs the count — counts
 /// exactly the posts `read_blob_posts` would return.
+///
+/// # Errors
+///
+/// Returns the database error when the read fails.
 pub fn count_blob_posts(
     conn: &rusqlite::Connection,
     server: &str,
     board: &str,
     thread_id: &str,
 ) -> Result<i64, AppError> {
-    Ok(read_blob_raw(conn, server, board, thread_id)?
-        .map(|text| count_dat_posts(&text))
-        .unwrap_or(0))
+    Ok(read_blob_raw(conn, server, board, thread_id)?.map_or(0, |text| count_dat_posts(&text)))
 }
 
-/// Derives thread status from res_count alone (dat byte size is not used).
+/// Derives thread status from `res_count` alone (dat byte size is not used).
 /// dead   = 1002 or more posts (thread is full; matches sentinel resDeadThreshold=1002).
 /// warned = 980..=1001 (danger zone: approaching or nominally over the 1000-res mark).
 /// active = below 980.
+#[must_use]
 pub fn compute_status(res_count: i64) -> &'static str {
     if res_count >= RES_DEAD {
         "dead"
@@ -359,7 +373,7 @@ mod tests {
         .unwrap();
     }
 
-    /// When a board has both active and archived threads, collect_board_threads must
+    /// When a board has both active and archived threads, `collect_board_threads` must
     /// return only the active (non-archived) ones.  Archived threads must never trigger
     /// a 5ch dat fetch (5ch-access-reduction policy).
     #[test]
@@ -379,7 +393,7 @@ mod tests {
         let state = make_state(conn);
         let threads = collect_board_threads(&state, "egg", "applism").unwrap();
         let mut ids: Vec<&str> = threads.iter().map(|t| t.thread_id.as_str()).collect();
-        ids.sort();
+        ids.sort_unstable();
 
         // Only the two non-dead, non-archived threads pass.
         assert_eq!(
@@ -389,7 +403,7 @@ mod tests {
         );
     }
 
-    /// When an archived thread is the only thread on a board, collect_board_threads
+    /// When an archived thread is the only thread on a board, `collect_board_threads`
     /// returns an empty list so no subject.txt fetch is triggered at all.
     #[test]
     fn collect_board_threads_all_archived_returns_empty() {
@@ -405,9 +419,9 @@ mod tests {
         );
     }
 
-    /// Invariant (the stuck-at-111 class of bug, killed by design): persist_fetch is the
-    /// single writer of favorites.res_count, and it writes the real post count parsed from the
-    /// freshly downloaded blob — never a stale value. A pre-existing res_count (here 111) must
+    /// Invariant (the stuck-at-111 class of bug, killed by design): `persist_fetch` is the
+    /// single writer of `favorites.res_count`, and it writes the real post count parsed from the
+    /// freshly downloaded blob — never a stale value. A pre-existing `res_count` (here 111) must
     /// be overwritten with the blob's actual count.
     #[test]
     fn persist_fetch_sets_res_count_to_blob_post_count() {
@@ -453,14 +467,14 @@ mod tests {
 
     // --- compute_status threshold tests (sentinel parity) ---
 
-    /// Below RES_WARN: active.
+    /// Below `RES_WARN`: active.
     #[test]
     fn compute_status_active_below_warn() {
         assert_eq!(compute_status(0), "active");
         assert_eq!(compute_status(979), "active");
     }
 
-    /// At and above RES_WARN but below RES_DEAD: warned.
+    /// At and above `RES_WARN` but below `RES_DEAD`: warned.
     #[test]
     fn compute_status_warned_range() {
         assert_eq!(compute_status(980), "warned");
@@ -468,7 +482,7 @@ mod tests {
         assert_eq!(compute_status(1001), "warned"); // sentinel resDeadThreshold-1
     }
 
-    /// At and above RES_DEAD (1002): dead (matches sentinel resDeadThreshold=1002).
+    /// At and above `RES_DEAD` (1002): dead (matches sentinel resDeadThreshold=1002).
     #[test]
     fn compute_status_dead_at_1002() {
         assert_eq!(compute_status(1002), "dead");

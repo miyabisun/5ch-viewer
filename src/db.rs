@@ -1,6 +1,16 @@
 use rusqlite::Connection;
 
-/// Returns whether `table` has a column named `column` (via PRAGMA table_info).
+/// Converts an in-memory length, count or index to SQLite's `i64`.
+///
+/// # Panics
+///
+/// Never in practice: allocations are capped at `isize::MAX`, so such values fit in `i64`.
+#[must_use]
+pub fn to_i64(n: usize) -> i64 {
+    i64::try_from(n).expect("in-memory sizes are at most isize::MAX")
+}
+
+/// Returns whether `table` has a column named `column` (via PRAGMA `table_info`).
 fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
     let mut stmt = conn
         .prepare(&format!("PRAGMA table_info({table})"))
@@ -99,10 +109,12 @@ pub const SCHEMA: &str = "
 
 /// Applies idempotent schema migrations for existing databases created before a given
 /// column/cleanup was introduced. Safe to call repeatedly (each step is a no-op once applied).
+///
+/// # Panics
+///
+/// Panics when the schema cannot be migrated, since the app cannot run on it.
 pub fn migrate(conn: &Connection) {
-    if has_column(conn, "image_cache", "image") {
-        panic!("image_cache contains legacy image BLOBs; run `migrate-image-cache` before starting the application");
-    }
+    assert!(!has_column(conn, "image_cache", "image"), "image_cache contains legacy image BLOBs; run `migrate-image-cache` before starting the application");
 
     // Migration: add `archived` column to favorites if it does not exist yet (existing DBs).
     if !has_column(conn, "favorites", "archived") {
@@ -116,9 +128,10 @@ pub fn migrate(conn: &Connection) {
             .expect("Failed to add dat_bytes column to dat_blobs");
     }
 
-    if !has_column(conn, "image_cache", "file_size") {
-        panic!("image_cache has an unsupported schema; run `migrate-image-cache`");
-    }
+    assert!(
+        has_column(conn, "image_cache", "file_size"),
+        "image_cache has an unsupported schema; run `migrate-image-cache`"
+    );
 
     // One-time reset: the legacy ng_ids table stored the ID string alone with no board
     // scope, so the board a row came from cannot be recovered from the row itself. Drop
@@ -160,6 +173,11 @@ pub fn migrate(conn: &Connection) {
     }
 }
 
+/// Opens (creating if needed) and migrates the database at `path`.
+///
+/// # Panics
+///
+/// Panics when the database cannot be opened or migrated, since the app cannot run without it.
 pub fn open(path: &str) -> Connection {
     tracing::info!("Database: {}", path);
 
@@ -355,7 +373,7 @@ mod tests {
         assert_eq!(in_board, 2);
     }
 
-    /// Migration: the legacy board-less ng_ids table is reset (all rows dropped) because
+    /// Migration: the legacy board-less `ng_ids` table is reset (all rows dropped) because
     /// the board of a global row cannot be recovered. Other NG data must survive.
     #[test]
     fn migration_resets_legacy_global_ng_ids_and_keeps_other_ng_data() {

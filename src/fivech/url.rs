@@ -1,21 +1,24 @@
 //! Thread URL parsing.
 //! Supported formats (both 5ch.net / 5ch.io. Migrated to io in 2026-03. Since the
 //! net format remains in archive URLs, both are accepted as input):
-//!   https://[server].5ch.io/test/read.cgi/[board]/[thread_id]/
-//!   https://[server].5ch.io/[board]/[thread_id]/   (legacy/short form)
+//!   https://[server].5ch.io/test/read.cgi/[board]/[`thread_id`]/
+//!   https://[server].5ch.io/[board]/[`thread_id`]/   (legacy/short form)
 
 use crate::error::AppError;
 use regex_lite::Regex;
 use std::sync::LazyLock;
 
 static THREAD_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"https?://([^.]+)\.5ch\.(?:net|io)/(?:test/read\.cgi/)?([^/]+)/(\d+)").unwrap()
+    Regex::new(r"https?://([^.]+)\.5ch\.(?:net|io)/(?:test/read\.cgi/)?([^/]+)/(\d+)")
+        .expect("hard-coded regex is valid")
 });
 
 // SSRF mitigation: server/board allow only alphanumerics, hyphen, and underscore; thread_id only digits.
 // This prevents host/path injection (slash, dot, @, etc.) during URL assembly.
-static SEGMENT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
-static THREAD_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9]+$").unwrap());
+static SEGMENT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").expect("hard-coded regex is valid"));
+static THREAD_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[0-9]+$").expect("hard-coded regex is valid"));
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThreadRef {
@@ -39,16 +42,24 @@ fn check_segment(re: &Regex, name: &str, value: &str) -> Result<(), AppError> {
         .ok_or_else(|| AppError::BadRequest(format!("invalid {name}: {value}")))
 }
 
-/// Validates only server and board segments (no thread_id). Used for board-level
-/// endpoints (e.g. id-search) where thread_id is not part of the path.
+/// Validates only server and board segments (no `thread_id`). Used for board-level
+/// endpoints (e.g. id-search) where `thread_id` is not part of the path.
+///
+/// # Errors
+///
+/// `BadRequest` naming the first invalid segment.
 pub fn validate_board(server: &str, board: &str) -> Result<(), AppError> {
     check_segment(&SEGMENT_RE, "server", server)?;
     check_segment(&SEGMENT_RE, "board", board)?;
     Ok(())
 }
 
-/// Strictly validates server/board/thread_id (defense-in-depth against SSRF).
+/// Strictly validates `server/board/thread_id` (defense-in-depth against SSRF).
 /// Call at the entry of every path that receives user input (URL/direct/search result).
+///
+/// # Errors
+///
+/// `BadRequest` naming the first invalid segment.
 pub fn validate_ref(server: &str, board: &str, thread_id: &str) -> Result<(), AppError> {
     validate_board(server, board)?;
     check_segment(&THREAD_ID_RE, "thread_id", thread_id)?;

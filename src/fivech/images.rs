@@ -9,6 +9,8 @@
 //!   authenticated user), and the practical attack surface is minimal. Future
 //!   hardening: resolve hostnames first and pin the IP via `Client::builder().resolve()`.
 
+use crate::state::lock;
+use futures_util::StreamExt;
 use regex_lite::Regex;
 use reqwest::Client;
 use std::net::IpAddr;
@@ -19,7 +21,8 @@ use tokio::sync::Semaphore;
 // Captures ttp(s):// and http(s):// URLs ending with common image extensions.
 static IMAGE_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Use a character class that avoids the need to escape single-quote inside raw strings.
-    Regex::new(r#"(?i)\b(h?ttps?)://[^\s<>"']+?\.(png|jpe?g|gif|webp)\b"#).unwrap()
+    Regex::new(r#"(?i)\b(h?ttps?)://[^\s<>"']+?\.(png|jpe?g|gif|webp)\b"#)
+        .expect("hard-coded regex is valid")
 });
 
 /// Extracts deduplicated image URLs from raw dat text, in appearance order.
@@ -37,6 +40,7 @@ pub fn extract_image_urls(dat_text: &str) -> Vec<String> {
 
 /// Normalizes an image URL into a cache path (scheme/query/fragment stripped, host lowercased).
 /// Returns `None` when the URL is not a valid http/https/ttp/ttps image URL.
+#[must_use]
 pub fn normalize_image_path(url: &str) -> Option<String> {
     // Strip leading ttp(s) or h?ttps?:// prefix.
     let after_scheme = ["https://", "http://", "ttps://", "ttp://"]
@@ -91,6 +95,10 @@ pub struct ImageBlob {
 /// Redirect policy: follows up to 5 hops, re-validates each redirect destination
 /// with `is_safe_host` to prevent SSRF via open redirects. Non-http/https schemes
 /// (file://, gopher://, ftp://, etc.) are rejected immediately.
+///
+/// # Panics
+///
+/// Panics if the TLS backend cannot be initialised, since no image can be fetched without it.
 pub fn build_image_http_client() -> Client {
     const IMAGE_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
     Client::builder()
@@ -244,7 +252,7 @@ async fn fetch_image_inner(client: &Client, url: &str) -> Option<ImageBlob> {
     for attempt in 0..2u32 {
         match try_fetch_image(client, url).await {
             Some(blob) => return Some(blob),
-            None if attempt == 0 => continue,
+            None if attempt == 0 => {}
             None => return None,
         }
     }
@@ -286,7 +294,6 @@ async fn try_fetch_image(client: &Client, url: &str) -> Option<ImageBlob> {
     }
 
     // Accumulate the body with a size cap.
-    use futures_util::StreamExt;
     let mut stream = resp.bytes_stream();
     let mut buf: Vec<u8> = Vec::new();
     while let Some(chunk) = stream.next().await {
@@ -316,12 +323,11 @@ async fn try_fetch_image(client: &Client, url: &str) -> Option<ImageBlob> {
 // Maximum concurrent image downloads during a prefetch pass.
 const PREFETCH_CONCURRENCY: usize = 4;
 
-/// Prefetches a batch of image URLs: skips already-cached entries, downloads the rest in parallel.
-pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) {
-    if urls.is_empty() {
-        return;
-    }
-
+/// Returns the subset of `urls` whose cached file is present and verified.
+fn verified_cached_urls(
+    state: &crate::state::AppState,
+    urls: &[String],
+) -> std::collections::HashSet<String> {
     // Build an IN(...) placeholder list.
     let placeholders: String = urls
         .iter()
@@ -331,23 +337,24 @@ pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) 
         .join(",");
     let sql = format!("SELECT id, url, file_size FROM image_cache WHERE url IN ({placeholders})");
 
-    // Find which URLs are already cached.
     let cached_rows: Vec<(i64, String, Option<i64>)> = {
-        let conn = state.db.lock().unwrap();
-        let mut stmt = conn.prepare(&sql).unwrap();
+        let conn = lock(&state.db);
         let params: Vec<&dyn rusqlite::ToSql> =
             urls.iter().map(|u| u as &dyn rusqlite::ToSql).collect();
-        stmt.query_map(params.as_slice(), |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<i64>>(2)?,
-            ))
-        })
-        .map(|rows| rows.flatten().collect())
-        .unwrap_or_default()
+        conn.prepare(&sql)
+            .and_then(|mut stmt| {
+                stmt.query_map(params.as_slice(), |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<i64>>(2)?,
+                    ))
+                })
+                .map(|rows| rows.flatten().collect())
+            })
+            .unwrap_or_default()
     };
-    let already_cached: std::collections::HashSet<String> = cached_rows
+    cached_rows
         .into_iter()
         .filter_map(|(id, url, size)| {
             crate::image_cache::audit_file(
@@ -359,7 +366,16 @@ pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) 
             .filter(|ok| *ok)
             .map(|_| url)
         })
-        .collect();
+        .collect()
+}
+
+/// Prefetches a batch of image URLs: skips already-cached entries, downloads the rest in parallel.
+pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) {
+    if urls.is_empty() {
+        return;
+    }
+
+    let already_cached = verified_cached_urls(state, &urls);
 
     let pending: Vec<String> = urls
         .into_iter()
@@ -374,12 +390,11 @@ pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) 
     let mut handles = Vec::new();
 
     for url in pending {
-        let path = match normalize_image_path(&url) {
-            Some(p) => p,
-            None => continue,
+        let Some(path) = normalize_image_path(&url) else {
+            continue;
         };
         let id = {
-            let conn = state.db.lock().unwrap();
+            let conn = lock(&state.db);
             if conn
                 .execute(
                     "INSERT OR IGNORE INTO image_cache (url, path, mosaic) VALUES (?1, ?2, 0)",
@@ -409,7 +424,7 @@ pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) 
             let blob = fetch_image(&client, &url_clone).await?;
             let (size, mime) = tokio::task::spawn_blocking(move || {
                 let image = crate::image_cache::resize_image(blob.bytes, blob.mime);
-                let size = image.bytes.len() as i64;
+                let size = crate::db::to_i64(image.bytes.len());
                 crate::image_cache::write_verified(
                     std::path::Path::new(&image_cache_dir),
                     id,
@@ -420,7 +435,7 @@ pub async fn prefetch_images(state: &crate::state::AppState, urls: Vec<String>) 
             .await
             .ok()?
             .ok()?;
-            let conn = db.lock().unwrap();
+            let conn = lock(&db);
             conn.execute(
                 "UPDATE image_cache SET path=?1, mime=?2, file_size=?3 WHERE id=?4",
                 rusqlite::params![path, mime, size, id],

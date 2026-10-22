@@ -16,6 +16,12 @@ pub struct Config {
 }
 
 impl Config {
+    /// Reads the configuration from environment variables, using defaults for unset ones.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `BASE_PATH` is set to something other than a `/`-prefixed path.
+    #[must_use]
     pub fn from_env() -> Self {
         let port = env::var("PORT")
             .ok()
@@ -28,10 +34,8 @@ impl Config {
             .to_string();
 
         if !base_path.is_empty() {
-            let re = regex_lite::Regex::new(r"^/[\w\-/]*$").unwrap();
-            if !re.is_match(&base_path) {
-                panic!("Invalid BASE_PATH: {}", base_path);
-            }
+            let re = regex_lite::Regex::new(r"^/[\w\-/]*$").expect("hard-coded regex is valid");
+            assert!(re.is_match(&base_path), "Invalid BASE_PATH: {base_path}");
         }
 
         let db_path =
@@ -42,19 +46,19 @@ impl Config {
             .map(|path| path.trim().to_string())
             .filter(|path| !path.is_empty())
             .unwrap_or_else(|| {
-                std::path::Path::new(&db_path)
-                    .parent()
-                    .map(|p| p.join("images").to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "./images".to_string())
+                std::path::Path::new(&db_path).parent().map_or_else(
+                    || "./images".to_string(),
+                    |p| p.join("images").to_string_lossy().into_owned(),
+                )
             });
 
         // Cookie jar persisted alongside the DB (same data directory by default).
         let cookies_path = env::var("COOKIES_PATH").unwrap_or_else(|_| {
             // Derive from db_path: replace the last path component with "cookies.json".
-            std::path::Path::new(&db_path)
-                .parent()
-                .map(|p| p.join("cookies.json").to_string_lossy().into_owned())
-                .unwrap_or_else(|| "./data/cookies.json".to_string())
+            std::path::Path::new(&db_path).parent().map_or_else(
+                || "./data/cookies.json".to_string(),
+                |p| p.join("cookies.json").to_string_lossy().into_owned(),
+            )
         });
 
         // FIVECH_BASE_URL overrides the 5ch origin (used by integration tests to point at a mock).

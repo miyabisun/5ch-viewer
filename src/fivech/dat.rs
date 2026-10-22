@@ -9,7 +9,8 @@ use std::sync::LazyLock;
 // Matches "ID:" followed by non-whitespace characters.
 // 5ch IDs appear after the date/time and are delimited by whitespace (ASCII or full-width)
 // or end of string. We capture everything after "ID:" until the next whitespace or EOL.
-static ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"ID:([^\s\u{3000}]+)").unwrap());
+static ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"ID:([^\s\u{3000}]+)").expect("hard-coded regex is valid"));
 
 /// Extracts the raw ID string (the part after "ID:") from the dat date field.
 /// Returns None when no ID token is present (e.g., the OP post on some boards).
@@ -30,8 +31,8 @@ pub struct Res {
     pub body: String,
     /// Extracted ID key (the part after "ID:"), or null when absent.
     pub id: Option<String>,
-    /// True when this res was posted by the current user (matched via own_posts table).
-    /// Set to false by parse_dat; overridden to true in get_dat handler.
+    /// True when this res was posted by the current user (matched via `own_posts` table).
+    /// Set to false by `parse_dat`; overridden to true in `get_dat` handler.
     #[serde(skip_deserializing, default)]
     pub own: bool,
 }
@@ -50,6 +51,7 @@ fn dat_fields(line: &str) -> Option<[&str; 4]> {
 }
 
 /// Parses dat content (already UTF-8 decoded) into an array of posts.
+#[must_use]
 pub fn parse_dat(text: &str) -> Vec<Res> {
     text.split('\n')
         .enumerate()
@@ -58,7 +60,7 @@ pub fn parse_dat(text: &str) -> Vec<Res> {
             let date = f[2].to_string();
             let id = extract_id(&date);
             Some(Res {
-                num: (i + 1) as i64,
+                num: crate::db::to_i64(i + 1),
                 name: f[0].to_string(),
                 mail: f[1].to_string(),
                 date,
@@ -73,11 +75,13 @@ pub fn parse_dat(text: &str) -> Vec<Res> {
 /// Counts the posts in dat content without allocating them — the cheap path for the
 /// reload/prefetch gate, which only needs "how many posts do we hold". Counts exactly
 /// the lines `parse_dat` would keep.
+#[must_use]
 pub fn count_dat_posts(text: &str) -> i64 {
-    text.split('\n').filter(|l| dat_fields(l).is_some()).count() as i64
+    crate::db::to_i64(text.split('\n').filter(|l| dat_fields(l).is_some()).count())
 }
 
 /// Extracts the thread title from the first post (the 5th field).
+#[must_use]
 pub fn title_from_dat(text: &str) -> Option<String> {
     let title = text.split('\n').next()?.split("<>").nth(4)?.trim();
     (!title.is_empty()).then(|| title.to_string())
@@ -141,7 +145,10 @@ mod tests {
             Some("title".into())
         );
         for text in ["", "\n", "<>", "<><>", "<><><>", "a<>b<>c<>d<>e<>f"] {
-            assert_eq!(count_dat_posts(text), parse_dat(text).len() as i64);
+            assert_eq!(
+                count_dat_posts(text),
+                crate::db::to_i64(parse_dat(text).len())
+            );
         }
     }
 

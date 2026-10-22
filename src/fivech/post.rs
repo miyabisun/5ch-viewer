@@ -2,13 +2,13 @@
 //!
 //! Kept separate from http.rs (GET-only) to make the read/write boundary explicit.
 //! Flow:
-//!   1. POST with submit=書き込む (Shift_JIS encoded, percent-encoded body).
+//!   1. POST with submit=書き込む (`Shift_JIS` encoded, percent-encoded body).
 //!   2. If a confirmation page is returned (x-chx-error: 0000 Confirmation),
 //!      extract the `feature=confirmed:<hash>` hidden field and re-POST to
 //!      bbs.cgi?guid=ON with submit=上記全てを承諾して書き込む.
 //!   3. Inspect x-resnum header for success; surface x-posterid / x-postdate.
 //!
-//! The client's cookie_store (enabled in state::build_http_client) retains
+//! The client's `cookie_store` (enabled in `state::build_http_client`) retains
 //! acorn/MonaTicket cookies so subsequent posts skip step 2 entirely.
 
 use crate::error::AppError;
@@ -37,12 +37,13 @@ pub struct PostResult {
 }
 
 // Selector for the `feature` hidden input (confirmation page).
-static FEATURE_SEL: LazyLock<Selector> =
-    LazyLock::new(|| Selector::parse("input[name='feature']").unwrap());
+static FEATURE_SEL: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("input[name='feature']").expect("hard-coded selector is valid")
+});
 
 /// Encodes a byte slice as application/x-www-form-urlencoded percent-encoding.
 /// Unlike standard urlencoding (which works on UTF-8 &str), this operates on raw
-/// bytes so that Shift_JIS encoded values come through correctly.
+/// bytes so that `Shift_JIS` encoded values come through correctly.
 /// Unreserved characters (RFC 3986: ALPHA / DIGIT / - / _ / . / ~) are kept as-is;
 /// everything else is %-encoded.
 fn percent_encode_bytes(bytes: &[u8]) -> String {
@@ -52,21 +53,20 @@ fn percent_encode_bytes(bytes: &[u8]) -> String {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
             out.push(b as char);
         } else {
-            // write! into a String is infallible, so unwrap is safe.
-            write!(out, "%{b:02X}").unwrap();
+            write!(out, "%{b:02X}").expect("writing into a String is infallible");
         }
     }
     out
 }
 
-/// Encodes a UTF-8 string as Shift_JIS then percent-encodes the resulting bytes.
+/// Encodes a UTF-8 string as `Shift_JIS` then percent-encodes the resulting bytes.
 fn sjis_encode(s: &str) -> String {
     let (bytes, _, _) = encoding_rs::SHIFT_JIS.encode(s);
     percent_encode_bytes(&bytes)
 }
 
 /// Builds the form body for the initial POST.
-/// All values are Shift_JIS + percent-encoded; keys are ASCII.
+/// All values are `Shift_JIS` + percent-encoded; keys are ASCII.
 #[allow(clippy::too_many_arguments)]
 fn build_form(
     board: &str,
@@ -120,7 +120,7 @@ fn header_str(resp: &Response, name: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Builds a PostResult from the response headers when x-resnum is present (= success).
+/// Builds a `PostResult` from the response headers when x-resnum is present (= success).
 /// Returns None when the post did not succeed (no resnum header).
 fn post_result_from(resp: &Response) -> Option<PostResult> {
     let res_num = header_str(resp, "x-resnum")?.parse::<i64>().ok()?;
@@ -161,20 +161,23 @@ fn is_confirmation(x_chx_error: Option<&str>, title: &str) -> bool {
 /// confirmation-page detection, not for display.
 fn extract_title(html: &str) -> String {
     let lower = html.to_lowercase();
-    let start = lower.find("<title>").map(|i| i + 7).unwrap_or(0);
+    let start = lower.find("<title>").map_or(0, |i| i + 7);
     let end = lower[start..]
         .find("</title>")
-        .map(|i| i + start)
-        .unwrap_or(lower.len());
+        .map_or(lower.len(), |i| i + start);
     lower[start..end].trim().to_string()
 }
 
 /// Posts a message to 5ch via bbs.cgi.
 ///
-/// SSRF-safe: validates server/board/thread_id before assembling any URL.
+/// SSRF-safe: validates `server/board/thread_id` before assembling any URL.
 /// Two-stage: tries a single POST first; re-sends with the `feature` token when the
 /// server returns a confirmation page (happens when acorn/MonaTicket are absent).
-/// On success the cookie_store built into `client` retains the cookies automatically.
+/// On success the `cookie_store` built into `client` retains the cookies automatically.
+///
+/// # Errors
+///
+/// `BadRequest` for an invalid thread reference, `Upstream` when bbs.cgi cannot be reached.
 #[allow(clippy::too_many_arguments)]
 pub async fn post_message(
     client: &Client,
@@ -290,7 +293,7 @@ mod tests {
 
     // --- sjis_encode ---
 
-    /// "あ" in Shift_JIS is 0x82 0xA0.
+    /// "あ" in `Shift_JIS` is 0x82 0xA0.
     #[test]
     fn sjis_encode_hiragana_a() {
         let out = sjis_encode("あ");
@@ -342,7 +345,7 @@ mod tests {
 
     #[test]
     fn extract_feature_returns_none_when_absent() {
-        let html = r#"<html><body><p>No form here</p></body></html>"#;
+        let html = r"<html><body><p>No form here</p></body></html>";
         assert_eq!(extract_feature(html), None);
     }
 

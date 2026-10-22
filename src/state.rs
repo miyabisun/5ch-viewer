@@ -3,7 +3,7 @@ use crate::fivech::cookie_jar::{self, SharedJar};
 use crate::fivech::images::build_image_http_client;
 use rusqlite::Connection;
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// 5ch blocks requests whose User-Agent does not contain `Monazilla/1.00`.
 pub const USER_AGENT: &str = "Monazilla/1.00 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
@@ -11,6 +11,10 @@ pub const USER_AGENT: &str = "Monazilla/1.00 Mozilla/5.0 (Windows NT 10.0; Win64
 /// Builds the shared HTTP client using the given persistent cookie jar as the provider.
 /// The jar is also stored in `AppState` so the post handler can call `jar.save()` after
 /// a successful post, persisting acorn/MonaTicket across process restarts.
+///
+/// # Panics
+///
+/// Panics if the TLS backend cannot be initialised, since 5ch cannot be reached without it.
 pub fn build_http_client(jar: SharedJar) -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
@@ -19,7 +23,19 @@ pub fn build_http_client(jar: SharedJar) -> reqwest::Client {
         .expect("Failed to build HTTP client")
 }
 
-/// Identifies a single thread's dat (server/board/thread_id).
+/// Locks `mutex`, treating poisoning as a bug rather than a recoverable error.
+///
+/// # Panics
+///
+/// Panics if another thread panicked while holding the lock, since the guarded data may
+/// then be half-updated.
+pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .expect("a lock holder panicked; the guarded data may be inconsistent")
+}
+
+/// Identifies a single thread's dat (`server/board/thread_id`).
 pub type DatKey = (String, String, String);
 
 #[derive(Clone)]
@@ -60,8 +76,9 @@ impl AppState {
     /// Claims a dat for fetching. Returns an RAII guard when this caller won the claim, or
     /// `None` when another task is already fetching it (so the caller should skip). The guard
     /// removes the key on drop, so a panic or early return cannot leak a permanent claim.
+    #[must_use]
     pub fn claim_dat(&self, key: &DatKey) -> Option<InflightGuard> {
-        let mut set = self.inflight.lock().unwrap();
+        let mut set = lock(&self.inflight);
         if set.contains(key) {
             return None;
         }
@@ -81,6 +98,6 @@ pub struct InflightGuard {
 
 impl Drop for InflightGuard {
     fn drop(&mut self) {
-        self.inflight.lock().unwrap().remove(&self.key);
+        lock(&self.inflight).remove(&self.key);
     }
 }

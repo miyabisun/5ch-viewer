@@ -16,7 +16,7 @@ pub struct Favorite {
     pub status: String,
 }
 
-/// Add-favorite request. Either a direct url or server/board/thread_id.
+/// Add-favorite request. Either a direct url or `server/board/thread_id`.
 #[derive(Debug, Deserialize)]
 pub struct AddRequest {
     pub url: Option<String>,
@@ -59,7 +59,7 @@ pub struct ReloadResponse {
     pub res_count: i64,
     pub read_res: i64,
     pub status: String,
-    /// Whether the dat changed (false on NotModified).
+    /// Whether the dat changed (false on `NotModified`).
     pub updated: bool,
 }
 
@@ -128,7 +128,7 @@ pub struct AddNgWacchoiRequest {
     pub wacchoi: Option<String>,
 }
 
-/// Request body for POST /api/favorites/{server}/{board}/{thread_id}/post.
+/// Request body for POST /`api/favorites/{server}/{board}/{thread_id}/post`.
 #[derive(Debug, Deserialize)]
 pub struct PostRequest {
     pub message: String,

@@ -17,7 +17,8 @@ use std::sync::LazyLock;
 const SEARCH_BASE: &str = "https://ff5ch.syoboi.jp/?q=";
 
 // Derive the post count from the trailing "(123)" in the title.
-static RES_COUNT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\((\d+)\)\s*$").unwrap());
+static RES_COUNT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\((\d+)\)\s*$").expect("hard-coded regex is valid"));
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SearchResult {
@@ -29,6 +30,10 @@ pub struct SearchResult {
 }
 
 /// Searches via ff5ch.syoboi.jp and returns the result list.
+///
+/// # Errors
+///
+/// `Upstream` when the search service cannot be reached or answers with a non-success status.
 pub async fn search(client: &Client, query: &str) -> Result<Vec<SearchResult>, AppError> {
     let url = format!("{SEARCH_BASE}{}&alt=rss", urlencoding::encode(query));
     let resp = client
@@ -50,6 +55,7 @@ pub async fn search(client: &Client, query: &str) -> Result<Vec<SearchResult>, A
 /// Each `<item>` provides `<title>` (with trailing `  (N)` as post count) and
 /// `<guid>` (absolute thread URL). The `<channel>`-level `<title>` is skipped
 /// because we only capture children of `<item>`.
+#[must_use]
 pub fn parse_search_rss(xml: &str) -> Vec<SearchResult> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -93,7 +99,7 @@ fn read_unescaped(reader: &mut Reader<&[u8]>, end: quick_xml::name::QName<'_>) -
     reader
         .read_text(end)
         .ok()
-        .and_then(|raw| unescape(&raw).ok().map(|c| c.into_owned()))
+        .and_then(|raw| unescape(&raw).ok().map(std::borrow::Cow::into_owned))
         .unwrap_or_default()
 }
 
@@ -105,7 +111,9 @@ fn build_result(raw_title: &str, guid: &str) -> Option<SearchResult> {
     let raw = raw_title.trim();
     let (title, res_count) = match RES_COUNT_RE.captures(raw) {
         Some(c) => (
-            raw[..c.get(0).unwrap().start()].trim().to_string(),
+            raw[..c.get(0).expect("group 0 is the whole match").start()]
+                .trim()
+                .to_string(),
             c[1].parse().unwrap_or(0),
         ),
         None => (raw.to_string(), 0),
@@ -125,7 +133,7 @@ mod tests {
 
     // Fixed RSS sample excerpted from a real ff5ch.syoboi.jp response.
     // Item 1 uses http:// guid with trailing slash to verify both are accepted.
-    const SAMPLE: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
+    const SAMPLE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>5ch検索 「test」</title>
@@ -144,7 +152,7 @@ mod tests {
       <category>iPhone</category>
     </item>
   </channel>
-</rss>"##;
+</rss>"#;
 
     #[test]
     fn parses_results_from_sample() {
@@ -176,32 +184,32 @@ mod tests {
 
     #[test]
     fn returns_empty_for_no_results() {
-        let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0"><channel><title>5ch検索 「nothing」</title></channel></rss>"##;
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>5ch検索 「nothing」</title></channel></rss>"#;
         assert_eq!(parse_search_rss(xml), vec![]);
     }
 
     #[test]
     fn skips_links_with_invalid_url() {
-        let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel>
   <item>
     <title>外部リンク (10)</title>
     <guid ispermalink="true">http://example.com/foo/123</guid>
   </item>
-</channel></rss>"##;
+</channel></rss>"#;
         assert_eq!(parse_search_rss(xml), vec![]);
     }
 
     #[test]
     fn handles_title_without_res_count() {
-        let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel>
   <item>
     <title>レス数なしスレ</title>
     <guid ispermalink="true">http://mi.5ch.io/test/read.cgi/news4vip/1780976160/</guid>
   </item>
-</channel></rss>"##;
+</channel></rss>"#;
         let results = parse_search_rss(xml);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "レス数なしスレ");
@@ -211,14 +219,14 @@ mod tests {
     #[test]
     fn ignores_channel_level_title() {
         // <channel><title> must not appear as a search result.
-        let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel>
   <title>5ch検索 「xxx」</title>
   <item>
     <title>正しいスレタイ (42)</title>
     <guid ispermalink="true">http://eagle.5ch.io/test/read.cgi/livejupiter/1700000000/</guid>
   </item>
-</channel></rss>"##;
+</channel></rss>"#;
         let results = parse_search_rss(xml);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "正しいスレタイ");
