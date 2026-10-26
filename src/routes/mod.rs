@@ -25,6 +25,10 @@ pub fn build_router(state: AppState) -> Router {
         .nest_service("/assets", ServeDir::new("client/build/assets"))
         .nest_service("/favicon.svg", ServeFile::new("client/build/favicon.svg"))
         .nest_service(
+            "/icon-maskable.svg",
+            ServeFile::new("client/build/icon-maskable.svg"),
+        )
+        .nest_service(
             "/manifest.webmanifest",
             ServeFile::new("client/build/manifest.webmanifest"),
         )

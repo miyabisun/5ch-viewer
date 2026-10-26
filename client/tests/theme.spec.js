@@ -27,6 +27,36 @@ function rgb(page, color) {
   }, color)
 }
 
+// Rasterise an icon as a launcher would and measure, as fractions of the icon size, the
+// pixels outside the safe zone (radius 40%) that differ from the corner background and the
+// farthest artwork pixel from the centre.
+function measureMaskableIcon(page, src) {
+  return page.evaluate(async (url) => {
+    const size = 512
+    const image = new Image()
+    image.src = url
+    await image.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = size
+    const context = canvas.getContext('2d')
+    context.drawImage(image, 0, 0, size, size)
+    const pixels = context.getImageData(0, 0, size, size).data
+    const background = pixels.slice(0, 4)
+    let outsideSafeZone = 0
+    let artworkRadius = 0
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4
+        const diff = Math.max(...[0, 1, 2, 3].map((c) => Math.abs(pixels[i + c] - background[c])))
+        const radius = Math.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2) / size
+        if (radius > 0.4 && diff > 2) outsideSafeZone++
+        if (diff > 32) artworkRadius = Math.max(artworkRadius, radius)
+      }
+    }
+    return { opaque: background[3] === 255, outsideSafeZone, artworkRadius }
+  }, src)
+}
+
 async function expectThemeColor(page, theme) {
   await expect.poll(() => appliedThemeColor(page)).toBe(SURFACE[theme])
   expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(
@@ -172,4 +202,34 @@ test('installed app keeps theme-color on the manifest backdrop', async ({ page }
   await page.getByTestId('theme-toggle').click()
   await expectThemeColor(page, 'dark')
   await expectInstalledAppThemeColor(page)
+})
+
+// Android builds an adaptive home screen icon only from a maskable icon; an "any" icon
+// becomes a legacy icon that the launcher shrinks into a white circle. The maskable icon
+// must paint the whole square and keep its artwork inside the safe zone, large enough to
+// read like a native app icon.
+test('installed app offers a full-bleed maskable icon', async ({ page }) => {
+  await page.route('**/api/favorites', (route) => route.fulfill({ json: [] }))
+  await page.route('**/api/favorites/refresh', (route) =>
+    route.fulfill({ json: { ok: true, boards: 0 } }),
+  )
+  await page.goto('/')
+
+  const cdp = await page.context().newCDPSession(page)
+  const { url, errors, data } = await cdp.send('Page.getAppManifest')
+  expect(errors).toEqual([])
+  const purposes = (icon) => (icon.purpose ?? 'any').split(' ')
+  const { icons } = JSON.parse(data)
+  expect(icons.some((icon) => purposes(icon).includes('any'))).toBe(true)
+  const maskable = icons.find((icon) => purposes(icon).includes('maskable'))
+  expect(maskable).toBeDefined()
+
+  const src = new URL(maskable.src, url).href
+  const response = await page.request.get(src)
+  expect(response.headers()['content-type']).toContain('image/svg+xml')
+  const icon = await measureMaskableIcon(page, src)
+  expect(icon.opaque).toBe(true)
+  expect(icon.outsideSafeZone).toBe(0)
+  expect(icon.artworkRadius).toBeGreaterThanOrEqual(0.3)
+  expect(icon.artworkRadius).toBeLessThanOrEqual(0.4)
 })
