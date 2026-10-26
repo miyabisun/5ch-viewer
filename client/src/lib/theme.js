@@ -21,12 +21,12 @@ function channels(color) {
   return color.match(/[\d.]+/g).map(Number)
 }
 
-// Mirror what fills the screen into <meta name="theme-color">: the page background,
-// or `layer` while a full-screen overlay covers it. Installed web apps on Android
-// Chrome take the navigation-button contrast from it, so without it the light theme
-// gets white buttons on a white bar. The CSS tokens stay the source of the colours.
+// Mirror what fills the screen into the page's <meta name="theme-color">: the page
+// background, or `layer` while a full-screen overlay covers it. Chrome colours a tab's
+// system bars from it. An installed app uses the standalone meta in index.html instead,
+// since its buttons sit over the fixed manifest backdrop. The CSS tokens stay the source.
 export function syncThemeColor(layer = document.body) {
-  let meta = document.querySelector('meta[name="theme-color"]')
+  let meta = document.querySelector('meta[name="theme-color"]:not([media])')
   if (!meta) {
     meta = document.createElement('meta')
     meta.name = 'theme-color'

@@ -6,6 +6,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- Relative href: resolves against the injected <base>, so it works under a base_path deploy too. -->
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <!-- Cloudflare Access guards the site, and a manifest fetch omits cookies unless asked. -->
+    <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials" />
+    <!-- Installed app on Android Chrome: the system buttons sit over the window background,
+         fixed at install from the manifest background_color, and take their contrast from
+         theme-color. Keep both on Sumi (--surface, dark) whatever the page theme. This must
+         precede the page-mirroring meta that lib/theme.js appends, so it wins there. -->
+    <meta name="theme-color" media="(display-mode: standalone)" content="#191919" />
     <title>viewer-of-5ch</title>
     <script>
       window.__BASE_PATH__ = ""
