@@ -1,7 +1,8 @@
 <script>
-  import { onDestroy } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { imageSwipe } from './imageSwipe.js'
   import Icon from './Icon.svelte'
+  import { syncThemeColor } from './theme.js'
 
   // images: [{ href, path, url, resNum, indexInRes, globalIndex }]
   // initialIndex: which image to show first
@@ -74,6 +75,11 @@
     clearTimeout(longPressTimer)
   }
   onDestroy(cancelLongPress)
+
+  // The near-black backdrop also sits behind the system navigation buttons.
+  let backdrop
+  onMount(() => syncThemeColor(backdrop))
+  onDestroy(() => syncThemeColor())
   function onImgContextMenu(e) {
     e.preventDefault()
     openMenu()
@@ -99,6 +105,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
+  bind:this={backdrop}
   class="viewer-bg"
   role="presentation"
   onclick={(e) => {
