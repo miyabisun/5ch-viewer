@@ -107,7 +107,8 @@ hue remains only as a secondary cue. The Sumi side keeps the vivid hues.
   on list rows. Hidden when zero (not rendered). Already ink-dark
   (white-on-badge ~8:1), unchanged for e-paper. The count is
   **dat-backed**: `res_count` reflects only the locally saved dat (blob
-  post count), never subject.txt alone — a visible count is a promise
+  post count), never subject.txt alone, and the user's own posts never
+  count as unread — a visible count is a promise
   that tapping the row shows those posts instantly, with zero fetch.
   Rows whose dat has not yet been fetched (e.g. a freshly registered
   next thread) render no badge until the background sync (or a manual
@@ -183,8 +184,9 @@ Domain components on top of the Sumi recipes:
   ring, no animation — Washi minimizes motion) and are **never**
   read-tracking targets (no `.res` class, no IntersectionObserver
   registration). Placement semantics: the boundary divider is frozen at
-  the entry baseline — it does not move while reading (scroll advancing
-  maxRead never moves it); a manual refresh may re-baseline it. Res cards
+  the entry baseline — it does not move while the thread stays open:
+  neither reading, the refresh button nor posting moves it, and posts that
+  arrive meanwhile are added above the screen without moving it. Res cards
   are ordered newest to oldest. When the new section fills the viewport,
   the boundary's bottom edge is aligned with the scroll viewport bottom.
   When it is shorter, real older reses are rendered below the boundary in

@@ -1,9 +1,11 @@
 <script>
+  import { unreadCount } from './read-progress.js'
+
   // A single thread row: title + sub line + unread badge.
   // Handles click-to-open, right-click (PC) and long-press (touch) to open a menu.
   let { thread: f, onopen, onmenu, extraClass = '', style = '', dataRating } = $props()
 
-  const unread = $derived(f.res_count - f.read_res)
+  const unread = $derived(unreadCount(f))
 
   // Long-press detection for touch devices.
   let pressTimer

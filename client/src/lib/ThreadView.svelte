@@ -1,6 +1,7 @@
 <script>
-  import { onDestroy, untrack } from 'svelte'
+  import { onDestroy, tick, untrack } from 'svelte'
   import { api, beaconProgress } from './api.js'
+  import { buildTimeline, pickAnchor } from './read-progress.js'
   import { formatName } from './name.js'
   import { stripId, buildIdStats } from './id.js'
   import {
@@ -24,6 +25,7 @@
     fav,
     onback,
     onprogress = () => {},
+    onupdate = () => {},
     ngIds = [],
     onngchange = () => {},
     ngWords = [],
@@ -54,11 +56,13 @@
   // true while a manual refresh triggered by the footer button is in flight.
   // Used to prevent double-firing and to disable the button.
   let refreshing = $state(false)
-  // Read position (max res number that has passed through the viewport). Initialized from the saved read_res (only on first mount).
+  // Reading rules: read-progress.js (docs/spec.md §8.1).
+  // Read position: the highest res number shown on screen. Only visibility advances it.
   let maxRead = $state(untrack(() => fav.read_res))
-  // Unread-bar baseline: reses with num > readBaseline show the unread left-border.
-  // Initialized to fav.read_res like maxRead. Raised on pull-to-refresh so that
-  // pre-refresh reses lose their bar and only newly-added reses stay unread.
+  // The read position the server is known to hold; leaving sends anything newer.
+  let savedRead = untrack(() => fav.read_res)
+  // Entry baseline for the previous-read marker and the unread marks. Set from the
+  // server's read position on the first load and fixed while the thread is open.
   let readBaseline = $state(untrack(() => fav.read_res))
   // Restore-on-open guard: scroll to the saved read position only after the first
   // successful load, never after a manual reload.
@@ -68,7 +72,6 @@
   let destroyed = false
   let restoreFrame = null
   let settleFrame = null
-  let refreshFrame = null
 
   function cancelOlderWork() {
     if (olderIdleHandle == null) return
@@ -133,33 +136,45 @@
     finishInitialView()
   }
 
-  function prepareTimeline(nextData) {
+  // keepFrom: the oldest post already rendered (reload) or null (entry).
+  function applyTimeline(nextData, keepFrom = null) {
     cancelOlderWork()
-    const newestFirst = nextData.res.toReversed()
-    if (newestFirst.length === 0) {
-      visibleRes = []
-      olderQueue = []
-      readBoundaryNum = null
-      olderComplete = true
-      return
-    }
-
-    // Include the previous-read post itself in the urgent batch. A stale saved
-    // position beyond the available dat safely falls back to the newest post.
-    const foundBoundary = newestFirst.findIndex((r) => r.num <= readBaseline)
-    const boundaryIndex = readBaseline < 1 ? newestFirst.length - 1 : Math.max(0, foundBoundary)
-    readBoundaryNum = newestFirst[boundaryIndex].num
-    visibleRes = newestFirst.slice(0, boundaryIndex + 1)
-    olderQueue = newestFirst.slice(boundaryIndex + 1)
+    const timeline = buildTimeline(nextData.res, readBaseline, keepFrom)
+    readBoundaryNum = timeline.boundaryNum
+    visibleRes = timeline.visible
+    olderQueue = timeline.older
     olderComplete = olderQueue.length === 0
+    data = nextData
+    mosaicUrls = new Set(nextData.mosaic_urls ?? [])
+  }
+
+  // The post at the top of the screen and its offset, to hold it in place while
+  // new posts are added above it.
+  function captureAnchor() {
+    if (!threadBody) return null
+    const cards = [...threadBody.querySelectorAll(':scope > .res')].map((node) => {
+      const rect = node.getBoundingClientRect()
+      return { num: Number(node.dataset.res), top: rect.top, bottom: rect.bottom }
+    })
+    return pickAnchor(cards, threadBody.getBoundingClientRect().top)
+  }
+
+  function restoreAnchor(anchor) {
+    if (!anchor || !threadBody) return
+    const node = threadBody.querySelector(`:scope > .res[data-res="${anchor.num}"]`)
+    if (!node) return
+    const offset = node.getBoundingClientRect().top - threadBody.getBoundingClientRect().top
+    threadBody.scrollTop += offset - anchor.offset
   }
 
   onDestroy(() => {
+    // Leaving the thread by any route (tab, back, swipe, another thread) must not
+    // lose a read position still waiting for its debounce.
+    flushProgress()
     destroyed = true
     cancelOlderWork()
     if (restoreFrame != null) cancelAnimationFrame(restoreFrame)
     if (settleFrame != null) cancelAnimationFrame(settleFrame)
-    if (refreshFrame != null) cancelAnimationFrame(refreshFrame)
     observer?.disconnect()
   })
   // Post modal: open/close and form state.
@@ -170,28 +185,22 @@
   let postError = $state(null)
   let postSubmitting = $state(false)
 
-  // Render the stored dat only (GET dat, no 5ch access). Used on entry (ChMate
-  // model: opening a thread never touches 5ch — the list bulk-refresh keeps the
-  // stored dat fresh) and as the second half of reloadAndFetch.
-  async function fetchDat() {
+  // Entry: render the stored dat only (GET dat, no 5ch access — ChMate model; the
+  // background crawl keeps the stored dat fresh). The server's read position at
+  // this moment becomes the fixed baseline of the previous-read marker.
+  async function openStoredDat() {
     const nextData = await api.getDat(fav.server, fav.board, fav.thread_id)
-    prepareTimeline(nextData)
-    data = nextData
-    if (restored) {
-      if (refreshFrame != null) cancelAnimationFrame(refreshFrame)
-      refreshFrame = requestAnimationFrame(() => {
-        refreshFrame = null
-        if (!destroyed) scheduleOlderBatch()
-      })
-    }
-    if (data.read_res > maxRead) maxRead = data.read_res
-    // Update the mosaic URL set from the server response.
-    mosaicUrls = new Set(data.mosaic_urls ?? [])
+    if (destroyed) return
+    savedRead = nextData.read_res
+    readBaseline = Math.max(readBaseline, nextData.read_res)
+    if (nextData.read_res > maxRead) maxRead = nextData.read_res
+    applyTimeline(nextData)
   }
 
-  // Reload from 5ch (GET reload: checks subject.txt's res_count and pulls new dat
-  // if it grew), then render the updated dat. Only invoked by the footer refresh
-  // button and after a post write — never on entry.
+  // Reload from 5ch (GET reload: HEAD-gated dat fetch), then add the new posts on
+  // top. Shared by the footer refresh button and the post write. Neither moves
+  // the screen, the read position nor the baseline: posts already rendered stay,
+  // and the post at the top of the screen is held in place.
   async function reloadAndFetch() {
     try {
       await api.reload(fav.server, fav.board, fav.thread_id)
@@ -203,22 +212,23 @@
       refreshError = e.message
       console.error('[reload]', e)
     }
-    await fetchDat()
+    const nextData = await api.getDat(fav.server, fav.board, fav.thread_id)
+    if (destroyed) return
+    const anchor = captureAnchor()
+    applyTimeline(nextData, visibleRes.at(-1)?.num ?? null)
+    await tick()
+    if (destroyed) return
+    restoreAnchor(anchor)
+    scheduleOlderBatch()
+    // The list re-reads its counts (new posts, own posts) from the server.
+    onupdate()
   }
 
   // Manual refresh triggered by the footer refresh button.
   // Guards against double-fire via the `refreshing` flag.
-  // Before loading, advance readBaseline (and maxRead) to the last visible res
-  // number so that all currently-shown reses lose their unread bar and only
-  // newly-added reses (num > old last) will show it after the fetch.
   async function triggerRefresh() {
     if (refreshing) return
     refreshing = true
-    // Advance baseline to the last res currently in data (everything already
-    // fetched is considered read).
-    const lastNum = data?.res?.length ? data.res[data.res.length - 1].num : maxRead
-    readBaseline = Math.max(readBaseline, lastNum)
-    maxRead = Math.max(maxRead, lastNum)
     try {
       await reloadAndFetch()
     } finally {
@@ -264,8 +274,7 @@
       postMail = 'sage'
       postModalOpen = false
       // Reload so the new res (marked own = pink) appears: post_message writes to
-      // 5ch and records own_posts but does not update the stored dat, so a plain
-      // fetchDat would not show the just-written post until a manual refresh.
+      // 5ch and records own_posts but does not update the stored dat.
       await reloadAndFetch()
     } catch (e) {
       postError = e.message
@@ -278,7 +287,7 @@
   // The restore effect runs after this single fetch. Updates are delegated to the
   // list bulk-refresh and the footer refresh button, never to entry.
   $effect(() => {
-    fetchDat()
+    openStoredDat()
   })
 
   // If the new section fills the viewport, place its boundary at the bottom.
@@ -331,27 +340,41 @@
     }
   }
 
-  // Debounced send (2s after scrolling stops).
-  // onprogress fires immediately (no debounce) so the list pane updates in real time.
+  // Debounced save (2s after the read position stops advancing).
+  function saveProgress() {
+    const n = maxRead
+    if (n <= savedRead) return
+    api
+      .setProgress(fav.server, fav.board, fav.thread_id, n)
+      .then(() => {
+        savedRead = Math.max(savedRead, n)
+      })
+      .catch(() => {})
+  }
+
+  // Immediate save when leaving the thread or the page. sendBeacon outlives both.
+  function flushProgress() {
+    if (maxRead <= savedRead) return
+    beaconProgress(fav.server, fav.board, fav.thread_id, maxRead)
+    savedRead = maxRead
+  }
+
+  // onprogress fires immediately (no debounce) so the list badge updates in real time.
   let timer
   $effect(() => {
     const n = maxRead
-    // Notify the parent immediately so the list unread badge reflects the new position.
     onprogress(n)
     clearTimeout(timer)
-    timer = setTimeout(() => {
-      api.setProgress(fav.server, fav.board, fav.thread_id, n).catch(() => {})
-    }, 2000)
+    timer = setTimeout(saveProgress, 2000)
     return () => clearTimeout(timer)
   })
 
-  // On unload, reliably send the final position via sendBeacon.
+  // Hiding or closing the page also counts as leaving.
   $effect(() => {
-    const sendBeacon = () => beaconProgress(fav.server, fav.board, fav.thread_id, maxRead)
     const onHide = () => {
-      if (document.visibilityState === 'hidden') sendBeacon()
+      if (document.visibilityState === 'hidden') flushProgress()
     }
-    const onPageHide = sendBeacon
+    const onPageHide = flushProgress
     document.addEventListener('visibilitychange', onHide)
     window.addEventListener('pagehide', onPageHide)
     return () => {

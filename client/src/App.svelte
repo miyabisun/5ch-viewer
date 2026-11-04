@@ -74,8 +74,10 @@
 
   // Apply a route descriptor (from initial load or popstate) to the UI state.
   function applyRoute(route) {
+    const leavingThread = current != null && !route.thread
     page = route.page
     current = route.thread ? favFor(route.thread) : null
+    if (leavingThread) load()
   }
 
   onMount(() => {
@@ -122,10 +124,14 @@
     push({ page })
     load()
   }
+  // Every route back from a thread re-reads the list, so counts changed while
+  // reading (new posts, own posts) show up whichever way the user left.
   function navigate(p) {
+    const leavingThread = current != null
     page = p
     current = null
     push({ page: p })
+    if (leavingThread) load()
   }
 
   // A `keyed` id forces ThreadView to remount when the selected thread changes.
@@ -186,6 +192,7 @@
           fav={current}
           onback={back}
           onprogress={onProgress}
+          onupdate={load}
           {ngIds}
           onngchange={loadNgIds}
           {ngWords}

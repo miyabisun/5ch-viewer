@@ -14,3 +14,4 @@ pub mod sanitize;
 pub mod spa;
 pub mod state;
 pub mod sync;
+pub mod unread;

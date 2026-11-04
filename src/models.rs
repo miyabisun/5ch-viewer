@@ -14,6 +14,8 @@ pub struct Favorite {
     pub read_res: i64,
     pub rating: i64,
     pub status: String,
+    /// The user's own post numbers in this thread. They never count as unread.
+    pub own_res: Vec<i64>,
 }
 
 /// Add-favorite request. Either a direct url or `server/board/thread_id`.

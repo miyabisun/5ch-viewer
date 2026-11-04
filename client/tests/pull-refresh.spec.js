@@ -67,9 +67,7 @@ test.describe('footer refresh button', () => {
     expect(write.x).toBeLessThan(refresh.x)
   })
 
-  test('refresh button click fires a GET reload and marks only new reses unread', async ({
-    page,
-  }) => {
+  test('refresh button click fires a GET reload and adds new reses as unread', async ({ page }) => {
     const INITIAL_COUNT = 40
     const ADDED_COUNT = 2
 
@@ -121,12 +119,9 @@ test.describe('footer refresh button', () => {
     ).toBeVisible()
     expect(reloadCallCount).toBe(reloadsBefore + 1)
 
-    // Old reses (num 1..INITIAL_COUNT) must NOT have the .unread class.
-    for (let i = 1; i <= INITIAL_COUNT; i++) {
-      await expect(page.locator(`.res[data-res="${i}"]`)).not.toHaveClass(/unread/)
-    }
-    // New reses (num INITIAL_COUNT+1..) MUST have .unread.
-    for (let i = INITIAL_COUNT + 1; i <= INITIAL_COUNT + ADDED_COUNT; i++) {
+    // Refreshing reads nothing (docs/spec.md §8.1): with read_res=0 the reses that
+    // were already unread keep their mark, and the new ones are unread too.
+    for (let i = 1; i <= INITIAL_COUNT + ADDED_COUNT; i++) {
       await expect(page.locator(`.res[data-res="${i}"]`)).toHaveClass(/unread/)
     }
   })

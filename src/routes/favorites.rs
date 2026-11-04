@@ -75,6 +75,7 @@ fn row_to_favorite(row: &rusqlite::Row<'_>) -> rusqlite::Result<Favorite> {
         read_res: row.get(6)?,
         rating: row.get(7)?,
         status: row.get(8)?,
+        own_res: Vec::new(),
     })
 }
 
@@ -82,9 +83,14 @@ fn row_to_favorite(row: &rusqlite::Row<'_>) -> rusqlite::Result<Favorite> {
 fn list_favorites(conn: &rusqlite::Connection, archived: i64) -> Result<Vec<Favorite>, AppError> {
     let sql = format!("{SELECT_FAVORITE} WHERE archived = ?1");
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
+    let mut rows = stmt
         .query_map(params![archived], row_to_favorite)?
         .collect::<Result<Vec<_>, _>>()?;
+    let mut own = crate::unread::own_posts_by_thread(conn)?;
+    for f in &mut rows {
+        let key = (f.server.clone(), f.board.clone(), f.thread_id.clone());
+        f.own_res = own.remove(&key).unwrap_or_default();
+    }
     Ok(rows)
 }
 
@@ -844,6 +850,38 @@ mod tests {
         // Only the fixture favorite (not archived) should appear.
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].thread_id, THREAD);
+    }
+
+    /// Each listed favorite carries its own post numbers so the client can leave
+    /// them out of the unread badge (docs/spec.md §8.1).
+    #[test]
+    fn list_favorites_carries_own_post_numbers() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO favorites (thread_id, server, board, board_name, title)
+             VALUES ('2', ?1, ?2, 'name', '')",
+            params![SERVER, BOARD],
+        )
+        .unwrap();
+        for num in [61, 12] {
+            conn.execute(
+                "INSERT INTO own_posts (server, board, thread_id, res_num, body)
+                 VALUES (?1, ?2, ?3, ?4, '')",
+                params![SERVER, BOARD, THREAD, num],
+            )
+            .unwrap();
+        }
+
+        let rows = list_favorites(&conn, 0).unwrap();
+        let own = |id: &str| {
+            rows.iter()
+                .find(|f| f.thread_id == id)
+                .unwrap()
+                .own_res
+                .clone()
+        };
+        assert_eq!(own(THREAD), vec![12, 61]);
+        assert_eq!(own("2"), Vec::<i64>::new());
     }
 
     /// `list_archives` equivalent: only archived=1 favorites are returned.

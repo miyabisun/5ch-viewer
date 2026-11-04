@@ -23,7 +23,10 @@ struct NewsRow {
     rating: i64,
     status: String,
     updated_at: i64,
+    unread: i64,
 }
+
+const NEWS_LIMIT: usize = 100;
 
 /// GET /api/news — starred threads with unread posts, as JSON Feed 1.1.
 ///
@@ -43,9 +46,9 @@ async fn get_news(
                     res_count, read_res, rating, status, updated_at
              FROM favorites
              WHERE rating > 0 AND archived = 0 AND res_count > read_res
-             ORDER BY updated_at DESC
-             LIMIT 100",
+             ORDER BY updated_at DESC",
         )?;
+        let own = crate::unread::own_posts_by_thread(&conn)?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(NewsRow {
@@ -59,10 +62,21 @@ async fn get_news(
                     rating: row.get(7)?,
                     status: row.get(8)?,
                     updated_at: row.get(9)?,
+                    unread: 0,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        rows
+        // Own posts are not unread, so a thread whose only new posts are the
+        // user's own drops out here rather than in SQL.
+        rows.into_iter()
+            .filter_map(|mut row| {
+                let key = (row.server.clone(), row.board.clone(), row.thread_id.clone());
+                let own_res = own.get(&key).map_or(&[][..], Vec::as_slice);
+                row.unread = crate::unread::unread_count(row.res_count, row.read_res, own_res);
+                (row.unread > 0).then_some(row)
+            })
+            .take(NEWS_LIMIT)
+            .collect::<Vec<_>>()
     };
 
     let base = resolve_base_url(&headers, &state.config);
@@ -101,7 +115,7 @@ fn build_json_feed(rows: &[NewsRow], base: &str) -> serde_json::Value {
 }
 
 fn build_item(row: &NewsRow, base: &str) -> serde_json::Value {
-    let unread = row.res_count - row.read_res;
+    let unread = row.unread;
     let mut obj = json!({
         // Same id format as the SPA route: /{server}/{board}/{thread_id}
         "id": format!("{}/{}/{}", row.server, row.board, row.thread_id),
@@ -131,7 +145,7 @@ mod tests {
     // GET /api/news delivers favorite threads with unread posts for the
     // news-server aggregator:
     // - Only explicitly starred threads (rating > 0)
-    // - Only threads with unread posts (res_count > read_res)
+    // - Only threads with unread posts (after read_res, own posts excluded)
     // - Archived threads are excluded; dead threads stay while unread remains
     // - Sorted by updated_at DESC, limited to 100
     // - date_published is updated_at (unix seconds) as RFC3339 UTC
@@ -253,6 +267,47 @@ mod tests {
 
         let feed = get_news_feed(&make_state(conn)).await;
         assert_eq!(item_ids(&feed), vec!["egg/applism/1001"]);
+    }
+
+    #[tokio::test]
+    async fn news_does_not_count_own_posts_as_unread() {
+        let conn = setup();
+        // Read up to 60; the only newer post is the user's own.
+        insert_favorite(
+            &conn,
+            "1001",
+            "自分のレスだけ",
+            61,
+            60,
+            0,
+            "active",
+            1_700_000_001,
+        );
+        // Read up to 50; one own post among twelve newer ones.
+        insert_favorite(
+            &conn,
+            "1002",
+            "他人の未読あり",
+            62,
+            50,
+            0,
+            "active",
+            1_700_000_000,
+        );
+        for (thread, num) in [("1001", 61), ("1002", 61)] {
+            conn.execute(
+                "INSERT INTO own_posts (server, board, thread_id, res_num, body)
+                 VALUES ('egg', 'applism', ?1, ?2, '')",
+                params![thread, num],
+            )
+            .unwrap();
+        }
+
+        let feed = get_news_feed(&make_state(conn)).await;
+        assert_eq!(item_ids(&feed), vec!["egg/applism/1002"]);
+        let item = &feed["items"][0];
+        assert_eq!(item["_news"]["unread"], 11);
+        assert_eq!(item["content_text"], "未読11レス (50/62)");
     }
 
     #[tokio::test]
