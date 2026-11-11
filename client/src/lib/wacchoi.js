@@ -5,7 +5,11 @@
 // After formatName() strips the tags the text becomes:
 //   "iPhone774G (ﾜｯﾁｮｲ 7bb6-83IP [2400:4050:c4e1:e900:*])"
 // These utilities extract the wacchoi token and build per-res stats used by
-// ThreadView to colour-code same-wacchoi posts.
+// ThreadView to colour-code posts from the same poster.
+//
+// "Same poster" is decided by the suffix alone (the 4 chars after the hyphen): it
+// follows the browser, while the prefix follows the line and changes whenever the
+// poster switches between WiFi and mobile. See docs/5ch-spec.md §ワッチョイ.
 
 import { formatName } from './name.js'
 
@@ -19,12 +23,13 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;')
 }
 
-// Match the first [\w+]{4}-[\w+]{4} token found inside parentheses.
-// The character class [\w+] includes '+' which appears in some wacchoi tokens.
-// Lookbehind/lookahead (?<![\w+]) / (?![\w+]) replace \b so that:
-//   - '+' (a non-word char) is accepted inside tokens, and
+// Match the first [\w+/]{4}-[\w+/]{4} token found inside parentheses.
+// The suffix is drawn from the base64 alphabet, so '+' and '/' both occur in it
+// (about 6% of real tokens carry a '/').
+// Lookbehind/lookahead (?<![\w+/]) / (?![\w+/]) replace \b so that:
+//   - '+' and '/' (non-word chars) are accepted inside tokens, and
 //   - longer tokens like (12345-67890) do not yield a false 4-4 sub-match.
-const WACCHOI_RE = /\(.*?(?<![\w+])([\w+]{4}-[\w+]{4})(?![\w+]).*?\)/
+const WACCHOI_RE = /\(.*?(?<![\w+/])([\w+/]{4}-[\w+/]{4})(?![\w+/]).*?\)/
 
 // Extract the wacchoi key from a raw name string.
 // Applies formatName first so HTML tags are stripped before matching.
@@ -45,7 +50,7 @@ export function wacchoiEnabled(resList) {
   return extractWacchoi(first.name) != null
 }
 
-// colorLevel derived from total post count for the same wacchoi.
+// colorLevel derived from total post count for the same wacchoi suffix.
 // Thresholds are identical to id.js so visual weight is consistent.
 //   1     -> 'none'  (badge hidden)
 //   2-3   -> 'l2'    (blue)
@@ -67,7 +72,7 @@ function colorLevel(total) {
 //   1. formatName() strips HTML tags and decodes entities → clean plain text.
 //   2. escapeHtml() re-escapes special chars so the result is safe for {@html}.
 //   3. The first wacchoi token (same token extractWacchoi() finds) is wrapped in
-//      a span.  Only [\w+]{4}-[\w+]{4} appears in data-wacchoi, so no new XSS vector.
+//      a span.  Only [\w+/]{4}-[\w+/]{4} appears in data-wacchoi, so no new XSS vector.
 //
 // When no wacchoi token is present the escaped plain text is returned as-is.
 // Empty/null/undefined input returns ''.
@@ -97,7 +102,7 @@ export function extractWacchoiSuffix(nameOrToken) {
   if (!nameOrToken) return null
   // Resolve to a bare token: full name strings (with parens) go through extractWacchoi;
   // values that already look like a token are used as-is. extractWacchoi only yields
-  // [\w+]{4}-[\w+]{4}, so the suffix-length check below is always satisfied for that path.
+  // [\w+/]{4}-[\w+/]{4}, so the suffix-length check below is always satisfied for that path.
   const token = nameOrToken.includes('(') ? extractWacchoi(nameOrToken) : nameOrToken
   if (!token) return null
   const idx = token.lastIndexOf('-')
@@ -106,18 +111,17 @@ export function extractWacchoiSuffix(nameOrToken) {
   return suffix.length === 4 ? suffix : null
 }
 
-// Compute a Thursday-anchored week key from a 5ch date string.
+// Compute a Sunday-anchored week key from a 5ch date string.
 //
-// The wacchoi suffix (zzzz) resets every Thursday on 5ch. The exact reset time is
-// unconfirmed; this implementation uses Thursday 00:00 JST as the boundary (provisional).
-// See docs/5ch-spec.md §ワッチョイ for the rationale.
+// The wacchoi changes every Sunday at 00:00 JST, so a suffix identifies a poster only
+// within one Sunday-to-Saturday week. See docs/5ch-spec.md §ワッチョイ for the measurement.
 //
 // Algorithm:
-//   1. Parse the date string (e.g. '2026/06/15(月) 12:34:56.78') as a JST local date.
-//      Using JST local date is appropriate because 5ch is a Japanese service and
-//      both the server and typical viewers are in Japan.
-//   2. Find the most recent Thursday on or before that date (day-of-week: Thursday=4).
-//   3. Return that Thursday's date as 'YYYY/MM/DD'.
+//   1. Read the calendar date from the string (e.g. '2026/06/15(月) 12:34:56.78').
+//      5ch prints it in JST, which is the clock the change follows, so the digits are
+//      used as they are and the viewer's time zone never enters the calculation.
+//   2. Find the most recent Sunday on or before that date.
+//   3. Return that Sunday's date as 'YYYY/MM/DD'.
 //
 // Returns null on parse failure (safe side: NG not applied).
 export function wacchoiWeekKey(dateStr) {
@@ -135,40 +139,40 @@ export function wacchoiWeekKey(dateStr) {
   const d = new Date(year, month, day)
   if (isNaN(d.getTime())) return null
 
-  // Day of week: 0=Sun, 1=Mon, ..., 4=Thu, ..., 6=Sat.
-  // Steps back to the most recent Thursday (same day if already Thursday).
-  const dow = d.getDay()
-  const daysBack = (dow - 4 + 7) % 7
-  const thu = new Date(year, month, day - daysBack)
+  // getDay() is 0 for Sunday, so it is also the number of days back to the week start.
+  const sun = new Date(year, month, day - d.getDay())
 
-  const y = thu.getFullYear()
-  const mo = String(thu.getMonth() + 1).padStart(2, '0')
-  const da = String(thu.getDate()).padStart(2, '0')
+  const y = sun.getFullYear()
+  const mo = String(sun.getMonth() + 1).padStart(2, '0')
+  const da = String(sun.getDate()).padStart(2, '0')
   return `${y}/${mo}/${da}`
 }
 
-// Build a Map<resNum, { wacchoi, total, order, colorLevel }> from the res array.
+// Build a Map<resNum, { wacchoi, suffix, total, order, colorLevel }> from the res array.
 // When enabled is false the function returns an empty Map immediately (no
 // processing) — this is the primary guard for non-wacchoi threads.
 // Only reses whose name contains a wacchoi token get an entry.
+// Reses are grouped by suffix: total and order count every res sharing the suffix,
+// whatever its prefix. wacchoi keeps the res's own full token for display and copy.
 export function buildWacchoiStats(resList, enabled) {
   if (!enabled) return new Map()
 
-  // Pass 1: assign each res its 1-based appearance order within its wacchoi and
+  // Pass 1: assign each res its 1-based appearance order within its suffix group and
   // accumulate the running count. total is patched to its final value in pass 2.
-  const totals = new Map() // wacchoiKey -> final count
-  const result = new Map() // resNum -> { wacchoi, total, order, colorLevel }
+  const totals = new Map() // suffix -> final count
+  const result = new Map() // resNum -> { wacchoi, suffix, total, order, colorLevel }
   for (const r of resList) {
     const wacchoi = extractWacchoi(r.name)
     if (!wacchoi) continue
-    const order = (totals.get(wacchoi) ?? 0) + 1
-    totals.set(wacchoi, order)
-    result.set(r.num, { wacchoi, total: 0, order, colorLevel: 'none' })
+    const suffix = extractWacchoiSuffix(wacchoi)
+    const order = (totals.get(suffix) ?? 0) + 1
+    totals.set(suffix, order)
+    result.set(r.num, { wacchoi, suffix, total: 0, order, colorLevel: 'none' })
   }
 
   // Pass 2: now that totals are known, fill in total + colorLevel per res.
   for (const stats of result.values()) {
-    stats.total = totals.get(stats.wacchoi)
+    stats.total = totals.get(stats.suffix)
     stats.colorLevel = colorLevel(stats.total)
   }
   return result

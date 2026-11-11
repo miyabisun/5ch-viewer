@@ -119,7 +119,7 @@ hue remains only as a secondary cue. The Sumi side keeps the vivid hues.
   these are rendered as text, so every level keeps ≥4.5:1 on white while
   the lightness ramp (darker as the level rises) preserves the ordering
   in grayscale. Wacchoi badges inherit the same level color through the
-  name span.
+  name span; their level counts the posts sharing the wacchoi suffix.
 
 ## Components
 

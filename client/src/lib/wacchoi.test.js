@@ -104,6 +104,13 @@ describe('linkifyWacchoi', () => {
       '<span class="wacchoi-badge" data-wacchoi="7b+6-83IP">7b+6-83IP</span>',
     )
   })
+
+  it('wraps a token whose suffix contains "/" in a .wacchoi-badge span', () => {
+    const raw = 'iPhone774G </b>(ﾜｯﾁｮｲ cbe3-x/EM [2400:2200:968:842f:*])<b>'
+    expect(linkifyWacchoi(raw)).toContain(
+      '<span class="wacchoi-badge" data-wacchoi="cbe3-x/EM">cbe3-x/EM</span>',
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -169,6 +176,20 @@ describe('extractWacchoi', () => {
     const raw = 'foo </b>(ﾜｯﾁｮｲ 7b+6-83IP [2400::])<b>'
     expect(extractWacchoi(raw)).toBe('7b+6-83IP')
   })
+
+  it('extracts a token whose suffix contains "/" (base64 alphabet)', () => {
+    expect(extractWacchoi('iPhone774G </b>(ﾜｯﾁｮｲ c60d-usH/ [153.176.73.106])<b>')).toBe('c60d-usH/')
+    expect(extractWacchoi('名無し </b>(ﾌﾞｰｲﾓ MM1f-/V+H)<b>')).toBe('MM1f-/V+H')
+  })
+
+  it('finds the token when the name itself contains parentheses', () => {
+    const raw = '軌道傾斜角(i) が0.774°だった </b>(ﾜｯﾁｮｲ 279b-z/Y0)<b>'
+    expect(extractWacchoi(raw)).toBe('279b-z/Y0')
+  })
+
+  it('does not take a 4-4 slice out of a longer run that contains "/"', () => {
+    expect(extractWacchoi('名無し (ab/cd-efgh/i)')).toBeNull()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -226,6 +247,7 @@ describe('buildWacchoiStats', () => {
     const stats = buildWacchoiStats(res, true)
     expect(stats.get(1)).toEqual({
       wacchoi: '1111-aaaa',
+      suffix: 'aaaa',
       total: 1,
       order: 1,
       colorLevel: 'none',
@@ -279,6 +301,34 @@ describe('buildWacchoiStats', () => {
       total: 1,
       order: 1,
     })
+  })
+
+  it('reses sharing the suffix are one group even when the prefix differs', () => {
+    const res = [
+      makeRes(1, 'a </b>(ﾜｯﾁｮｲ b62e-daVb [::1])<b>'),
+      makeRes(2, 'b </b>(ﾜｯﾁｮｲ 4363-daVb [::2])<b>'),
+      makeRes(3, 'c </b>(ｱｳｱｳｳｰ Sa1b-daVb)<b>'),
+      makeRes(4, 'd </b>(ﾜｯﾁｮｲ b62e-ZZZZ [::1])<b>'),
+    ]
+    const stats = buildWacchoiStats(res, true)
+    expect(stats.get(1)).toEqual({
+      wacchoi: 'b62e-daVb',
+      suffix: 'daVb',
+      total: 3,
+      order: 1,
+      colorLevel: 'l2',
+    })
+    expect(stats.get(2)).toMatchObject({ wacchoi: '4363-daVb', suffix: 'daVb', total: 3, order: 2 })
+    expect(stats.get(3)).toMatchObject({ wacchoi: 'Sa1b-daVb', suffix: 'daVb', total: 3, order: 3 })
+    // Same prefix as res 1 but another suffix: a different poster.
+    expect(stats.get(4)).toMatchObject({ suffix: 'ZZZZ', total: 1, order: 1, colorLevel: 'none' })
+  })
+
+  it('groups a suffix that contains "/"', () => {
+    const res = [makeRes(1, 'a </b>(ﾜｯﾁｮｲ 86fb-/dMI)<b>'), makeRes(2, 'b </b>(ﾜｯﾁｮｲ 86b0-/dMI)<b>')]
+    const stats = buildWacchoiStats(res, true)
+    expect(stats.get(1)).toMatchObject({ suffix: '/dMI', total: 2, order: 1 })
+    expect(stats.get(2)).toMatchObject({ suffix: '/dMI', total: 2, order: 2 })
   })
 
   // -------------------------------------------------------------------------
@@ -382,41 +432,39 @@ describe('extractWacchoiSuffix', () => {
     // Token like '7b+6-83+P' where both parts contain '+'.
     expect(extractWacchoiSuffix('7b+6-83+P')).toBe('83+P')
   })
+
+  it('extracts a suffix containing "/" from a name and from a bare token', () => {
+    expect(extractWacchoiSuffix('foo </b>(ﾜｯﾁｮｲ 12cf-s5z/)<b>')).toBe('s5z/')
+    expect(extractWacchoiSuffix('86fb-/dMI')).toBe('/dMI')
+  })
 })
 
 // ---------------------------------------------------------------------------
 // wacchoiWeekKey
 // ---------------------------------------------------------------------------
 describe('wacchoiWeekKey', () => {
-  // Thursday itself -> same day is the week start.
-  it('Thursday date returns itself as the week key', () => {
-    // 2025/01/09 is a Thursday.
-    expect(wacchoiWeekKey('2025/01/09(木) 00:00:00.00')).toBe('2025/01/09')
+  // The wacchoi changes at Sunday 00:00 JST (measured on the production dat cache:
+  // no token continues across that instant). See docs/5ch-spec.md.
+  it('Sunday date returns itself as the week key', () => {
+    // 2025/01/05 is a Sunday.
+    expect(wacchoiWeekKey('2025/01/05(日) 00:00:00.00')).toBe('2025/01/05')
   })
 
-  // Wednesday just before next Thursday -> falls back to the previous Thursday.
-  it('Wednesday date returns the preceding Thursday', () => {
-    // 2025/01/08(水) -> previous Thursday was 2025/01/02.
-    expect(wacchoiWeekKey('2025/01/08(水) 23:59:59.99')).toBe('2025/01/02')
+  it('Saturday 23:59 still belongs to the week that began on the preceding Sunday', () => {
+    expect(wacchoiWeekKey('2025/01/11(土) 23:59:59.99')).toBe('2025/01/05')
   })
 
-  // The same Thursday → week key must differ from the preceding Wednesday.
-  it('Thursday 00:00 starts a new week (different from the preceding Wednesday)', () => {
-    const thu = wacchoiWeekKey('2025/01/09(木) 00:00:00.00')
-    const wed = wacchoiWeekKey('2025/01/08(水) 23:59:59.99')
-    expect(thu).not.toBe(wed)
-    expect(thu).toBe('2025/01/09')
-    expect(wed).toBe('2025/01/02')
+  it('the next Sunday 00:00 starts a new week', () => {
+    expect(wacchoiWeekKey('2025/01/12(日) 00:00:00.00')).toBe('2025/01/12')
   })
 
-  // Month boundary: 2025/01/01 (Wednesday) -> previous Thursday was 2024/12/26.
-  it('month boundary: 2025/01/01(Wed) returns 2024/12/26', () => {
-    expect(wacchoiWeekKey('2025/01/01(水) 00:00:00.00')).toBe('2024/12/26')
+  it('Wednesday and Thursday of one week share the key (no mid-week split)', () => {
+    expect(wacchoiWeekKey('2025/01/08(水) 23:59:59.99')).toBe('2025/01/05')
+    expect(wacchoiWeekKey('2025/01/09(木) 00:00:00.00')).toBe('2025/01/05')
   })
 
-  // Year boundary: 2025/01/02 (Thursday) -> itself.
-  it('year boundary: 2025/01/02(Thu) returns 2025/01/02', () => {
-    expect(wacchoiWeekKey('2025/01/02(木) 00:00:00.00')).toBe('2025/01/02')
+  it('month and year boundary: 2025/01/01(Wed) returns 2024/12/29', () => {
+    expect(wacchoiWeekKey('2025/01/01(水) 00:00:00.00')).toBe('2024/12/29')
   })
 
   // Parse failure cases -> null (safe side).
@@ -439,7 +487,7 @@ describe('wacchoiWeekKey', () => {
 
   // Handles the format without day-of-week parentheses.
   it('handles format without day-of-week parentheses (2025/01/09 12:34:56)', () => {
-    // 2025/01/09 is Thursday.
-    expect(wacchoiWeekKey('2025/01/09 12:34:56')).toBe('2025/01/09')
+    // 2025/01/09 is a Thursday; its week began on Sunday 2025/01/05.
+    expect(wacchoiWeekKey('2025/01/09 12:34:56')).toBe('2025/01/05')
   })
 })

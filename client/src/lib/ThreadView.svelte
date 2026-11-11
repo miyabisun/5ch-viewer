@@ -411,7 +411,7 @@
 
   // Wacchoi support: enabled only for threads whose first res contains a wacchoi token.
   const wacchoiEnabledFlag = $derived(wacchoiEnabled(data?.res ?? []))
-  // Per-res wacchoi stats: Map<resNum, { wacchoi, total, order, colorLevel }>.
+  // Per-res wacchoi stats: Map<resNum, { wacchoi, suffix, total, order, colorLevel }>.
   // Empty Map when the thread has no wacchoi (wacchoiEnabledFlag=false).
   const wacchoiStats = $derived.by(() => buildWacchoiStats(data?.res ?? [], wacchoiEnabledFlag))
 
@@ -732,11 +732,13 @@
   })
 
   // --- Wacchoi left-click list modal ---
-  // Shows all reses in the current thread posted under the same wacchoi.
+  // Shows all reses in the current thread posted under the same wacchoi suffix.
+  // The key is the suffix, so a poster who changed lines (another prefix) stays in
+  // one list — the same grouping buildWacchoiStats uses for the heat colour.
   let wacchoiListKey = $state(null)
 
   function openWacchoiList(wacchoi) {
-    wacchoiListKey = wacchoi
+    wacchoiListKey = extractWacchoiSuffix(wacchoi)
   }
   function closeWacchoiList() {
     wacchoiListKey = null
@@ -745,7 +747,7 @@
   // Reses for the wacchoi-list modal, derived from in-memory data (no extra fetch).
   const wacchoiListRes = $derived.by(() => {
     if (wacchoiListKey == null || !data?.res) return []
-    return data.res.filter((r) => resolveWacchoi(r) === wacchoiListKey)
+    return data.res.filter((r) => wacchoiStats.get(r.num)?.suffix === wacchoiListKey)
   })
 
   // --- Wacchoi right-click / long-press menu ---
@@ -808,7 +810,7 @@
   }
 
   // True when the given wacchoi token, posted on the given date, is in the NG list
-  // for the current board + Thursday-anchored week. The single source of truth for
+  // for the current board + Sunday-anchored week. The single source of truth for
   // the board+week-scoped match, shared by the menu state and the per-res NG filter.
   // Returns false (safe side) when the suffix/week/wacchoi/date are unresolvable.
   function isWacchoiNgFor(wacchoi, date) {
@@ -1496,11 +1498,11 @@
   </Modal>
 {/if}
 
-<!-- Wacchoi list modal: all reses in this thread posted under the same wacchoi. -->
+<!-- Wacchoi list modal: all reses in this thread posted under the same wacchoi suffix. -->
 {#if wacchoiListKey != null}
   <Modal onclose={closeWacchoiList}>
     {#snippet header()}
-      <div class="menu-title">ﾜｯﾁｮｲ:{wacchoiListKey}（{wacchoiListRes.length}件）</div>
+      <div class="menu-title">ﾜｯﾁｮｲ末尾:{wacchoiListKey}（{wacchoiListRes.length}件）</div>
     {/snippet}
     <div class="id-list" data-testid="wacchoi-list" role="presentation" onclick={onBodyClick}>
       {#each wacchoiListRes as r (r.num)}

@@ -233,20 +233,19 @@ test('NGﾜｯﾁｮｲに追加 calls POST /api/ng-wacchoi with correct suffix,
   expect(req.suffix).toBe('83IP')
   // board must match the fav board
   expect(req.board).toBe('applism')
-  // week_key must be a non-empty string (Thursday-anchored date for 2025/01/01)
-  // 2025/01/01(水) -> Thursday was 2024/12/26
-  expect(req.week_key).toBe('2024/12/26')
+  // week_key is the Sunday that began the week of 2025/01/01(水): 2024/12/29.
+  expect(req.week_key).toBe('2024/12/29')
   // full wacchoi token
   expect(req.wacchoi).toBe('7bb6-83IP')
 })
 
 test('NGﾜｯﾁｮｲ追加後はワッチョイメニューに削除ボタンを出さない', async ({ page }) => {
-  // week_key for 2025/01/01(水) -> Thursday 2024/12/26
+  // week_key for 2025/01/01(水) -> Sunday 2024/12/29
   const existingNg = [
     {
       suffix: '83IP',
       board: 'applism',
-      week_key: '2024/12/26',
+      week_key: '2024/12/29',
       wacchoi: '7bb6-83IP',
       created_at: 0,
     },
@@ -285,7 +284,7 @@ test('NG wacchoi post menu removes the matching scoped entry', async ({ page }) 
     {
       suffix: '83IP',
       board: 'applism',
-      week_key: '2024/12/26',
+      week_key: '2024/12/29',
       wacchoi: '7bb6-83IP',
       created_at: 0,
     },
@@ -313,14 +312,15 @@ test('NG wacchoi post menu removes the matching scoped entry', async ({ page }) 
   expect(deleteRequests[0]).toEqual({
     suffix: '83IP',
     board: 'applism',
-    week_key: '2024/12/26',
+    week_key: '2024/12/29',
   })
 })
 
 // --- NG scope regression tests ---
 
 // dat with posts from two different prefixes (IP differs) but same suffix.
-// Also includes a post in a different week and one with a different suffix.
+// Also includes posts on both sides of the Sunday 00:00 change and one with a
+// different suffix.
 function datForNgScope() {
   return {
     title: FAV.title,
@@ -329,7 +329,7 @@ function datForNgScope() {
     status: 'active',
     res: [
       {
-        // Same suffix, same week (2025/01/01 is Wed -> Thu week start 2024/12/26).
+        // Same suffix, same week (2025/01/01 is Wed -> the week began Sun 2024/12/29).
         num: 1,
         name: 'A</b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>',
         mail: '',
@@ -347,21 +347,21 @@ function datForNgScope() {
         id: null,
       },
       {
-        // Same suffix, different week (2025/01/09 is Thu -> starts new week 2025/01/09).
+        // Same suffix, last second of the same week (Saturday) -> must also be NG.
         num: 3,
         name: 'C</b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>',
         mail: '',
-        date: '2025/01/09(木) 00:00:00.00',
-        body: '別週同末尾',
+        date: '2025/01/04(土) 23:59:59.99',
+        body: '同週土曜同末尾',
         id: null,
       },
       {
-        // Same suffix, different week (Wed of that different week).
+        // Same suffix, first second of the next week (Sunday 00:00) -> another poster.
         num: 4,
         name: 'D</b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>',
         mail: '',
-        date: '2025/01/08(水) 00:00:00.00',
-        body: '同板前週同末尾',
+        date: '2025/01/05(日) 00:00:00.00',
+        body: '翌週日曜同末尾',
         id: null,
       },
       {
@@ -380,12 +380,12 @@ function datForNgScope() {
 test('NG scope: same suffix + same board + same week are hidden (different prefix is also NG)', async ({
   page,
 }) => {
-  // Register suffix 83IP for board applism, week_key 2024/12/26 (week of 2025/01/01 Wed).
+  // Register suffix 83IP for board applism, week_key 2024/12/29 (week of 2025/01/01 Wed).
   const ngWacchoi = [
     {
       suffix: '83IP',
       board: 'applism',
-      week_key: '2024/12/26',
+      week_key: '2024/12/29',
       wacchoi: '7bb6-83IP',
       created_at: 0,
     },
@@ -413,12 +413,14 @@ test('NG scope: same suffix + same board + same week are hidden (different prefi
 
   await page.goto(THREAD_PATH)
 
-  // res1 (7bb6-83IP, week 2024/12/26) must be NG-hidden.
+  // res1 (7bb6-83IP, week 2024/12/29) must be NG-hidden.
   await expect(page.getByText('同板同週同末尾A')).toHaveCount(0)
   // res2 (cccc-83IP, different prefix but same suffix + week) must ALSO be NG-hidden.
   await expect(page.getByText('同板同週同末尾B(前半違い)')).toHaveCount(0)
-  // Both NG res headers show as del.ng.
-  await expect(page.locator('del.ng')).toHaveCount(2)
+  // res3 is Saturday of the same week: the wacchoi has not changed yet -> NG-hidden.
+  await expect(page.getByText('同週土曜同末尾')).toHaveCount(0)
+  // The three NG res headers show as del.ng.
+  await expect(page.locator('del.ng')).toHaveCount(3)
 })
 
 test('NG scope: different week with same suffix is NOT hidden (誤爆しない)', async ({ page }) => {
@@ -426,7 +428,7 @@ test('NG scope: different week with same suffix is NOT hidden (誤爆しない)'
     {
       suffix: '83IP',
       board: 'applism',
-      week_key: '2024/12/26',
+      week_key: '2024/12/29',
       wacchoi: '7bb6-83IP',
       created_at: 0,
     },
@@ -454,10 +456,8 @@ test('NG scope: different week with same suffix is NOT hidden (誤爆しない)'
 
   await page.goto(THREAD_PATH)
 
-  // res3 is 2025/01/09(木) -> week_key 2025/01/09 (new week) -> NOT NG.
-  await expect(page.getByText('別週同末尾')).toBeVisible()
-  // res4 is 2025/01/08(水) -> week_key 2025/01/02 (different week) -> NOT NG.
-  await expect(page.getByText('同板前週同末尾')).toBeVisible()
+  // res4 is 2025/01/05(日) 00:00 -> week_key 2025/01/05 (the wacchoi changed) -> NOT NG.
+  await expect(page.getByText('翌週日曜同末尾')).toBeVisible()
   // res5 has different suffix ZZZZ -> NOT NG.
   await expect(page.getByText('同板同週別末尾')).toBeVisible()
 })
@@ -525,38 +525,28 @@ test('取得済みスレから検索 shows 該当なし when no results', async 
   await expect(page.getByText('該当なし')).toBeVisible()
 })
 
-// --- week_key boundary test: Thursday 00:00 JST ---
+// --- week_key boundary test: Sunday 00:00 JST ---
 
-test('week_key: 2025/01/09(木) starts a new week (week_key 2025/01/09)', async ({ page }) => {
-  // Verify week_key computation by intercepting the API call when adding NG on a Thursday post.
+// Adds the first badge to the NG list and returns the POST body, for a thread whose
+// two reses were posted at `date`.
+async function addNgAt(page, date) {
   const addRequests = []
   await setupRoutes(page)
-  // Use a dat where res1 is posted on a Thursday (2025/01/09).
-  const datThursday = {
+  const dat = {
     title: FAV.title,
     res_count: 2,
     read_res: 0,
     status: 'active',
-    res: [
-      {
-        num: 1,
-        name: 'A</b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>',
-        mail: '',
-        date: '2025/01/09(木) 00:00:00.00',
-        body: '木曜レス',
-        id: null,
-      },
-      {
-        num: 2,
-        name: 'B</b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>',
-        mail: '',
-        date: '2025/01/09(木) 00:01:00.00',
-        body: '木曜レス2',
-        id: null,
-      },
-    ],
+    res: [1, 2].map((num) => ({
+      num,
+      name: 'A</b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>',
+      mail: '',
+      date,
+      body: `境界レス${num}`,
+      id: null,
+    })),
   }
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datThursday }))
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: dat }))
   await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
     route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
   )
@@ -570,49 +560,100 @@ test('week_key: 2025/01/09(木) starts a new week (week_key 2025/01/09)', async 
   })
 
   await page.goto(THREAD_PATH)
-  await expect(page.getByText('木曜レス', { exact: true })).toBeVisible()
-
+  await expect(page.getByText('境界レス1')).toBeVisible()
   await page.locator('.wacchoi-badge').first().click({ button: 'right' })
   await page.getByRole('button', { name: 'NGﾜｯﾁｮｲに追加' }).click()
-
   await expect.poll(() => addRequests.length).toBe(1)
-  // Thursday itself is the week start.
-  expect(addRequests[0].week_key).toBe('2025/01/09')
+  return addRequests[0]
+}
+
+test('week_key: 2025/01/05(日) 00:00 starts a new week (week_key 2025/01/05)', async ({ page }) => {
+  const req = await addNgAt(page, '2025/01/05(日) 00:00:00.00')
+  expect(req.week_key).toBe('2025/01/05')
 })
 
-test('week_key: 2025/01/08(水) belongs to previous week (week_key 2025/01/02)', async ({
+test('week_key: 2025/01/04(土) 23:59 belongs to the week of 2024/12/29', async ({ page }) => {
+  const req = await addNgAt(page, '2025/01/04(土) 23:59:59.99')
+  expect(req.week_key).toBe('2024/12/29')
+})
+
+// --- Grouping by suffix ---
+
+// One poster seen through three lines (prefix differs, suffix 83IP), one unrelated
+// poster, and one poster whose suffix contains '/'.
+function datForSuffixGroup() {
+  const res = [
+    ['iPhone774G </b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>', '自宅回線'],
+    ['iPhone774G </b>(ﾜｯﾁｮｲ cccc-83IP [::3])<b>', '別回線'],
+    ['iPhone774G </b>(ｱｳｱｳｳｰ Sa1b-83IP)<b>', 'モバイル回線'],
+    ['名無し</b>(ﾜｯﾁｮｲ 7bb6-ZZZZ [2400::])<b>', '別人'],
+    ['名無し</b>(ﾜｯﾁｮｲ 86fb-/dMI)<b>', 'スラッシュA'],
+    ['名無し</b>(ﾜｯﾁｮｲ 86b0-/dMI)<b>', 'スラッシュB'],
+  ]
+  return {
+    title: FAV.title,
+    res_count: res.length,
+    read_res: 0,
+    status: 'active',
+    res: res.map(([name, body], i) => ({
+      num: i + 1,
+      name,
+      mail: '',
+      date: `2025/01/01(水) 00:0${i}:00.00`,
+      body,
+      id: null,
+    })),
+  }
+}
+
+async function gotoSuffixGroup(page, opts) {
+  await setupRoutes(page, opts)
+  await page.route(/\/api\/favorites\/.+\/dat$/, (route) =>
+    route.fulfill({ json: datForSuffixGroup() }),
+  )
+  await page.goto(THREAD_PATH)
+  await expect(page.getByText('自宅回線')).toBeVisible()
+}
+
+test('tapping a badge lists every res with the same suffix, whatever the prefix', async ({
+  page,
+}) => {
+  await gotoSuffixGroup(page)
+
+  // Tap the badge of the second line (cccc-83IP): the list is keyed by 83IP.
+  await page.locator('.wacchoi-badge[data-wacchoi="cccc-83IP"]').click()
+  const list = page.locator('[data-testid="wacchoi-list"]')
+  await expect(list).toBeVisible()
+  await expect(page.locator('.modal')).toContainText('ﾜｯﾁｮｲ末尾:83IP（3件）')
+  await expect(list.locator('.res')).toHaveCount(3)
+  await expect(list).toContainText('自宅回線')
+  await expect(list).toContainText('別回線')
+  await expect(list).toContainText('モバイル回線')
+  // Same prefix as res 1 but another suffix: not the same poster.
+  await expect(list).not.toContainText('別人')
+})
+
+test('reses sharing a suffix take the same heat colour; a lone suffix takes none', async ({
+  page,
+}) => {
+  await gotoSuffixGroup(page)
+
+  const nameOf = (token) =>
+    page.locator('.name', {
+      has: page.locator(`.wacchoi-badge[data-wacchoi="${token}"]`),
+    })
+  // Three reses share 83IP -> level 2 on each of them, although every full token is unique.
+  await expect(nameOf('7bb6-83IP')).toHaveClass(/id-l2/)
+  await expect(nameOf('cccc-83IP')).toHaveClass(/id-l2/)
+  await expect(nameOf('Sa1b-83IP')).toHaveClass(/id-l2/)
+  await expect(nameOf('7bb6-ZZZZ')).not.toHaveClass(/id-l/)
+})
+
+test('a suffix containing "/" becomes a badge, is listed, and is sent to NG as it is', async ({
   page,
 }) => {
   const addRequests = []
-  await setupRoutes(page)
-  const datWed = {
-    title: FAV.title,
-    res_count: 2,
-    read_res: 0,
-    status: 'active',
-    res: [
-      {
-        num: 1,
-        name: 'A</b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>',
-        mail: '',
-        date: '2025/01/08(水) 23:59:59.99',
-        body: '水曜レス',
-        id: null,
-      },
-      {
-        num: 2,
-        name: 'B</b>(ﾜｯﾁｮｲ 7bb6-83IP [2400::])<b>',
-        mail: '',
-        date: '2025/01/08(水) 23:59:59.99',
-        body: '水曜レス2',
-        id: null,
-      },
-    ],
-  }
-  await page.route(/\/api\/favorites\/.+\/dat$/, (route) => route.fulfill({ json: datWed }))
-  await page.route(/\/api\/favorites\/.+\/reload$/, (route) =>
-    route.fulfill({ json: { res_count: 2, read_res: 0, status: 'active' } }),
-  )
+  await gotoSuffixGroup(page)
   await page.route('**/api/ng-wacchoi', async (route) => {
     if (route.request().method() === 'POST') {
       addRequests.push(route.request().postDataJSON())
@@ -622,13 +663,51 @@ test('week_key: 2025/01/08(水) belongs to previous week (week_key 2025/01/02)',
     }
   })
 
-  await page.goto(THREAD_PATH)
-  await expect(page.getByText('水曜レス', { exact: true })).toBeVisible()
+  const badge = page.locator('.wacchoi-badge[data-wacchoi="86fb-/dMI"]')
+  await expect(badge).toHaveText('86fb-/dMI')
+  await badge.click()
+  await expect(page.locator('.modal')).toContainText('ﾜｯﾁｮｲ末尾:/dMI（2件）')
+  await page.getByRole('button', { name: '閉じる' }).click()
 
-  await page.locator('.wacchoi-badge').first().click({ button: 'right' })
+  await badge.click({ button: 'right' })
   await page.getByRole('button', { name: 'NGﾜｯﾁｮｲに追加' }).click()
-
   await expect.poll(() => addRequests.length).toBe(1)
-  // 2025/01/08(水) -> previous Thursday was 2025/01/02.
-  expect(addRequests[0].week_key).toBe('2025/01/02')
+  expect(addRequests[0]).toEqual({
+    suffix: '/dMI',
+    board: 'applism',
+    week_key: '2024/12/29',
+    wacchoi: '86fb-/dMI',
+  })
+})
+
+test('an NG entry for a "/" suffix hides both prefixes and can be removed', async ({ page }) => {
+  const ngWacchoi = [
+    {
+      suffix: '/dMI',
+      board: 'applism',
+      week_key: '2024/12/29',
+      wacchoi: '86fb-/dMI',
+      created_at: 0,
+    },
+  ]
+  const deleteRequests = []
+  await gotoSuffixGroup(page, { ngWacchoi })
+  await page.route(/\/api\/ng-wacchoi(?:\?.*)?$/, async (route) => {
+    if (route.request().method() === 'DELETE') {
+      deleteRequests.push(Object.fromEntries(new URL(route.request().url()).searchParams))
+      await route.fulfill({ json: { ok: true } })
+    } else {
+      await route.fulfill({ json: ngWacchoi })
+    }
+  })
+
+  await expect(page.getByText('スラッシュA')).toHaveCount(0)
+  await expect(page.getByText('スラッシュB')).toHaveCount(0)
+  const ngHeaders = page.locator('del.ng').filter({ hasText: 'NGワッチョイ' })
+  await expect(ngHeaders).toHaveCount(2)
+
+  await ngHeaders.first().click({ button: 'right' })
+  await page.getByRole('button', { name: 'NGワッチョイから削除' }).click()
+  await expect.poll(() => deleteRequests.length).toBe(1)
+  expect(deleteRequests[0]).toEqual({ suffix: '/dMI', board: 'applism', week_key: '2024/12/29' })
 })

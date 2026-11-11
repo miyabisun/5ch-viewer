@@ -56,7 +56,7 @@ APP_PORT=3001 MOCK_PORT=3002 cargo run --bin itest-server
 アプリ側(`APP_PORT`):
 
 - `POST /_control/reset` — favorites を全削除(dat_blobs は FK CASCADE で連動削除)。
-  favorites への FK を持たない own_posts・ng_ids・ng_words も明示的に削除する
+  favorites への FK を持たない own_posts・ng_ids・ng_words・ng_wacchoi も明示的に削除する
   (残すと NG ルールが次のテストへ漏れる)。各テスト前に呼ぶ。
 - `POST /_control/seed-favorite`
   `{ server, board, thread_id, title, res_count, blob_posts }`

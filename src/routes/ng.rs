@@ -15,8 +15,9 @@
 //! the pattern is non-empty.
 //!
 //! NG wacchoi storage is scoped by (suffix, board, `week_key)`: `ng_wacchoi` table.
-//! The `week_key` is a Thursday-anchored week identifier computed client-side and stored
-//! as an opaque string — the server validates but does not interpret it.
+//! The `week_key` is a Sunday-anchored week identifier (the wacchoi changes on Sunday
+//! 00:00 JST) computed client-side and stored as an opaque string — the server validates
+//! but does not interpret it.
 //!
 //! ID search (`GET /api/boards/{server}/{board}/id-search?id=xxx`) scans locally-cached
 //! dat blobs for a given ID and returns matching posts grouped by thread. No 5ch access
@@ -47,27 +48,27 @@ use std::sync::LazyLock;
 static NG_ID_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z0-9+/._=\-]+$").expect("hard-coded regex is valid"));
 
-// Wacchoi suffix: exactly 4 chars from [\w+] (alphanumeric, underscore, or '+').
+// Wacchoi suffix: exactly 4 chars from [\w+/] (alphanumeric, underscore, '+' or '/').
 // Matches the last 4 chars of the xxyy-zzzz token (after the hyphen).
-// '+' appears in some wacchoi tokens so the character class includes it.
+// The suffix is drawn from the base64 alphabet, so '+' and '/' both occur in it.
 static SUFFIX_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[\w+]{4}$").expect("hard-coded regex is valid"));
+    LazyLock::new(|| Regex::new(r"^[\w+/]{4}$").expect("hard-coded regex is valid"));
 
-// Wacchoi token in a name string: [\w+]{4}-[\w+]{4} inside parentheses.
+// Wacchoi token in a name string: [\w+/]{4}-[\w+/]{4} inside parentheses.
 // Mirrors client/src/lib/wacchoi.js WACCHOI_RE (which uses JS lookbehind/lookahead;
 // regex_lite does not support look-around, so boundary constraints are expressed
 // differently here).
 //
-// Boundary strategy: require a non-[\w+] character (or nothing = start of parens
-// content) immediately before the token, and a non-[\w+] character (or nothing =
+// Boundary strategy: require a non-[\w+/] character (or nothing = start of parens
+// content) immediately before the token, and a non-[\w+/] character (or nothing =
 // end of parens content) immediately after.  This prevents a 5-char token like
 // "12345-67890" from yielding a false sub-match of "2345-6789".
 //
-//   (?:.*?[^\w+])?  -- optional: any prefix ending with a non-[\w+] separator
-//   ([\w+]{4}-[\w+]{4})  -- the token (captured as group 1; group 2 = suffix)
-//   (?:[^\w+].*?)?  -- optional: any suffix starting with a non-[\w+] separator
+//   (?:.*?[^\w+/])?  -- optional: any prefix ending with a non-[\w+/] separator
+//   ([\w+/]{4}-[\w+/]{4})  -- the token (captured as group 1; group 2 = suffix)
+//   (?:[^\w+/].*?)?  -- optional: any suffix starting with a non-[\w+/] separator
 static WACCHOI_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\((?:.*?[^\w+])?([\w+]{4}-([\w+]{4}))(?:[^\w+].*?)?\)")
+    Regex::new(r"\((?:.*?[^\w+/])?([\w+/]{4}-([\w+/]{4}))(?:[^\w+/].*?)?\)")
         .expect("hard-coded regex is valid")
 });
 
@@ -415,7 +416,7 @@ fn validate_ng_word(kind: &str, pattern: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Validates a wacchoi suffix: must be exactly 4 word characters.
+/// Validates a wacchoi suffix: must be exactly 4 characters of the token alphabet.
 fn validate_suffix(suffix: &str) -> Result<(), AppError> {
     if !SUFFIX_RE.is_match(suffix) {
         return Err(AppError::BadRequest(format!(
@@ -506,6 +507,14 @@ mod tests {
     }
 
     #[test]
+    fn validate_suffix_accepts_slash() {
+        // The suffix uses the base64 alphabet, so '/' occurs too (e.g. "/dMI", "s5z/").
+        assert!(validate_suffix("/dMI").is_ok());
+        assert!(validate_suffix("s5z/").is_ok());
+        assert!(validate_suffix("/V+H").is_ok());
+    }
+
+    #[test]
     fn validate_suffix_rejects_wrong_length() {
         assert!(validate_suffix("").is_err());
         assert!(validate_suffix("abc").is_err()); // 3 chars
@@ -564,6 +573,26 @@ mod tests {
         // must be extracted correctly.
         let name = "foo </b>(ﾜｯﾁｮｲ 7b+6-83+P [2400::])<b>";
         assert_eq!(extract_wacchoi_suffix(name), Some("83+P".to_string()));
+    }
+
+    #[test]
+    fn extract_wacchoi_suffix_handles_slash_in_token() {
+        // '/' is part of the base64 alphabet the suffix is drawn from.
+        assert_eq!(
+            extract_wacchoi_suffix("名無し</b>(ﾜｯﾁｮｲ 86fb-/dMI)<b>"),
+            Some("/dMI".to_string())
+        );
+        assert_eq!(
+            extract_wacchoi_suffix("iPhone774G </b>(ﾜｯﾁｮｲ c60d-usH/ [153.176.73.106])<b>"),
+            Some("usH/".to_string())
+        );
+        // The name itself may carry parentheses before the wacchoi group.
+        assert_eq!(
+            extract_wacchoi_suffix("軌道傾斜角(i) が0.774°だった </b>(ﾜｯﾁｮｲ 279b-z/Y0)<b>"),
+            Some("z/Y0".to_string())
+        );
+        // A longer run that contains '/' must not yield a 4-4 slice.
+        assert_eq!(extract_wacchoi_suffix("名無し (ab/cd-efgh/i)"), None);
     }
 
     // --- wacchoi-search filter logic ---

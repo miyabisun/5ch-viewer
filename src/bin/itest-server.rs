@@ -485,6 +485,7 @@ async fn ctl_reset(State(app): State<AppState>) -> Result<Json<bool>, AppError> 
     conn.execute("DELETE FROM own_posts", [])?;
     conn.execute("DELETE FROM ng_ids", [])?;
     conn.execute("DELETE FROM ng_words", [])?;
+    conn.execute("DELETE FROM ng_wacchoi", [])?;
     conn.execute("DELETE FROM favorites", [])?;
     conn.execute("DELETE FROM image_cache", [])?;
     drop(conn);

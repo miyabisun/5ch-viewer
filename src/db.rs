@@ -88,7 +88,7 @@ pub const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS ng_wacchoi (
         suffix     TEXT NOT NULL,   -- 4-char UA-derived suffix (zzzz after the hyphen)
         board      TEXT NOT NULL,
-        week_key   TEXT NOT NULL,   -- Thursday-anchored week key (opaque string from client)
+        week_key   TEXT NOT NULL,   -- Sunday-anchored week key YYYY/MM/DD (computed by the client)
         wacchoi    TEXT,            -- full display token xxyy-zzzz (optional)
         created_at INTEGER DEFAULT (strftime('%s','now')),
         PRIMARY KEY (suffix, board, week_key)
@@ -171,6 +171,50 @@ pub fn migrate(conn: &Connection) {
         conn.execute("DELETE FROM dat_blobs", [])
             .expect("Failed to clear legacy BLOB rows from dat_blobs");
     }
+
+    let moved = migrate_ng_wacchoi_weeks(conn).expect("Failed to migrate ng_wacchoi week keys");
+    if moved > 0 {
+        tracing::info!(
+            "ng_wacchoi: moved {moved} Thursday-keyed row(s) onto Sunday-anchored weeks"
+        );
+    }
+}
+
+/// Rows of `ng_wacchoi` whose `week_key` is a Thursday date: the legacy week anchor.
+/// Current keys are always Sundays, so this never matches a row written by this version.
+/// A key that is not a real `YYYY/MM/DD` date makes `strftime` return NULL and is skipped.
+const LEGACY_THURSDAY_WEEK: &str = "week_key GLOB '[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]'
+     AND strftime('%w', replace(week_key, '/', '-')) = '4'";
+
+/// One-time migration: NG wacchoi weeks used to start on Thursday, but the wacchoi
+/// changes on Sunday 00:00 JST. A legacy row for Thursday `T` covered `T..T+6`, which
+/// overlaps the real weeks starting on Sunday `T-4` (its Thu–Sat) and Sunday `T+3` (its
+/// Sun–Wed). The date of the post the row was registered from is not stored, so the week
+/// it belonged to cannot be told apart: the row is copied onto both, keeping `wacchoi`
+/// and `created_at`, and the Thursday row is removed. A Sunday row the user already
+/// registered wins over a migrated copy. Returns the number of legacy rows moved.
+///
+/// Idempotent: once no Thursday key is left the statements match nothing.
+fn migrate_ng_wacchoi_weeks(conn: &Connection) -> rusqlite::Result<usize> {
+    let tx = conn.unchecked_transaction()?;
+    for offset in ["-4 days", "+3 days"] {
+        tx.execute(
+            &format!(
+                "INSERT OR IGNORE INTO ng_wacchoi (suffix, board, week_key, wacchoi, created_at)
+                 SELECT suffix, board,
+                        replace(date(replace(week_key, '/', '-'), ?1), '-', '/'),
+                        wacchoi, created_at
+                 FROM ng_wacchoi WHERE {LEGACY_THURSDAY_WEEK}"
+            ),
+            [offset],
+        )?;
+    }
+    let moved = tx.execute(
+        &format!("DELETE FROM ng_wacchoi WHERE {LEGACY_THURSDAY_WEEK}"),
+        [],
+    )?;
+    tx.commit()?;
+    Ok(moved)
 }
 
 /// Opens (creating if needed) and migrates the database at `path`.
@@ -396,7 +440,7 @@ mod tests {
         conn.execute_batch(SCHEMA).unwrap();
         conn.execute(
             "INSERT INTO ng_wacchoi (suffix, board, week_key, wacchoi)
-             VALUES ('83IP', 'applism', '2025/12/25', '7bb6-83IP')",
+             VALUES ('83IP', 'applism', '2025/12/21', '7bb6-83IP')",
             [],
         )
         .unwrap();
@@ -768,6 +812,118 @@ mod tests {
         assert_eq!(
             count_text_only, 1,
             "TEXT-only rows must not be deleted by the migration"
+        );
+    }
+
+    fn ng_wacchoi_rows(conn: &Connection) -> Vec<(String, String, String, Option<String>, i64)> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT suffix, board, week_key, wacchoi, created_at FROM ng_wacchoi
+                 ORDER BY suffix, board, week_key",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
+            .unwrap();
+        rows.map(Result::unwrap).collect()
+    }
+
+    fn row(
+        suffix: &str,
+        board: &str,
+        week_key: &str,
+        wacchoi: Option<&str>,
+        created_at: i64,
+    ) -> (String, String, String, Option<String>, i64) {
+        (
+            suffix.to_string(),
+            board.to_string(),
+            week_key.to_string(),
+            wacchoi.map(str::to_string),
+            created_at,
+        )
+    }
+
+    /// Migration: a Thursday-keyed NG wacchoi row covered Thu..Wed, which overlaps two
+    /// real (Sunday-to-Saturday) weeks. It must land in both, keeping its other columns.
+    #[test]
+    fn migration_moves_thursday_ng_wacchoi_weeks_onto_both_overlapping_sunday_weeks() {
+        let conn = open_memory();
+        // 2026/11/05 is a Thursday: its old week ran 11/05(Thu)..11/11(Wed), i.e. the
+        // tail of the week of Sun 11/01 and the head of the week of Sun 11/08.
+        conn.execute(
+            "INSERT INTO ng_wacchoi (suffix, board, week_key, wacchoi, created_at)
+             VALUES ('wIfp', 'liveuranus', '2026/11/05', 'd97b-wIfp', 1794105510)",
+            [],
+        )
+        .unwrap();
+        // Month and year boundary: Thu 2026/01/01 -> Sun 2025/12/28 and Sun 2026/01/04.
+        conn.execute(
+            "INSERT INTO ng_wacchoi (suffix, board, week_key, wacchoi, created_at)
+             VALUES ('64D+', 'iPhone', '2026/01/01', NULL, 1767225600)",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn);
+
+        assert_eq!(
+            ng_wacchoi_rows(&conn),
+            vec![
+                row("64D+", "iPhone", "2025/12/28", None, 1_767_225_600),
+                row("64D+", "iPhone", "2026/01/04", None, 1_767_225_600),
+                row(
+                    "wIfp",
+                    "liveuranus",
+                    "2026/11/01",
+                    Some("d97b-wIfp"),
+                    1_794_105_510
+                ),
+                row(
+                    "wIfp",
+                    "liveuranus",
+                    "2026/11/08",
+                    Some("d97b-wIfp"),
+                    1_794_105_510
+                ),
+            ]
+        );
+    }
+
+    /// Migration: re-running it adds nothing, and rows that are not Thursday dates
+    /// (already-Sunday keys, text that is not a date) are left exactly as they are.
+    #[test]
+    fn ng_wacchoi_week_migration_is_idempotent_and_leaves_other_keys_alone() {
+        let conn = open_memory();
+        conn.execute_batch(
+            "INSERT INTO ng_wacchoi (suffix, board, week_key, wacchoi, created_at) VALUES
+                ('83IP', 'applism', '2026/11/05', '7bb6-83IP', 10),
+                ('83IP', 'applism', '2026/11/08', 'cccc-83IP', 20),
+                ('ZZZZ', 'applism', '2026/11/01', 'aaaa-ZZZZ', 30),
+                ('/dMI', 'applism', 'not-a-date', '86fb-/dMI', 40),
+                ('s5z/', 'applism', '2026/13/45', NULL, 50);",
+        )
+        .unwrap();
+
+        migrate(&conn);
+        let once = ng_wacchoi_rows(&conn);
+        migrate(&conn);
+        let twice = ng_wacchoi_rows(&conn);
+
+        assert_eq!(once, twice, "a second run must change nothing");
+        assert_eq!(
+            once,
+            vec![
+                row("/dMI", "applism", "not-a-date", Some("86fb-/dMI"), 40),
+                // Thursday row: 11/01 is new; 11/08 already existed, and the row the
+                // user registered there wins over the migrated copy.
+                row("83IP", "applism", "2026/11/01", Some("7bb6-83IP"), 10),
+                row("83IP", "applism", "2026/11/08", Some("cccc-83IP"), 20),
+                row("ZZZZ", "applism", "2026/11/01", Some("aaaa-ZZZZ"), 30),
+                row("s5z/", "applism", "2026/13/45", None, 50),
+            ]
         );
     }
 }

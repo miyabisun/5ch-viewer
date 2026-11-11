@@ -30,6 +30,7 @@ async function seedFavorite(ctx, board, thread_id, title) {
 
 const ngWordsUrl = (q) => `${APP_URL}/api/ng-words${q ?? ''}`
 const ngIdsUrl = (q) => `${APP_URL}/api/ng-ids${q ?? ''}`
+const ngWacchoiUrl = (q) => `${APP_URL}/api/ng-wacchoi${q ?? ''}`
 
 async function listJson(ctx, url) {
   const r = await ctx.get(url)
@@ -64,6 +65,25 @@ test('NG word add/list/delete round-trips through the real API and SQLite', asyn
   // Deleting a rule that is not there is a 404, not a silent success.
   const again = await request.delete(ngWordsUrl(q))
   expect(again.status()).toBe(404)
+})
+
+test('an NG wacchoi whose suffix contains "/" round-trips through the real API and SQLite', async ({
+  request,
+}) => {
+  // The suffix is drawn from the base64 alphabet; '/' used to be refused with a 400.
+  const entry = { suffix: '/dMI', board: BOARD_A, week_key: '2024/12/29', wacchoi: '86fb-/dMI' }
+
+  expect((await request.post(ngWacchoiUrl(), { data: entry })).ok()).toBeTruthy()
+  expect((await listJson(request, ngWacchoiUrl())).map(keyOf)).toEqual([entry])
+
+  const q = `?suffix=${encodeURIComponent(entry.suffix)}&board=${BOARD_A}&week_key=${encodeURIComponent(entry.week_key)}`
+  expect((await request.delete(ngWacchoiUrl(q))).ok()).toBeTruthy()
+  expect(await listJson(request, ngWacchoiUrl())).toEqual([])
+
+  // A suffix outside the token alphabet is still rejected and stores nothing.
+  const bad = await request.post(ngWacchoiUrl(), { data: { ...entry, suffix: 'ab-c' } })
+  expect(bad.status()).toBe(400)
+  expect(await listJson(request, ngWacchoiUrl())).toEqual([])
 })
 
 test('the same NG word on two boards is two independent rules', async ({ request }) => {
