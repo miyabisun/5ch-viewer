@@ -1,6 +1,6 @@
 //! Library surface of viewer-of-5ch.
 //! `main.rs` is a thin wrapper over this; integration test harnesses (e.g. the
-//! `itest-server` binary used by the Playwright suite) build on the same modules
+//! `itest-server` binary used by `tests/backend.rs` and `tests/page.rs`) build on the same modules
 //! so the very same router/DB/5ch-access code runs under test.
 
 pub mod config;

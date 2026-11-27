@@ -43,11 +43,19 @@ mod history;
 mod layout;
 #[path = "page/scroll.rs"]
 mod scroll;
+#[path = "page/stack.rs"]
+mod stack;
 #[path = "page/style.rs"]
 mod style;
 
 /// The tests, in the order they run.
-const PARTS: [&[Test]; 4] = [layout::TESTS, style::TESTS, scroll::TESTS, history::TESTS];
+const PARTS: [&[Test]; 5] = [
+    layout::TESTS,
+    style::TESTS,
+    scroll::TESTS,
+    history::TESTS,
+    stack::TESTS,
+];
 
 /// What every document of the page runs first: the stand-in for the app's answers, and the
 /// finders and measures of the tests.
@@ -276,7 +284,9 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::SUCCESS;
     }
     assert!(
-        Itest::built(),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("client/build/index.html")
+            .is_file(),
         "the page is not built: run `bun run build` in client/ first"
     );
     let began = Instant::now();
@@ -289,7 +299,10 @@ async fn main() -> std::process::ExitCode {
             .clone();
         // each test begins on an empty app and a page of no state, in a window of 1280 by 720
         // in the light, that takes no touches and fetches from the app
-        app.reset().await;
+        for side in [&app.app, &app.mock] {
+            app.post(&format!("{side}/_control/reset"), Value::Null)
+                .await;
+        }
         unfake(&page).await;
         visit(&page, &app, "/favicon.svg").await;
         page.js("localStorage.clear(); sessionStorage.clear();", Value::Null)

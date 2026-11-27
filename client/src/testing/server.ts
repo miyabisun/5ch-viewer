@@ -1,6 +1,5 @@
-// A stand-in for the server the page talks to: the tests say what each route answers, as the
-// Playwright tests did with page.route, and read back what the page asked. Nothing leaves the
-// test: a route no test answered gets a 404.
+// A stand-in for the server the page talks to: the tests say what each route answers, and read
+// back what the page asked. Nothing leaves the test: a route no test answered gets a 404.
 
 /** A request the page made. */
 export interface Asked {
@@ -44,7 +43,7 @@ export class Server {
   /**
    * Answers requests whose path is `pattern` (a string, whole) or matches it (a RegExp, on the
    * path and the query), of `method` when one is given, with `answer`: a function of the
-   * request, or what it returns. The route set last is asked first, as with page.route.
+   * request, or what it returns. The route set last is asked first.
    */
   on(pattern: string | RegExp, answer: unknown, method: string | null = null) {
     const handler = typeof answer === 'function' ? (answer as Handler) : () => answer

@@ -6,14 +6,11 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "format": "prettier --write src tests",
-    "format:check": "prettier --check src tests",
-    "test": "vitest run",
-    "test:e2e": "playwright test",
-    "test:integration": "playwright test --config playwright.integration.config.js"
+    "format": "prettier --write src",
+    "format:check": "prettier --check src",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@testing-library/svelte": "5.4.2",
     "jsdom": "29.1.1",

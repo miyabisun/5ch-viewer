@@ -1,7 +1,8 @@
 //! Integration-test harness binary.
 //!
-//! Boots two HTTP servers in one process so the Playwright "総合テスト" (full-stack)
-//! suite can exercise the *real* Rust backend against a controllable 5ch stand-in:
+//! Boots two HTTP servers in one process so the full-stack tests (`tests/backend.rs`, and
+//! `tests/page.rs` in a real browser) can exercise the *real* Rust backend against a
+//! controllable 5ch stand-in:
 //!
 //!   1. A mock 5ch server (subject.txt / dat / SETTING.TXT) whose responses can be
 //!      reprogrammed at runtime via `POST /_control/thread`.
@@ -9,9 +10,11 @@
 //!      `fivech_base_url` pointed at the mock so every dat/subject fetch hits it instead
 //!      of 5ch.io. SSRF validation, Monazilla UA, `Shift_JIS` and identity all stay live.
 //!
-//! Ports (override via env): `APP_PORT=3001`, `MOCK_PORT=3002`. The DB is `:memory:` and a
-//! single shared Connection, so it survives for the whole process and is thrown away on
-//! exit — production data is never touched.
+//! Ports: `APP_PORT` and `MOCK_PORT`, or ones the OS chooses (the default); the ports taken
+//! are printed on one line (`[itest-server] app=http://… mock=http://…`) once both listen.
+//! `IMAGE_CACHE_DIR` and `COOKIES_PATH` place its files. The DB is `:memory:` and a single
+//! shared Connection, so it survives for the whole process and is thrown away on exit —
+//! production data is never touched.
 //!
 //! Control protocol (used by tests via the app server's `/_control/*` proxy or directly
 //! against the mock):

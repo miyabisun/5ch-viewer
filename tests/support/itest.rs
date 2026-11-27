@@ -4,7 +4,6 @@
 use serde_json::Value;
 use std::{
     io::{BufRead, BufReader},
-    path::Path,
     process::{Child, Command, Stdio},
     time::Duration,
 };
@@ -58,16 +57,20 @@ impl Itest {
         }
     }
 
-    /// Whether the page has been built: the app serves it from `client/build`.
-    pub fn built() -> bool {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("client/build/index.html")
-            .is_file()
-    }
-
     /// Sends `method` to `url` (with `body` as JSON unless it is null), and answers with the
     /// status and the body, read as JSON (null when it is not JSON).
     pub async fn send(&self, method: reqwest::Method, url: &str, body: &Value) -> (u16, Value) {
+        let (status, _, body) = self.answer(method, url, body).await;
+        (status, body)
+    }
+
+    /// As [`Itest::send`], with the headers of the answer.
+    pub async fn answer(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        body: &Value,
+    ) -> (u16, reqwest::header::HeaderMap, Value) {
         let mut request = self.http.request(method, url);
         if !body.is_null() {
             request = request
@@ -79,9 +82,11 @@ impl Itest {
             .await
             .unwrap_or_else(|error| panic!("{url}: {error}"));
         let status = answer.status().as_u16();
+        let headers = answer.headers().clone();
         let bytes = answer.bytes().await.unwrap_or_default();
         (
             status,
+            headers,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
     }
@@ -101,14 +106,6 @@ impl Itest {
             "POST {url}: {status} {answer}"
         );
         answer
-    }
-
-    /// Empties the app's database and the stand-in's threads.
-    pub async fn reset(&self) {
-        self.post(&format!("{}/_control/reset", self.app), Value::Null)
-            .await;
-        self.post(&format!("{}/_control/reset", self.mock), Value::Null)
-            .await;
     }
 }
 

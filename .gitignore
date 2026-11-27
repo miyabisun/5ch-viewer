@@ -7,7 +7,5 @@
 .env
 client/build
 client/node_modules
-client/test-results
-/test-results
 client/package-lock.json
 docs/discussions.md
