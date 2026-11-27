@@ -162,7 +162,8 @@ async fn back_closes_only_the_image(page: &Page, app: &Itest, phone: bool) {
     footer_is(page, "2 / 2").await;
     assert_eq!(
         page.js("return window.__reads();", Value::Null).await,
-        reads
+        reads,
+        "page.js(\"return window.__reads();\", Value::Null).await"
     );
     back(page).await;
     viewer_gone(page).await;

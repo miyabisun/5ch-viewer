@@ -61,7 +61,7 @@ async fn opens_at_the_newest(page: &Page, first: &[&str], count: usize) {
             Value::Null,
         )
         .await;
-    assert_eq!(rest, json!([null, 0]));
+    assert_eq!(rest, json!([null, 0]), "rest");
 }
 
 async fn phone_position_beyond_the_dat(page: Arc<Page>, app: Arc<Itest>) {
@@ -99,8 +99,8 @@ async fn older_posts_append_below(page: Arc<Page>, app: Arc<Itest>) {
     };
     page.until("21 posts", &count(21), Value::Null).await;
     let order = page.js(ORDER, Value::Null).await;
-    assert_eq!(order[0], json!("120"));
-    assert_eq!(order[20], json!("100"));
+    assert_eq!(order[0], json!("120"), "order[0]");
+    assert_eq!(order[20], json!("100"), "order[20]");
     let ends = page
         .js(
             "const end = t.$('[data-testid=\"thread-end\"]'); \
@@ -135,7 +135,8 @@ async fn older_posts_append_below(page: Arc<Page>, app: Arc<Itest>) {
     assert_eq!(
         page.js("return window.__runNextIdleJob();", Value::Null)
             .await,
-        json!(true)
+        json!(true),
+        "page.js(\"return window.__runNextIdleJob();\", Value::Null) .await"
     );
     page.until("71 posts", &count(71), Value::Null).await;
     let texts = page
@@ -144,7 +145,7 @@ async fn older_posts_append_below(page: Arc<Page>, app: Arc<Itest>) {
             Value::Null,
         )
         .await;
-    assert_eq!(texts, json!([true, true, null]));
+    assert_eq!(texts, json!([true, true, null]), "texts");
     let after = page.js(marker, Value::Null).await;
     let moved = after[0].as_f64().unwrap() - before[0].as_f64().unwrap();
     assert!(moved.abs() <= 1.0, "the marker moved by {moved}");
@@ -152,10 +153,15 @@ async fn older_posts_append_below(page: Arc<Page>, app: Arc<Itest>) {
     assert_eq!(
         page.js("return window.__runNextIdleJob();", Value::Null)
             .await,
-        json!(true)
+        json!(true),
+        "page.js(\"return window.__runNextIdleJob();\", Value::Null) .await"
     );
     page.until("120 posts", &count(120), Value::Null).await;
-    assert_eq!(page.js(ORDER, Value::Null).await[119], json!("1"));
+    assert_eq!(
+        page.js(ORDER, Value::Null).await[119],
+        json!("1"),
+        "page.js(ORDER, Value::Null).await[119]"
+    );
 }
 
 async fn fully_read_thread_boundary(page: Arc<Page>, app: Arc<Itest>) {
@@ -179,7 +185,7 @@ async fn fully_read_thread_boundary(page: Arc<Page>, app: Arc<Itest>) {
             Value::Null,
         )
         .await;
-    assert_eq!(seen, json!([null, "590", "589", 0]));
+    assert_eq!(seen, json!([null, "590", "589", 0]), "seen");
 }
 
 // ---- posting or refreshing keeps the screen still ----
@@ -248,6 +254,26 @@ async fn keeps_the_screen_still(page: &Page, app: &Itest, scroll: &str, posting:
     let unread = "return document.querySelectorAll('.thread-body > .res.unread').length;";
     let unread_before = page.js(unread, Value::Null).await.as_u64().unwrap();
 
+    post_or_refresh(page, posting).await;
+    page.js(SETTLE, Value::Null).await;
+
+    // The post at the top of the screen did not move.
+    let top = page
+        .js(
+            "const n = t.$(`.thread-body > .res[data-res=\"${arguments[0]}\"]`); \
+             return n.getBoundingClientRect().top - t.$('.thread-body').getBoundingClientRect().top;",
+            json!([anchor[0]]),
+        )
+        .await;
+    let moved = top.as_f64().unwrap() - anchor[1].as_f64().unwrap();
+    assert!(moved.abs() <= 1.0, "the post at the top moved by {moved}");
+    newest_is_61(page, posting, unread_before).await;
+    leaving_saves_what_was_seen(page, &[at_entry, before]).await;
+}
+
+/// Writes a post (`posting`), or has one arrive and presses the footer's 更新, and waits
+/// until the page shows it.
+async fn post_or_refresh(page: &Page, posting: bool) {
     if posting {
         click(
             page,
@@ -288,18 +314,11 @@ async fn keeps_the_screen_still(page: &Page, app: &Itest, scroll: &str, posting:
         )
         .await;
     }
-    page.js(SETTLE, Value::Null).await;
+}
 
-    // The post at the top of the screen did not move.
-    let top = page
-        .js(
-            "const n = t.$(`.thread-body > .res[data-res=\"${arguments[0]}\"]`); \
-             return n.getBoundingClientRect().top - t.$('.thread-body').getBoundingClientRect().top;",
-            json!([anchor[0]]),
-        )
-        .await;
-    let moved = top.as_f64().unwrap() - anchor[1].as_f64().unwrap();
-    assert!(moved.abs() <= 1.0, "the post at the top moved by {moved}");
+/// The newest post, 61, is first: the user's own after posting, unread after a refresh.
+async fn newest_is_61(page: &Page, posting: bool, unread_before: u64) {
+    let unread = "return document.querySelectorAll('.thread-body > .res.unread').length;";
     let first = page
         .js(
             "const first = t.$('.thread-body > .res'); return [first.dataset.res, \
@@ -307,20 +326,23 @@ async fn keeps_the_screen_still(page: &Page, app: &Itest, scroll: &str, posting:
             Value::Null,
         )
         .await;
-    assert_eq!(first[0], json!("61"));
+    assert_eq!(first[0], json!("61"), "first[0]");
     let unread_after = page.js(unread, Value::Null).await.as_u64().unwrap();
     if posting {
         assert_eq!(first[1], json!(true), "{first}");
-        assert_eq!(unread_after, unread_before);
+        assert_eq!(unread_after, unread_before, "unread_after");
     } else {
         assert_eq!(first[2], json!(true), "{first}");
-        assert_eq!(unread_after, unread_before + 1);
+        assert_eq!(unread_after, unread_before + 1, "unread_after");
     }
+}
 
-    // Leaving saves the newest post that was on the screen at any point.
+/// Leaving saves the newest post that was on the screen at any point (`earlier`, and now).
+async fn leaving_saves_what_was_seen(page: &Page, earlier: &[Value]) {
     let after = page.js(ON_SCREEN, Value::Null).await;
-    let shown = [at_entry, before, after]
+    let shown = earlier
         .iter()
+        .chain([&after])
         .flat_map(|list| list.as_array().unwrap().clone())
         .map(|row| row[0].as_u64().unwrap())
         .max()

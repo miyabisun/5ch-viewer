@@ -49,8 +49,12 @@ async fn installed_app_keeps_sumi(page: &Page) {
             Value::Null,
         )
         .await;
-    assert_eq!(first[0], json!("(display-mode: standalone)"));
-    assert_eq!(page.js(RGB, first[1].clone()).await, json!(DARK));
+    assert_eq!(first[0], json!("(display-mode: standalone)"), "first[0]");
+    assert_eq!(
+        page.js(RGB, first[1].clone()).await,
+        json!(DARK),
+        "page.js(RGB, first[1].clone()).await"
+    );
 }
 
 async fn toggle(page: &Page) {
@@ -73,7 +77,7 @@ async fn toggle_persists(page: Arc<Page>, app: Arc<Itest>) {
     let saved = page
         .js("return localStorage.getItem('5ch-theme');", Value::Null)
         .await;
-    assert_eq!(saved, json!("dark"));
+    assert_eq!(saved, json!("dark"), "saved");
 
     page.history("refresh").await;
     theme_is(&page, "dark").await;
@@ -85,7 +89,7 @@ async fn toggle_persists(page: Arc<Page>, app: Arc<Itest>) {
     let saved = page
         .js("return localStorage.getItem('5ch-theme');", Value::Null)
         .await;
-    assert_eq!(saved, json!("light"));
+    assert_eq!(saved, json!("light"), "saved");
 }
 
 async fn follows_the_os(page: Arc<Page>, app: Arc<Itest>) {
@@ -169,18 +173,24 @@ async fn manifest_backdrop(page: Arc<Page>, app: Arc<Itest>) {
             Value::Null,
         )
         .await;
-    assert_eq!(crossorigin, json!("use-credentials"));
+    assert_eq!(crossorigin, json!("use-credentials"), "crossorigin");
     let read = manifest(&page).await;
     assert_eq!(read["errors"], json!([]), "{read}");
     let parsed: Value = serde_json::from_str(read["data"].as_str().unwrap()).unwrap();
-    assert_eq!(parsed["display"], json!("standalone"));
+    assert_eq!(
+        parsed["display"],
+        json!("standalone"),
+        "parsed[\"display\"]"
+    );
     assert_eq!(
         page.js(RGB, parsed["background_color"].clone()).await,
-        json!(DARK)
+        json!(DARK),
+        "page.js(RGB, parsed[\"background_color\"].clone()).await"
     );
     assert_eq!(
         page.js(RGB, parsed["theme_color"].clone()).await,
-        json!(DARK)
+        json!(DARK),
+        "page.js(RGB, parsed[\"theme_color\"].clone()).await"
     );
 
     installed_app_keeps_sumi(&page).await;
@@ -205,9 +215,12 @@ async fn maskable_icon(page: Arc<Page>, app: Arc<Itest>) {
             .collect()
     };
     let icons = parsed["icons"].as_array().unwrap();
-    assert!(icons
-        .iter()
-        .any(|icon| purposes(icon).contains(&"any".into())));
+    assert!(
+        icons
+            .iter()
+            .any(|icon| purposes(icon).contains(&"any".into())),
+        "icons .iter() .any(|icon| purposes(icon).contains(&\"any\".into()))"
+    );
     let maskable = icons
         .iter()
         .find(|icon| purposes(icon).contains(&"maskable".into()))
@@ -336,7 +349,7 @@ const USER_SELECT: &str = "return getComputedStyle(t.$('.body')).userSelect;";
 async fn desktop_keeps_selection(page: Arc<Page>, app: Arc<Itest>) {
     reply_thread(&page, &app).await;
     let select = page.js(USER_SELECT, Value::Null).await;
-    assert_ne!(select, json!("none"));
+    assert_ne!(select, json!("none"), "select");
 }
 
 /// A Pixel 5: 393 by 851 at 2.75, a phone's, that takes touches.
@@ -349,7 +362,7 @@ async fn mobile_turns_selection_off(page: Arc<Page>, app: Arc<Itest>) {
     on_a_pixel(&page, "light").await;
     reply_thread(&page, &app).await;
     let select = page.js(USER_SELECT, Value::Null).await;
-    assert_eq!(select, json!("none"));
+    assert_eq!(select, json!("none"), "select");
 }
 
 async fn built_css_has_no_callout(page: Arc<Page>, app: Arc<Itest>) {

@@ -10,7 +10,7 @@
 //! (`fake`, as the jsdom tests do); the others go to the app. After a test that failed, the
 //! next one gets an app of its own. `cargo test --test page -- <words>` runs the tests whose
 //! titles hold any of the words; `--skip <words>` leaves those out.
-#![allow(clippy::unwrap_used)] // helpers outside #[test] fns
+#![allow(clippy::unwrap_used)] // helpers outside #[test] fn s
 use serde_json::{json, Value};
 use std::{
     future::Future,
@@ -67,13 +67,13 @@ static FAKED: Mutex<Option<String>> = Mutex::new(None);
 /// Has the documents the page opens from now on answer their fetches of /api/* from
 /// `routes` (`[{method?, path | pattern, json, status?}]`, the first that matches), as the
 /// jsdom tests' fake server does.
-pub async fn fake(page: &Page, routes: Value) {
+async fn fake(page: &Page, routes: Value) {
     fake_js(page, &format!("window.__routes = {routes};")).await;
 }
 
 /// As [`fake`], with the documents running `script` to set `window.__routes`: a route may
 /// then answer with `answer(asked)` (`{method, path, body}`) and keep state in the document.
-pub async fn fake_js(page: &Page, script: &str) {
+async fn fake_js(page: &Page, script: &str) {
     unfake(page).await;
     let added = page
         .cdp(
@@ -85,7 +85,7 @@ pub async fn fake_js(page: &Page, script: &str) {
 }
 
 /// Has the documents the page opens from now on fetch from the app.
-pub async fn unfake(page: &Page) {
+async fn unfake(page: &Page) {
     let faked = FAKED.lock().unwrap().take();
     if let Some(identifier) = faked {
         page.cdp(
@@ -97,12 +97,12 @@ pub async fn unfake(page: &Page) {
 }
 
 /// Opens `path` of the app.
-pub async fn visit(page: &Page, app: &Itest, path: &str) {
+async fn visit(page: &Page, app: &Itest, path: &str) {
     page.open(&format!("{}{path}", app.app)).await;
 }
 
 /// Waits until the element `element` (a script that finds it, with `t.…`) is on the screen.
-pub async fn shows(page: &Page, element: &str) {
+async fn shows(page: &Page, element: &str) {
     page.until(
         &format!("{element} shows"),
         &format!("return t.shows({element});"),
@@ -112,7 +112,7 @@ pub async fn shows(page: &Page, element: &str) {
 }
 
 /// Waits until the element `element` is in the page but not on the screen, or not there.
-pub async fn hidden(page: &Page, element: &str) {
+async fn hidden(page: &Page, element: &str) {
     page.until(
         &format!("{element} is hidden"),
         &format!("return !t.shows({element});"),
@@ -122,7 +122,7 @@ pub async fn hidden(page: &Page, element: &str) {
 }
 
 /// Waits until `script` returns `want`; fails saying what it returned last.
-pub async fn until_is(page: &Page, what: &str, script: &str, want: Value) {
+async fn until_is(page: &Page, what: &str, script: &str, want: Value) {
     let deadline = Instant::now() + std::time::Duration::from_secs(5);
     loop {
         let value = page.js(script, Value::Null).await;
@@ -136,7 +136,7 @@ pub async fn until_is(page: &Page, what: &str, script: &str, want: Value) {
 
 /// Clicks the middle of the element `element` with the mouse `button` ("left", "right"),
 /// as a person does: the browser scrolls it into sight first.
-pub async fn click(page: &Page, element: &str, button: &str) {
+async fn click(page: &Page, element: &str, button: &str) {
     let box_ = page
         .until(
             &format!("{element} can be clicked"),
@@ -162,7 +162,7 @@ pub async fn click(page: &Page, element: &str, button: &str) {
 
 /// Fires `kind` ("click", "contextmenu") at the element `element`, once it is on the screen:
 /// for a test that measures what opens, not the press that opens it.
-pub async fn fire(page: &Page, element: &str, kind: &str) {
+async fn fire(page: &Page, element: &str, kind: &str) {
     page.until(
         &format!("{element} takes a {kind}"),
         &format!(
@@ -176,7 +176,7 @@ pub async fn fire(page: &Page, element: &str, kind: &str) {
 }
 
 /// The box of the element `element`: [left, top, width, height, right, bottom].
-pub async fn box_of(page: &Page, element: &str) -> Vec<f64> {
+async fn box_of(page: &Page, element: &str) -> Vec<f64> {
     let found = page
         .until(
             &format!("{element} is there"),
@@ -193,7 +193,7 @@ pub async fn box_of(page: &Page, element: &str) -> Vec<f64> {
 }
 
 /// A favorite as `GET /api/favorites` lists it.
-pub fn favorite(thread_id: &str, title: &str, res_count: u32, read_res: u32) -> Value {
+fn favorite(thread_id: &str, title: &str, res_count: u32, read_res: u32) -> Value {
     json!({
         "server": "egg", "board": "applism", "board_name": "アプリ", "thread_id": thread_id,
         "title": title, "res_count": res_count, "read_res": read_res, "rating": 0,
@@ -202,7 +202,7 @@ pub fn favorite(thread_id: &str, title: &str, res_count: u32, read_res: u32) -> 
 }
 
 /// A stored dat of `count` posts (本文1…), with `read_res`.
-pub fn dat(title: &str, count: u32, read_res: u32) -> Value {
+fn dat(title: &str, count: u32, read_res: u32) -> Value {
     let res: Vec<Value> = (1..=count)
         .map(|n| {
             json!({"num": n, "name": "名無し", "mail": "", "date": format!("2025 ID:x{n}"),
@@ -214,7 +214,7 @@ pub fn dat(title: &str, count: u32, read_res: u32) -> Value {
 }
 
 /// The answers of a list of `favorites` whose threads all hold `dat`.
-pub fn thread_routes(favorites: &Value, dat: &Value) -> Value {
+fn thread_routes(favorites: &Value, dat: &Value) -> Value {
     json!([
         {"path": "/api/favorites", "json": favorites},
         {"pattern": "/dat$", "json": dat},

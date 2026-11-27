@@ -89,7 +89,7 @@ async fn a_post_from_the_viewer_is_not_unread(page: Arc<Page>, app: Arc<Itest>) 
             &json!({"rating": 3}),
         )
         .await;
-    assert_eq!(status, 200);
+    assert_eq!(status, 200, "status");
 
     // The user writes res 21; 5ch's dat then holds it.
     app.post(
@@ -116,7 +116,11 @@ async fn a_post_from_the_viewer_is_not_unread(page: Arc<Page>, app: Arc<Itest>) 
         "{row}"
     );
     let news = format!("{}/api/news", app.app);
-    assert_eq!(app.get(&news).await["items"], json!([]));
+    assert_eq!(
+        app.get(&news).await["items"],
+        json!([]),
+        "app.get(&news).await[\"items\"]"
+    );
     visit(&page, &app, "/").await;
     shows(
         &page,
@@ -209,24 +213,34 @@ async fn registering_and_removing_re_evaluate_the_view(page: Arc<Page>, app: Arc
     gone(&page, "t.text('本文2')").await;
     assert_eq!(
         rules(&app, "words").await,
-        json!([{"server": "egg", "board": "applism", "kind": "text", "pattern": "本文2"}])
+        json!([{"server": "egg", "board": "applism", "kind": "text", "pattern": "本文2"}]),
+        "rules(&app, \"words\").await"
     );
     assert_eq!(
         rules(&app, "ids").await,
-        json!([{"server": "egg", "board": "applism", "ng_id": "abc2"}])
+        json!([{"server": "egg", "board": "applism", "ng_id": "abc2"}]),
+        "rules(&app, \"ids\").await"
     );
 
     // NG ID wins the disclosure; removing it reveals the remaining NG Word reason.
     fire(&page, &ng_header("2 NG ID"), "contextmenu").await;
     fire(&page, &button("NG IDから削除"), "click").await;
     shows(&page, &ng_header("2 NG Word")).await;
-    assert_eq!(rules(&app, "ids").await, json!([]));
+    assert_eq!(
+        rules(&app, "ids").await,
+        json!([]),
+        "rules(&app, \"ids\").await"
+    );
 
     // Removing the word too brings the body back.
     fire(&page, &ng_header("2 NG Word"), "contextmenu").await;
     fire(&page, &button("NG Wordから削除"), "click").await;
     shows(&page, "t.text('本文2')").await;
-    assert_eq!(rules(&app, "words").await, json!([]));
+    assert_eq!(
+        rules(&app, "words").await,
+        json!([]),
+        "rules(&app, \"words\").await"
+    );
 }
 
 pub const TESTS: &[Test] = &[

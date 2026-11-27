@@ -14,14 +14,14 @@ use itest::Itest;
 mod itest;
 
 /// One thread of the stand-in and of the app.
-struct Thread {
+struct Favorite {
     server: &'static str,
     board: &'static str,
     thread_id: &'static str,
     title: &'static str,
 }
 
-impl Thread {
+impl Favorite {
     fn key(&self) -> Value {
         json!({"server": self.server, "board": self.board, "thread_id": self.thread_id,
             "title": self.title})
@@ -35,7 +35,7 @@ impl Thread {
 }
 
 /// A favorite whose metadata says `res_count` and whose stored dat holds `blob_posts`.
-async fn seed(app: &Itest, thread: &Thread, res_count: u32, blob_posts: u32) {
+async fn seed(app: &Itest, thread: &Favorite, res_count: u32, blob_posts: u32) {
     let mut body = thread.key();
     body["res_count"] = json!(res_count);
     body["blob_posts"] = json!(blob_posts);
@@ -44,7 +44,7 @@ async fn seed(app: &Itest, thread: &Thread, res_count: u32, blob_posts: u32) {
 }
 
 /// What the stand-in's subject.txt reports (`res_count`) and its dat holds (`dat_posts`).
-async fn program(app: &Itest, thread: &Thread, res_count: u32, dat_posts: u32, extra: Value) {
+async fn program(app: &Itest, thread: &Favorite, res_count: u32, dat_posts: u32, extra: Value) {
     let mut body = thread.key();
     body["res_count"] = json!(res_count);
     body["dat_posts"] = json!(dat_posts);
@@ -55,7 +55,7 @@ async fn program(app: &Itest, thread: &Thread, res_count: u32, dat_posts: u32, e
         .await;
 }
 
-async fn reload(app: &Itest, thread: &Thread) -> Value {
+async fn reload(app: &Itest, thread: &Favorite) -> Value {
     app.get(&thread.api(app, "/reload")).await
 }
 
@@ -82,7 +82,7 @@ where
 
 // ---- the reload's HEAD gate ----
 
-const APPLISM: Thread = Thread {
+const APPLISM: Favorite = Favorite {
     server: "egg",
     board: "applism",
     thread_id: "1771127145",
@@ -113,7 +113,7 @@ async fn reload_fetches_the_dat_when_head_content_length_grows() {
 
 // ---- status at the RES_WARN (980) and RES_DEAD (1002) boundaries ----
 
-const DATBYTES: Thread = Thread {
+const DATBYTES: Favorite = Favorite {
     server: "egg",
     board: "datbytes",
     thread_id: "1771200000",
@@ -144,8 +144,8 @@ async fn status_is_warned_at_res_count_1000_byte_size_does_not_matter() {
 
 // ---- the board refresh (refresh_board) ----
 
-const fn on_applism(thread_id: &'static str) -> Thread {
-    Thread {
+const fn on_applism(thread_id: &'static str) -> Favorite {
+    Favorite {
         server: "egg",
         board: "applism",
         thread_id,
@@ -154,7 +154,7 @@ const fn on_applism(thread_id: &'static str) -> Thread {
 }
 
 /// The posts the stored dat of `thread` holds; -1 while it cannot be read.
-async fn stored_posts(app: &Itest, thread: &Thread) -> i64 {
+async fn stored_posts(app: &Itest, thread: &Favorite) -> i64 {
     let (status, body) = app
         .send(Method::GET, &thread.api(app, "/dat"), &Value::Null)
         .await;
@@ -216,13 +216,13 @@ async fn refresh_skips_threads_whose_subject_count_did_not_grow() {
 
 // ---- find-next ----
 
-const SRC: Thread = Thread {
+const SRC: Favorite = Favorite {
     server: "egg",
     board: "applism",
     thread_id: "1771127100",
     title: "ブルアカ Part5862",
 };
-const NEXT: Thread = Thread {
+const NEXT: Favorite = Favorite {
     server: "egg",
     board: "applism",
     thread_id: "1771127101",
@@ -273,7 +273,7 @@ async fn find_next_returns_found_false_when_no_successor_is_in_subject() {
 
 // ---- the image cache ----
 
-const IMGTEST: Thread = Thread {
+const IMGTEST: Favorite = Favorite {
     server: "egg",
     board: "imgtest",
     thread_id: "9900000001",
