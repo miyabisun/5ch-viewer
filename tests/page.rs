@@ -37,6 +37,8 @@ macro_rules! test {
     };
 }
 
+#[path = "page/history.rs"]
+mod history;
 #[path = "page/layout.rs"]
 mod layout;
 #[path = "page/scroll.rs"]
@@ -45,7 +47,7 @@ mod scroll;
 mod style;
 
 /// The tests, in the order they run.
-const PARTS: [&[Test]; 3] = [layout::TESTS, style::TESTS, scroll::TESTS];
+const PARTS: [&[Test]; 4] = [layout::TESTS, style::TESTS, scroll::TESTS, history::TESTS];
 
 /// What every document of the page runs first: the stand-in for the app's answers, and the
 /// finders and measures of the tests.
