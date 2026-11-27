@@ -18,6 +18,13 @@ export function open(server: Server, path = '/') {
   render(App)
 }
 
+/** Goes to `path` by its address, as a person who types it does: the page is read anew. */
+export function visit(server: Server, path: string) {
+  window.dispatchEvent(new Event('pagehide'))
+  cleanup()
+  open(server, path)
+}
+
 /**
  * Reads the page anew where it is, as the browser's reload does: what the browser keeps for it
  * (the history entry and its state, localStorage) stays; the page itself is made again.
@@ -165,3 +172,14 @@ export async function forward() {
 
 /** The path the page is at. */
 export const path = () => location.pathname
+
+/** A finger held on `element` past the long press (500ms), then lifted, as touch pointers. */
+export async function longPress(element: Element) {
+  element.dispatchEvent(
+    new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', pointerId: 1 }),
+  )
+  await new Promise((done) => setTimeout(done, 550))
+  element.dispatchEvent(
+    new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch', pointerId: 1 }),
+  )
+}
