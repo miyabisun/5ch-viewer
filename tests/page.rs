@@ -39,9 +39,11 @@ macro_rules! test {
 
 #[path = "page/layout.rs"]
 mod layout;
+#[path = "page/style.rs"]
+mod style;
 
 /// The tests, in the order they run.
-const PARTS: [&[Test]; 1] = [layout::TESTS];
+const PARTS: [&[Test]; 2] = [layout::TESTS, style::TESTS];
 
 /// What every document of the page runs first: the stand-in for the app's answers, and the
 /// finders and measures of the tests.

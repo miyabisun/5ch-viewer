@@ -292,12 +292,14 @@ impl Page {
             json!({"width": width, "height": height, "deviceScaleFactor": scale, "mobile": mobile}),
         )
         .await;
+        // a phone lays out a document without a viewport meta wider than its screen
         self.until(
             &format!("the window is {width} by {height} in the {theme}"),
-            "const [width, height, theme] = arguments; \
-             return innerWidth === width && innerHeight === height \
+            "const [width, height, theme, mobile] = arguments; \
+             return (mobile ? screen.width === width && screen.height === height \
+                 : innerWidth === width && innerHeight === height) \
                  && matchMedia(`(prefers-color-scheme: ${theme})`).matches;",
-            json!([width, height, theme]),
+            json!([width, height, theme, mobile]),
         )
         .await;
     }
