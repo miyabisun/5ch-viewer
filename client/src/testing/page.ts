@@ -61,8 +61,8 @@ export const texts = (text: string | RegExp) => screen.queryAllByText(text)
 /** The element whose text is `text`, once there is one. */
 export const shown = (text: string | RegExp) => screen.findByText(text)
 
-/** Waits until `check` passes. */
-export const until = (check: () => unknown) => waitFor(check)
+/** Waits until `check` passes (for a second, or `timeout` ms). */
+export const until = <T>(check: () => T, timeout = 1000) => waitFor(check, { timeout })
 
 /** The button named `name`, of those a reader of the screen is told (within `within`). */
 export function button(name: string | RegExp, within?: HTMLElement) {
