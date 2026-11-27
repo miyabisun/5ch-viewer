@@ -19,11 +19,25 @@
         (!one.method || one.method === method) &&
         (one.path ? one.path === url.pathname : new RegExp(one.pattern).test(url.pathname)),
     )
-    const answer = route ?? { status: 404, json: { error: 'no route' } }
+    let answer = route ?? { status: 404, json: { error: 'no route' } }
+    if (route?.answer) {
+      const body = typeof init.body === 'string' ? JSON.parse(init.body) : undefined
+      answer = { json: route.answer({ method, path: url.pathname, body }) }
+    }
     return new Response(JSON.stringify(answer.json ?? null), {
       status: answer.status ?? 200,
       headers: { 'content-type': 'application/json' },
     })
+  }
+
+  // a beacon is a POST whose answer nobody reads: with routes set, the routes answer it
+  const beacon = navigator.sendBeacon.bind(navigator)
+  navigator.sendBeacon = (url, data) => {
+    if (!window.__routes) return beacon(url, data)
+    Promise.resolve(data instanceof Blob ? data.text() : String(data)).then((body) =>
+      window.fetch(url, { method: 'POST', body }),
+    )
+    return true
   }
 
   window.t = {

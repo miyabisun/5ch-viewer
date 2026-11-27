@@ -39,11 +39,13 @@ macro_rules! test {
 
 #[path = "page/layout.rs"]
 mod layout;
+#[path = "page/scroll.rs"]
+mod scroll;
 #[path = "page/style.rs"]
 mod style;
 
 /// The tests, in the order they run.
-const PARTS: [&[Test]; 2] = [layout::TESTS, style::TESTS];
+const PARTS: [&[Test]; 3] = [layout::TESTS, style::TESTS, scroll::TESTS];
 
 /// What every document of the page runs first: the stand-in for the app's answers, and the
 /// finders and measures of the tests.
@@ -56,11 +58,17 @@ static FAKED: Mutex<Option<String>> = Mutex::new(None);
 /// `routes` (`[{method?, path | pattern, json, status?}]`, the first that matches), as the
 /// jsdom tests' fake server does.
 pub async fn fake(page: &Page, routes: Value) {
+    fake_js(page, &format!("window.__routes = {routes};")).await;
+}
+
+/// As [`fake`], with the documents running `script` to set `window.__routes`: a route may
+/// then answer with `answer(asked)` (`{method, path, body}`) and keep state in the document.
+pub async fn fake_js(page: &Page, script: &str) {
     unfake(page).await;
     let added = page
         .cdp(
             "Page.addScriptToEvaluateOnNewDocument",
-            json!({"source": format!("window.__routes = {routes};")}),
+            json!({"source": script}),
         )
         .await;
     *FAKED.lock().unwrap() = added["identifier"].as_str().map(str::to_owned);
