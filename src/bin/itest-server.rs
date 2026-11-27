@@ -556,14 +556,16 @@ async fn ctl_seed_image(
 async fn main() {
     tracing_subscriber::fmt::init();
 
+    // Port 0 (the default) lets the OS choose a free port; the ports taken are printed once
+    // both servers listen, so tests can run side by side.
     let app_port: u16 = std::env::var("APP_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
-        .unwrap_or(3001);
+        .unwrap_or(0);
     let mock_port: u16 = std::env::var("MOCK_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
-        .unwrap_or(3002);
+        .unwrap_or(0);
 
     // 1. Mock 5ch server.
     let mock_state: MockState = Arc::new(Mutex::new(MockInner::default()));
@@ -588,6 +590,7 @@ async fn main() {
     let mock_listener = tokio::net::TcpListener::bind(&mock_addr)
         .await
         .expect("bind mock");
+    let mock_port = mock_listener.local_addr().expect("mock address").port();
     tokio::spawn(async move {
         axum::serve(mock_listener, mock_app)
             .await
@@ -604,10 +607,13 @@ async fn main() {
         port: app_port,
         base_path: String::new(),
         db_path: ":memory:".into(),
-        image_cache_dir: format!("/tmp/fivech-itest-images-{}", std::process::id()),
+        // A test that starts the server gives it a temporary directory of its own.
+        image_cache_dir: std::env::var("IMAGE_CACHE_DIR")
+            .unwrap_or_else(|_| format!("/tmp/fivech-itest-images-{}", std::process::id())),
         // Integration tests use an in-memory DB; cookies are not persisted.
         // Use a temp path that will not be written (the itest process is short-lived).
-        cookies_path: "/tmp/fivech_itest_cookies.json".into(),
+        cookies_path: std::env::var("COOKIES_PATH")
+            .unwrap_or_else(|_| "/tmp/fivech_itest_cookies.json".into()),
         fivech_base_url: format!("http://127.0.0.1:{mock_port}"),
     };
     let _ = std::fs::remove_dir_all(&config.image_cache_dir);
@@ -629,6 +635,8 @@ async fn main() {
     let app_listener = tokio::net::TcpListener::bind(&app_addr)
         .await
         .expect("bind app");
-    eprintln!("[itest-server] app=http://{app_addr} mock=http://127.0.0.1:{mock_port}");
+    let app_addr = app_listener.local_addr().expect("app address");
+    // The line a test waits for: both servers listen, on these ports.
+    println!("[itest-server] app=http://{app_addr} mock=http://127.0.0.1:{mock_port}");
     axum::serve(app_listener, app).await.expect("app serve");
 }
